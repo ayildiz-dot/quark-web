@@ -1,33 +1,48 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 
 export default function Evaluations() {
+  const navigate = useNavigate()
   const [data,    setData]    = useState([])
   const [total,   setTotal]   = useState(0)
   const [page,    setPage]    = useState(1)
   const [loading, setLoading] = useState(false)
   const [detail,  setDetail]  = useState(null)
   const [filters, setFilters] = useState({
-    search: '', channel: '', passFail: '', dateFrom: '', dateTo: ''
+    search: '', dateFrom: '', dateTo: '', scorecard: ''
   })
+  const [scorecards, setScorecards] = useState([])
   const LIMIT = 50
+
+  useEffect(() => {
+    loadScorecards()
+    fetchEvals(1)
+  }, [])
+
+  const loadScorecards = async () => {
+    const { data } = await supabase
+      .from('scorecards')
+      .select('id, name')
+      .eq('is_published', true)
+      .order('name')
+    setScorecards(data || [])
+  }
 
   const fetchEvals = useCallback(async (pg = 1) => {
     setLoading(true)
     try {
       let q = supabase
         .from('evaluations')
-        .select('*, users(name, email)', { count: 'exact' })
+        .select('*, scorecards(name), users(name, email)', { count: 'exact' })
         .order('submitted_at', { ascending: false })
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
 
-      if (filters.channel)  q = q.eq('channel', filters.channel)
-      if (filters.passFail) q = q.eq('pass_fail', filters.passFail)
-      if (filters.dateFrom) q = q.gte('submitted_at', filters.dateFrom)
-      if (filters.dateTo)   q = q.lte('submitted_at', filters.dateTo + 'T23:59:59')
-      if (filters.search)   q = q.or(`agent_name.ilike.%${filters.search}%,interaction_id.ilike.%${filters.search}%`)
+      if (filters.scorecard) q = q.eq('scorecard_id', filters.scorecard)
+      if (filters.dateFrom)  q = q.gte('submitted_at', filters.dateFrom)
+      if (filters.dateTo)    q = q.lte('submitted_at', filters.dateTo + 'T23:59:59')
 
       const { data: rows, count } = await q
       setData(rows || [])
@@ -38,40 +53,46 @@ export default function Evaluations() {
     }
   }, [filters])
 
-  useEffect(() => { fetchEvals(1) }, [])
-
   const openDetail = async (id) => {
     const { data: ev } = await supabase
       .from('evaluations')
-      .select('*, users(name, email)')
+      .select('*, scorecards(name), users(name, email)')
       .eq('id', id)
       .single()
     const { data: scores } = await supabase
       .from('evaluation_scores')
-      .select('*, criteria(name, max_score)')
+      .select('*, scorecard_questions(title, weight, is_weighted, is_form_critical)')
       .eq('evaluation_id', id)
     setDetail({ ...ev, scores: scores || [] })
+  }
+
+  // Helper: get a metadata value by label from the metadata_values array
+  const getMeta = (row, label) => {
+    if (!row?.metadata_values) return '—'
+    const found = row.metadata_values.find(
+      m => m.label?.toLowerCase() === label.toLowerCase()
+    )
+    return found?.value || '—'
   }
 
   const exportCSV = async () => {
     const { data: rows } = await supabase
       .from('evaluations')
-      .select('*, users(name, email)')
+      .select('*, scorecards(name), users(name, email)')
       .order('submitted_at', { ascending: false })
       .limit(10000)
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
-      'Date':            new Date(r.submitted_at).toLocaleDateString(),
-      'Time':            new Date(r.submitted_at).toLocaleTimeString(),
-      'Evaluator':       r.users?.name,
-      'Evaluator Email': r.users?.email,
-      'Agent':           r.agent_name,
-      'Interaction ID':  r.interaction_id,
-      'Channel':         r.channel,
-      'Language':        r.language || '—',
-      'Score':           `${r.total_score}/${r.max_score}`,
-      'Percentage':      `${r.percentage}%`,
-      'Pass/Fail':       r.pass_fail?.toUpperCase(),
-      'Notes':           r.overall_notes || ''
+      'Date':          new Date(r.submitted_at).toLocaleDateString(),
+      'Time':          new Date(r.submitted_at).toLocaleTimeString(),
+      'Evaluator':     r.users?.name || '—',
+      'Scorecard':     r.scorecards?.name || '—',
+      'Score':         `${r.score}%`,
+      'Failed Critical': r.failed_critical ? 'Yes' : 'No',
+      'Status':        r.status || '—',
+      ...(r.metadata_values || []).reduce((acc, m) => {
+        acc[m.label] = m.value
+        return acc
+      }, {})
     })))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Evaluations')
@@ -82,22 +103,21 @@ export default function Evaluations() {
   const exportXLSX = async () => {
     const { data: rows } = await supabase
       .from('evaluations')
-      .select('*, users(name, email)')
+      .select('*, scorecards(name), users(name, email)')
       .order('submitted_at', { ascending: false })
       .limit(10000)
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
-      'Date':            new Date(r.submitted_at).toLocaleDateString(),
-      'Time':            new Date(r.submitted_at).toLocaleTimeString(),
-      'Evaluator':       r.users?.name,
-      'Evaluator Email': r.users?.email,
-      'Agent':           r.agent_name,
-      'Interaction ID':  r.interaction_id,
-      'Channel':         r.channel,
-      'Language':        r.language || '—',
-      'Score':           `${r.total_score}/${r.max_score}`,
-      'Percentage':      `${r.percentage}%`,
-      'Pass/Fail':       r.pass_fail?.toUpperCase(),
-      'Notes':           r.overall_notes || ''
+      'Date':          new Date(r.submitted_at).toLocaleDateString(),
+      'Time':          new Date(r.submitted_at).toLocaleTimeString(),
+      'Evaluator':     r.users?.name || '—',
+      'Scorecard':     r.scorecards?.name || '—',
+      'Score':         `${r.score}%`,
+      'Failed Critical': r.failed_critical ? 'Yes' : 'No',
+      'Status':        r.status || '—',
+      ...(r.metadata_values || []).reduce((acc, m) => {
+        acc[m.label] = m.value
+        return acc
+      }, {})
     })))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Evaluations')
@@ -105,11 +125,12 @@ export default function Evaluations() {
     saveAs(new Blob([buf], { type: 'application/octet-stream' }), 'quark_evaluations.xlsx')
   }
 
-  const pf = (val) => (
-    <span className={`badge badge-${val === 'pass' ? 'pass' : val === 'fail' ? 'fail' : 'neutral'}`}>
-      {val?.toUpperCase()}
-    </span>
-  )
+  const scoreColor = (score, failed) => {
+    if (failed) return 'var(--danger)'
+    if (score >= 80) return 'var(--success)'
+    if (score >= 60) return '#f59e0b'
+    return 'var(--danger)'
+  }
 
   return (
     <div className="page">
@@ -118,28 +139,22 @@ export default function Evaluations() {
           <h1>Evaluations</h1>
           <p className="page-sub">{total.toLocaleString()} total records</p>
         </div>
-        <div className="btn-group">
+        <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
           <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>
+          <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
+            + New Evaluation
+          </button>
         </div>
       </div>
 
       <div className="filter-bar">
-        <input className="input" placeholder="Search agent or interaction ID…"
-          value={filters.search}
-          onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
-          style={{ flex: 1, minWidth: 200 }} />
-        <select className="select" value={filters.channel}
-          onChange={e => setFilters(f => ({ ...f, channel: e.target.value }))}>
-          <option value="">All channels</option>
-          <option value="chat">Chat</option>
-          <option value="email">Email</option>
-        </select>
-        <select className="select" value={filters.passFail}
-          onChange={e => setFilters(f => ({ ...f, passFail: e.target.value }))}>
-          <option value="">Pass &amp; Fail</option>
-          <option value="pass">Pass</option>
-          <option value="fail">Fail</option>
+        <select className="select" value={filters.scorecard}
+          onChange={e => setFilters(f => ({ ...f, scorecard: e.target.value }))}>
+          <option value="">All scorecards</option>
+          {scorecards.map(sc => (
+            <option key={sc.id} value={sc.id}>{sc.name}</option>
+          ))}
         </select>
         <input type="date" className="input" value={filters.dateFrom}
           onChange={e => setFilters(f => ({ ...f, dateFrom: e.target.value }))} />
@@ -147,7 +162,7 @@ export default function Evaluations() {
           onChange={e => setFilters(f => ({ ...f, dateTo: e.target.value }))} />
         <button className="btn btn-primary" onClick={() => fetchEvals(1)}>Apply</button>
         <button className="btn btn-ghost" onClick={() => {
-          setFilters({ search: '', channel: '', passFail: '', dateFrom: '', dateTo: '' })
+          setFilters({ search: '', dateFrom: '', dateTo: '', scorecard: '' })
           setTimeout(() => fetchEvals(1), 0)
         }}>Clear</button>
       </div>
@@ -161,19 +176,15 @@ export default function Evaluations() {
               <tr>
                 <th>Date</th>
                 <th>Evaluator</th>
-                <th>Agent</th>
-                <th>Interaction ID</th>
-                <th>Channel</th>
-                <th>Language</th>
+                <th>Scorecard</th>
                 <th>Score</th>
-                <th>%</th>
                 <th>Result</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {data.length === 0 && (
-                <tr><td colSpan="10" className="empty-row">No evaluations found.</td></tr>
+                <tr><td colSpan="6" className="empty-row">No evaluations yet. Start one with + New Evaluation.</td></tr>
               )}
               {data.map(ev => (
                 <tr key={ev.id}>
@@ -181,13 +192,17 @@ export default function Evaluations() {
                     {new Date(ev.submitted_at).toLocaleDateString()}
                   </td>
                   <td>{ev.users?.name || '—'}</td>
-                  <td>{ev.agent_name}</td>
-                  <td><code>{ev.interaction_id}</code></td>
-                  <td><span className="badge badge-channel">{ev.channel}</span></td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{ev.language || '—'}</td>
-                  <td>{ev.total_score}/{ev.max_score}</td>
-                  <td>{ev.percentage}%</td>
-                  <td>{pf(ev.pass_fail)}</td>
+                  <td>{ev.scorecards?.name || '—'}</td>
+                  <td>
+                    <span style={{ fontWeight: 600, color: scoreColor(ev.score, ev.failed_critical) }}>
+                      {ev.failed_critical ? '0%' : `${ev.score}%`}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`badge ${ev.failed_critical || ev.score < 80 ? 'badge-fail' : 'badge-pass'}`}>
+                      {ev.failed_critical || ev.score < 80 ? 'FAIL' : 'PASS'}
+                    </span>
+                  </td>
                   <td>
                     <button className="btn btn-ghost btn-sm" onClick={() => openDetail(ev.id)}>
                       View
@@ -208,38 +223,73 @@ export default function Evaluations() {
           disabled={page * LIMIT >= total} onClick={() => fetchEvals(page + 1)}>Next →</button>
       </div>
 
+      {/* DETAIL MODAL */}
       {detail && (
         <div className="modal-backdrop" onClick={() => setDetail(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Evaluation #{detail.id}</h2>
+              <h2>Evaluation Detail</h2>
               <button className="btn-close" onClick={() => setDetail(null)}>✕</button>
             </div>
             <div className="modal-body">
+
+              {/* Metadata values */}
               <div className="detail-meta">
-                <span><b>Agent:</b> {detail.agent_name}</span>
+                <span><b>Scorecard:</b> {detail.scorecards?.name}</span>
                 <span><b>Evaluator:</b> {detail.users?.name}</span>
-                <span><b>Channel:</b> {detail.channel}</span>
-                <span><b>Language:</b> {detail.language || '—'}</span>
-                <span><b>Interaction ID:</b> {detail.interaction_id}</span>
                 <span><b>Date:</b> {new Date(detail.submitted_at).toLocaleString()}</span>
+                {(detail.metadata_values || []).map((m, i) => (
+                  <span key={i}><b>{m.label}:</b> {m.value || '—'}</span>
+                ))}
               </div>
+
               <hr />
+
+              {/* Question scores */}
               <div className="detail-scores">
                 {detail.scores.map((s, i) => (
                   <div key={i} className="score-row-detail">
-                    <div className="score-criterion">{s.criteria?.name}</div>
-                    <div className="score-val">{s.score ?? 'N/A'} / {s.criteria?.max_score}</div>
-                    {s.comment && <div className="score-comment">"{s.comment}"</div>}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div className="score-criterion">
+                        {s.scorecard_questions?.title || '—'}
+                        {s.scorecard_questions?.is_form_critical && (
+                          <span className="badge badge-fail" style={{ marginLeft: 8, fontSize: 11 }}>
+                            Form Critical
+                          </span>
+                        )}
+                      </div>
+                      <span className={`badge ${
+                        s.score === 'pass' ? 'badge-pass' :
+                        s.score === 'fail' ? 'badge-fail' : 'badge-channel'
+                      }`}>
+                        {s.score?.toUpperCase() || 'N/A'}
+                      </span>
+                    </div>
+                    {s.comment && (
+                      <div className="score-comment" style={{ marginTop: 4 }}>"{s.comment}"</div>
+                    )}
                   </div>
                 ))}
               </div>
+
+              <hr />
+
+              {/* Final score */}
               <div className="detail-total">
-                <span>Total: <b>{detail.total_score}/{detail.max_score}</b> ({detail.percentage}%)</span>
-                {pf(detail.pass_fail)}
+                <span style={{ fontSize: 16 }}>
+                  Final Score:{' '}
+                  <b style={{ color: scoreColor(detail.score, detail.failed_critical) }}>
+                    {detail.failed_critical ? '0%' : `${detail.score}%`}
+                  </b>
+                </span>
+                <span className={`badge ${detail.failed_critical || detail.score < 80 ? 'badge-fail' : 'badge-pass'}`}>
+                  {detail.failed_critical || detail.score < 80 ? 'FAIL' : 'PASS'}
+                </span>
               </div>
-              {detail.overall_notes && (
-                <div className="detail-notes"><b>Notes:</b> {detail.overall_notes}</div>
+              {detail.failed_critical && (
+                <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>
+                  A form-critical question was failed — score overridden to 0%.
+                </p>
               )}
             </div>
           </div>

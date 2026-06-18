@@ -8,6 +8,7 @@ import Evaluations from './pages/Evaluations'
 import Admin from './pages/Admin'
 import Scorecards from './pages/Scorecards'
 import ScorecardBuilder from './pages/ScorecardBuilder'
+import EvaluationForm from './pages/EvaluationForm'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -70,6 +71,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/evaluations" element={<Evaluations />} />
+            <Route path="/evaluations/new" element={<EvaluationForm />} />
             <Route path="/scorecards" element={<Scorecards />} />
             <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
             <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
