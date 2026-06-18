@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { useParams, useNavigate, useBlocker } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 import {
@@ -28,18 +28,38 @@ export default function ScorecardBuilder() {
   const [loading, setLoading] = useState(true)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [activeQuestion, setActiveQuestion] = useState(null)
+  const [pendingNav, setPendingNav] = useState(null)
+  const [showUnsavedModal, setShowUnsavedModal] = useState(false)
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 5 }
   }))
 
-  // Block ALL navigation (sidebar, back button, browser) when there are unsaved changes
-  const blocker = useBlocker(
-    ({ currentLocation, nextLocation }) =>
-      hasUnsavedChanges && currentLocation.pathname !== nextLocation.pathname
-  )
+  // Safe navigate — shows confirmation modal if there are unsaved changes
+  const safeNavigate = useCallback((path) => {
+    if (hasUnsavedChanges) {
+      setPendingNav(path)
+      setShowUnsavedModal(true)
+    } else {
+      navigate(path)
+    }
+  }, [hasUnsavedChanges, navigate])
 
-  // Warn on browser refresh/tab close
+  // Intercept browser back/forward buttons
+  useEffect(() => {
+    const handlePopState = (e) => {
+      if (hasUnsavedChanges) {
+        window.history.pushState(null, '', window.location.href)
+        setShowUnsavedModal(true)
+        setPendingNav(-1)
+      }
+    }
+    window.history.pushState(null, '', window.location.href)
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [hasUnsavedChanges])
+
+  // Warn on browser refresh or tab close
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (hasUnsavedChanges) {
@@ -338,8 +358,8 @@ export default function ScorecardBuilder() {
   return (
     <div className="page">
 
-      {/* BLOCKER MODAL — fires for ALL navigation including sidebar */}
-      {blocker.state === 'blocked' && (
+      {/* UNSAVED CHANGES MODAL */}
+      {showUnsavedModal && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
@@ -347,12 +367,21 @@ export default function ScorecardBuilder() {
           <div className="card" style={{ maxWidth: 420, width: '100%', padding: 32 }}>
             <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>⚠️ Unsaved Changes</div>
             <p style={{ color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.6 }}>
-              You have unsaved changes on this published scorecard. If you leave now,
-              your changes will be lost. Are you sure you want to leave?
+              You have unsaved changes. If you leave now, your changes will be lost.
+              Are you sure you want to leave?
             </p>
             <div style={{ display: 'flex', gap: 12 }}>
-              <button className="btn btn-danger" onClick={() => blocker.proceed()}>Yes, leave</button>
-              <button className="btn btn-primary" onClick={() => blocker.reset()}>No, stay</button>
+              <button className="btn btn-danger" onClick={() => {
+                setShowUnsavedModal(false)
+                setHasUnsavedChanges(false)
+                if (pendingNav === -1) window.history.go(-1)
+                else if (pendingNav) navigate(pendingNav)
+                setPendingNav(null)
+              }}>Yes, leave</button>
+              <button className="btn btn-primary" onClick={() => {
+                setShowUnsavedModal(false)
+                setPendingNav(null)
+              }}>No, stay</button>
             </div>
           </div>
         </div>
@@ -361,7 +390,7 @@ export default function ScorecardBuilder() {
       <div className="page-header">
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
-            onClick={() => navigate('/scorecards')}>
+            onClick={() => safeNavigate('/scorecards')}>
             ← Back to Scorecards
           </button>
           <h1>{scorecard.name}</h1>
