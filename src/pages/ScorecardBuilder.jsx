@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useBlocker } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 import {
@@ -28,16 +28,18 @@ export default function ScorecardBuilder() {
   const [loading, setLoading] = useState(true)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [activeQuestion, setActiveQuestion] = useState(null)
-  const [showLeaveWarning, setShowLeaveWarning] = useState(false)
-  const [pendingNavigation, setPendingNavigation] = useState(null)
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 5 }
   }))
 
-  useEffect(() => { loadAll() }, [id])
+  // Block ALL navigation (sidebar, back button, browser) when there are unsaved changes
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      hasUnsavedChanges && currentLocation.pathname !== nextLocation.pathname
+  )
 
-  // Warn on browser refresh/close
+  // Warn on browser refresh/tab close
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (hasUnsavedChanges) {
@@ -48,6 +50,8 @@ export default function ScorecardBuilder() {
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [hasUnsavedChanges])
+
+  useEffect(() => { loadAll() }, [id])
 
   const loadAll = async () => {
     const [sc, meta, grp, qs] = await Promise.all([
@@ -79,34 +83,9 @@ export default function ScorecardBuilder() {
     setTimeout(() => setMsg(null), 3000)
   }
 
-  // For published scorecards: only update state, don't touch Supabase
-  // For draft scorecards: update state AND Supabase immediately
   const isPublished = scorecard?.is_published
-
   const markChanged = () => setHasUnsavedChanges(true)
 
-  const handleNavigateAway = (destination) => {
-    if (hasUnsavedChanges) {
-      setPendingNavigation(destination)
-      setShowLeaveWarning(true)
-    } else {
-      navigate(destination)
-    }
-  }
-
-  const confirmLeave = () => {
-    setShowLeaveWarning(false)
-    setHasUnsavedChanges(false)
-    // Reload from DB to discard local changes
-    navigate(pendingNavigation)
-  }
-
-  const cancelLeave = () => {
-    setShowLeaveWarning(false)
-    setPendingNavigation(null)
-  }
-
-  // SAVE ALL — writes everything staged in state to Supabase
   const saveAllChanges = async () => {
     try {
       await supabase.from('scorecards').update({
@@ -157,17 +136,14 @@ export default function ScorecardBuilder() {
       setHasUnsavedChanges(false)
       flash('All changes saved ✓')
     } catch (err) {
-      flash('Failed to save changes: ' + err.message, false)
+      flash('Failed to save: ' + err.message, false)
     }
   }
 
   const togglePublish = async () => {
-    if (hasUnsavedChanges) {
-      return flash('Save your changes before publishing or unpublishing.', false)
-    }
+    if (hasUnsavedChanges) return flash('Save your changes before publishing or unpublishing.', false)
     const newVal = !scorecard.is_published
-    const { error } = await supabase.from('scorecards')
-      .update({ is_published: newVal }).eq('id', id)
+    const { error } = await supabase.from('scorecards').update({ is_published: newVal }).eq('id', id)
     if (error) return flash(error.message, false)
     setScorecard(s => ({ ...s, is_published: newVal }))
     flash(newVal ? 'Scorecard published' : 'Scorecard unpublished')
@@ -187,11 +163,8 @@ export default function ScorecardBuilder() {
 
   const updateMetaField = async (fieldId, updates) => {
     setMetadata(m => m.map(f => f.id === fieldId ? { ...f, ...updates } : f))
-    if (!isPublished) {
-      await supabase.from('scorecard_metadata_fields').update(updates).eq('id', fieldId)
-    } else {
-      markChanged()
-    }
+    if (!isPublished) await supabase.from('scorecard_metadata_fields').update(updates).eq('id', fieldId)
+    else markChanged()
   }
 
   const deleteMetaField = async (fieldId) => {
@@ -212,11 +185,8 @@ export default function ScorecardBuilder() {
 
   const updateGroup = async (groupId, updates) => {
     setGroups(g => g.map(gr => gr.id === groupId ? { ...gr, ...updates } : gr))
-    if (!isPublished) {
-      await supabase.from('scorecard_question_groups').update(updates).eq('id', groupId)
-    } else {
-      markChanged()
-    }
+    if (!isPublished) await supabase.from('scorecard_question_groups').update(updates).eq('id', groupId)
+    else markChanged()
   }
 
   const deleteGroup = async (groupId) => {
@@ -241,11 +211,8 @@ export default function ScorecardBuilder() {
 
   const updateQuestion = async (qId, updates) => {
     setQuestions(q => q.map(qs => qs.id === qId ? { ...qs, ...updates } : qs))
-    if (!isPublished) {
-      await supabase.from('scorecard_questions').update(updates).eq('id', qId)
-    } else {
-      markChanged()
-    }
+    if (!isPublished) await supabase.from('scorecard_questions').update(updates).eq('id', qId)
+    else markChanged()
   }
 
   const deleteQuestion = async (qId) => {
@@ -255,7 +222,6 @@ export default function ScorecardBuilder() {
     markChanged()
   }
 
-  // DRAG AND DROP
   const handleDragStart = (event) => {
     const q = questions.find(q => q.id === event.active.id)
     setActiveQuestion(q)
@@ -269,11 +235,9 @@ export default function ScorecardBuilder() {
     if (!activeQ) return
 
     let newGroupId = activeQ.group_id
-    if (over.id.startsWith('group-')) {
-      newGroupId = over.id.replace('group-', '')
-    } else if (over.id === 'ungrouped') {
-      newGroupId = null
-    } else {
+    if (over.id.startsWith('group-')) newGroupId = over.id.replace('group-', '')
+    else if (over.id === 'ungrouped') newGroupId = null
+    else {
       const overQ = questions.find(q => q.id === over.id)
       if (overQ) newGroupId = overQ.group_id
     }
@@ -282,19 +246,15 @@ export default function ScorecardBuilder() {
       q.id === active.id ? { ...q, group_id: newGroupId } : q
     )
     const oldIndex = reordered.findIndex(q => q.id === active.id)
-    const newIndex = over.id === active.id ? oldIndex :
-      reordered.findIndex(q => q.id === over.id)
-    if (newIndex !== -1 && oldIndex !== newIndex) {
-      reordered = arrayMove(reordered, oldIndex, newIndex)
-    }
+    const newIndex = over.id === active.id ? oldIndex : reordered.findIndex(q => q.id === over.id)
+    if (newIndex !== -1 && oldIndex !== newIndex) reordered = arrayMove(reordered, oldIndex, newIndex)
+
     setQuestions(reordered)
     markChanged()
 
     if (!isPublished) {
       await Promise.all(reordered.map((q, i) =>
-        supabase.from('scorecard_questions').update({
-          position: i + 1, group_id: q.group_id
-        }).eq('id', q.id)
+        supabase.from('scorecard_questions').update({ position: i + 1, group_id: q.group_id }).eq('id', q.id)
       ))
     }
   }
@@ -311,11 +271,8 @@ export default function ScorecardBuilder() {
 
   const updateSection = async (sId, updates) => {
     setSections(s => s.map(sec => sec.id === sId ? { ...sec, ...updates } : sec))
-    if (!isPublished) {
-      await supabase.from('dsat_sections').update(updates).eq('id', sId)
-    } else {
-      markChanged()
-    }
+    if (!isPublished) await supabase.from('dsat_sections').update(updates).eq('id', sId)
+    else markChanged()
   }
 
   const deleteSection = async (sId) => {
@@ -328,9 +285,8 @@ export default function ScorecardBuilder() {
 
   const addDsatQuestion = async (sectionId) => {
     const { data, error } = await supabase.from('dsat_questions').insert({
-      scorecard_id: id, section_id: sectionId,
-      title: 'New Question', is_required: true,
-      position: dsatQuestions.filter(q => q.section_id === sectionId).length + 1
+      scorecard_id: id, section_id: sectionId, title: 'New Question',
+      is_required: true, position: dsatQuestions.filter(q => q.section_id === sectionId).length + 1
     }).select().single()
     if (error) return flash(error.message, false)
     setDsatQuestions(q => [...q, data])
@@ -339,11 +295,8 @@ export default function ScorecardBuilder() {
 
   const updateDsatQuestion = async (qId, updates) => {
     setDsatQuestions(q => q.map(dq => dq.id === qId ? { ...dq, ...updates } : dq))
-    if (!isPublished) {
-      await supabase.from('dsat_questions').update(updates).eq('id', qId)
-    } else {
-      markChanged()
-    }
+    if (!isPublished) await supabase.from('dsat_questions').update(updates).eq('id', qId)
+    else markChanged()
   }
 
   const deleteDsatQuestion = async (qId) => {
@@ -366,11 +319,8 @@ export default function ScorecardBuilder() {
 
   const updateOption = async (optId, updates) => {
     setDsatOptions(o => o.map(opt => opt.id === optId ? { ...opt, ...updates } : opt))
-    if (!isPublished) {
-      await supabase.from('dsat_options').update(updates).eq('id', optId)
-    } else {
-      markChanged()
-    }
+    if (!isPublished) await supabase.from('dsat_options').update(updates).eq('id', optId)
+    else markChanged()
   }
 
   const deleteOption = async (optId) => {
@@ -383,30 +333,26 @@ export default function ScorecardBuilder() {
   if (!scorecard) return <div className="page"><p>Scorecard not found.</p></div>
 
   const ungroupedQuestions = questions.filter(q => !q.group_id)
-  const tabs = scorecard.type === 'dsat'
-    ? ['settings', 'sections']
-    : ['settings', 'metadata', 'questions']
+  const tabs = scorecard.type === 'dsat' ? ['settings', 'sections'] : ['settings', 'metadata', 'questions']
 
   return (
     <div className="page">
-      {/* LEAVE WARNING MODAL */}
-      {showLeaveWarning && (
+
+      {/* BLOCKER MODAL — fires for ALL navigation including sidebar */}
+      {blocker.state === 'blocked' && (
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
         }}>
           <div className="card" style={{ maxWidth: 420, width: '100%', padding: 32 }}>
-            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
-              ⚠️ Unsaved Changes
-            </div>
+            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>⚠️ Unsaved Changes</div>
             <p style={{ color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.6 }}>
               You have unsaved changes on this published scorecard. If you leave now,
-              your changes will be lost and the scorecard will remain as it was.
-              Are you sure you want to leave?
+              your changes will be lost. Are you sure you want to leave?
             </p>
             <div style={{ display: 'flex', gap: 12 }}>
-              <button className="btn btn-danger" onClick={confirmLeave}>Yes, leave</button>
-              <button className="btn btn-primary" onClick={cancelLeave}>No, stay</button>
+              <button className="btn btn-danger" onClick={() => blocker.proceed()}>Yes, leave</button>
+              <button className="btn btn-primary" onClick={() => blocker.reset()}>No, stay</button>
             </div>
           </div>
         </div>
@@ -415,7 +361,7 @@ export default function ScorecardBuilder() {
       <div className="page-header">
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
-            onClick={() => handleNavigateAway('/scorecards')}>
+            onClick={() => navigate('/scorecards')}>
             ← Back to Scorecards
           </button>
           <h1>{scorecard.name}</h1>
@@ -433,7 +379,7 @@ export default function ScorecardBuilder() {
           {scorecard.is_published && (
             <button
               className="btn btn-sm btn-primary"
-              style={{ opacity: hasUnsavedChanges ? 1 : 0.4, cursor: hasUnsavedChanges ? 'pointer' : 'default' }}
+              style={{ opacity: hasUnsavedChanges ? 1 : 0.4 }}
               onClick={hasUnsavedChanges ? saveAllChanges : undefined}>
               Save Changes
             </button>
@@ -450,8 +396,7 @@ export default function ScorecardBuilder() {
 
       <div className="tabs">
         {tabs.map(t => (
-          <button key={t} className={`tab ${tab === t ? 'active' : ''}`}
-            onClick={() => setTab(t)}>
+          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -474,8 +419,7 @@ export default function ScorecardBuilder() {
           </div>
           <div className="form-field" style={{ marginBottom: 16 }}>
             <label>Type</label>
-            <input className="input"
-              value={scorecard.type === 'quality' ? 'Quality Evaluation' : 'DSAT'}
+            <input className="input" value={scorecard.type === 'quality' ? 'Quality Evaluation' : 'DSAT'}
               disabled style={{ opacity: 0.6 }} />
             <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'block' }}>
               Scorecard type cannot be changed after creation.
@@ -498,8 +442,9 @@ export default function ScorecardBuilder() {
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <p style={{ color: 'var(--text-secondary)' }}>{metadata.length}/10 metadata fields</p>
-            <button className="btn btn-primary btn-sm" onClick={addMetaField}
-              disabled={metadata.length >= 10}>+ Add Field</button>
+            <button className="btn btn-primary btn-sm" onClick={addMetaField} disabled={metadata.length >= 10}>
+              + Add Field
+            </button>
           </div>
           {metadata.length === 0 && (
             <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
@@ -553,31 +498,23 @@ export default function ScorecardBuilder() {
         </div>
       )}
 
-      {/* QUESTIONS - Quality */}
+      {/* QUESTIONS */}
       {tab === 'questions' && scorecard.type === 'quality' && (
         <div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => addQuestion(null)}>
-              + Add Question
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={addGroup}>
-              + Add Group
-            </button>
+            <button className="btn btn-primary btn-sm" onClick={() => addQuestion(null)}>+ Add Question</button>
+            <button className="btn btn-ghost btn-sm" onClick={addGroup}>+ Add Group</button>
           </div>
 
           <DndContext sensors={sensors} collisionDetection={closestCenter}
             onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-
             <DroppableZone id="ungrouped">
               <div style={{ minHeight: 40 }}>
                 {ungroupedQuestions.length === 0 && (
                   <div style={{
-                    padding: '12px 16px', border: '2px dashed var(--border)',
-                    borderRadius: 8, color: 'var(--text-secondary)',
-                    fontSize: 13, marginBottom: 8, textAlign: 'center'
-                  }}>
-                    Drop questions here to ungroup them
-                  </div>
+                    padding: '12px 16px', border: '2px dashed var(--border)', borderRadius: 8,
+                    color: 'var(--text-secondary)', fontSize: 13, marginBottom: 8, textAlign: 'center'
+                  }}>Drop questions here to ungroup them</div>
                 )}
                 <SortableContext items={ungroupedQuestions.map(q => q.id)} strategy={verticalListSortingStrategy}>
                   {ungroupedQuestions.map(q => (
@@ -594,28 +531,22 @@ export default function ScorecardBuilder() {
                 <div key={group.id} className="card" style={{ marginBottom: 16 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <input className="input" style={{ fontWeight: 600, fontSize: 15, maxWidth: 400 }}
-                      value={group.name}
-                      onChange={e => updateGroup(group.id, { name: e.target.value })} />
+                      value={group.name} onChange={e => updateGroup(group.id, { name: e.target.value })} />
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button className="btn btn-sm btn-ghost" onClick={() => addQuestion(group.id)}>
                         + Add Question to Group
                       </button>
                       <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }}
-                        onClick={() => deleteGroup(group.id)}>
-                        Delete Group
-                      </button>
+                        onClick={() => deleteGroup(group.id)}>Delete Group</button>
                     </div>
                   </div>
                   <DroppableZone id={`group-${group.id}`}>
                     <div style={{ minHeight: 40 }}>
                       {groupQs.length === 0 && (
                         <div style={{
-                          padding: '12px 16px', border: '2px dashed var(--border)',
-                          borderRadius: 8, color: 'var(--text-secondary)',
-                          fontSize: 13, textAlign: 'center'
-                        }}>
-                          Drop questions here
-                        </div>
+                          padding: '12px 16px', border: '2px dashed var(--border)', borderRadius: 8,
+                          color: 'var(--text-secondary)', fontSize: 13, textAlign: 'center'
+                        }}>Drop questions here</div>
                       )}
                       <SortableContext items={groupQs.map(q => q.id)} strategy={verticalListSortingStrategy}>
                         {groupQs.map(q => (
@@ -631,13 +562,8 @@ export default function ScorecardBuilder() {
 
             <DragOverlay>
               {activeQuestion && (
-                <div className="card" style={{
-                  borderLeft: '3px solid var(--accent)', opacity: 0.9,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.3)'
-                }}>
-                  <div style={{ padding: '8px 12px', fontWeight: 500 }}>
-                    {activeQuestion.title}
-                  </div>
+                <div className="card" style={{ borderLeft: '3px solid var(--accent)', opacity: 0.9, boxShadow: '0 8px 24px rgba(0,0,0,0.3)' }}>
+                  <div style={{ padding: '8px 12px', fontWeight: 500 }}>{activeQuestion.title}</div>
                 </div>
               )}
             </DragOverlay>
@@ -656,7 +582,7 @@ export default function ScorecardBuilder() {
           </div>
           {sections.length === 0 && (
             <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
-              No sections yet. Add your first section to get started.
+              No sections yet.
             </div>
           )}
           {sections.map((section, sIdx) => (
@@ -665,21 +591,14 @@ export default function ScorecardBuilder() {
                 <div style={{ flex: 1, marginRight: 16 }}>
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>SECTION {sIdx + 1}</div>
                   <input className="input" style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}
-                    value={section.title}
-                    onChange={e => updateSection(section.id, { title: e.target.value })} />
-                  <input className="input" style={{ fontSize: 13 }}
-                    placeholder="Section description (optional)"
-                    value={section.description || ''}
-                    onChange={e => updateSection(section.id, { description: e.target.value })} />
+                    value={section.title} onChange={e => updateSection(section.id, { title: e.target.value })} />
+                  <input className="input" style={{ fontSize: 13 }} placeholder="Section description (optional)"
+                    value={section.description || ''} onChange={e => updateSection(section.id, { description: e.target.value })} />
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-sm btn-ghost" onClick={() => addDsatQuestion(section.id)}>
-                    + Add Question
-                  </button>
+                  <button className="btn btn-sm btn-ghost" onClick={() => addDsatQuestion(section.id)}>+ Add Question</button>
                   <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }}
-                    onClick={() => deleteSection(section.id)}>
-                    Delete Section
-                  </button>
+                    onClick={() => deleteSection(section.id)}>Delete Section</button>
                 </div>
               </div>
               {dsatQuestions.filter(q => q.section_id === section.id).map(q => (
@@ -733,8 +652,7 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
             <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(e => !e)}>
               {expanded ? '▲' : '▼'}
             </button>
-            <input className="input" style={{ flex: 1 }}
-              value={question.title}
+            <input className="input" style={{ flex: 1 }} value={question.title}
               onChange={e => onUpdate(question.id, { title: e.target.value })} />
           </div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
@@ -815,8 +733,7 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
           <button className="btn btn-ghost btn-sm" onClick={() => setExpanded(e => !e)}>
             {expanded ? '▲' : '▼'}
           </button>
-          <input className="input" style={{ flex: 1 }}
-            value={question.title}
+          <input className="input" style={{ flex: 1 }} value={question.title}
             onChange={e => onUpdateQuestion(question.id, { title: e.target.value })} />
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
@@ -857,8 +774,7 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
               <div key={opt.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                 <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>○</span>
                 <input className="input" style={{ flex: 2 }} placeholder="Option label"
-                  value={opt.label}
-                  onChange={e => onUpdateOption(opt.id, { label: e.target.value })} />
+                  value={opt.label} onChange={e => onUpdateOption(opt.id, { label: e.target.value })} />
                 <select className="select" style={{ flex: 2 }}
                   value={opt.jump_to_section_id || ''}
                   onChange={e => onUpdateOption(opt.id, { jump_to_section_id: e.target.value || null })}>
