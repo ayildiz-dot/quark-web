@@ -6,6 +6,8 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Evaluations from './pages/Evaluations'
 import Admin from './pages/Admin'
+import Scorecards from './pages/Scorecards'
+import ScorecardBuilder from './pages/ScorecardBuilder'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -63,6 +65,8 @@ export default function App() {
 
   if (!user) return <Login />
 
+  const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
+
   return (
     <AuthContext.Provider value={{ user, profile, logout, refreshProfile: () => fetchProfile(user) }}>
       <div className="app-shell">
@@ -72,7 +76,9 @@ export default function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/evaluations" element={<Evaluations />} />
-            <Route path="/admin" element={['admin', 'owner'].includes(profile?.role) ? <Admin /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/scorecards" element={<Scorecards />} />
+            <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>

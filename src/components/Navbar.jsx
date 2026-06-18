@@ -3,9 +3,9 @@ import { useAuth } from '../App'
 
 export default function Navbar() {
   const { profile, logout } = useAuth()
-  const navigate  = useNavigate()
-  const location  = useLocation()
-  const isActive  = (path) => location.pathname === path
+  const navigate = useNavigate()
+  const location = useLocation()
+  const isActive = (path) => location.pathname.startsWith(path)
 
   const initials = profile?.name
     ? profile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
@@ -31,6 +31,12 @@ export default function Navbar() {
           onClick={() => navigate('/evaluations')}>
           <i className="ti ti-clipboard-check" aria-hidden="true" />
           Evaluations
+        </button>
+        <button
+          className={`nav-item ${isActive('/scorecards') ? 'active' : ''}`}
+          onClick={() => navigate('/scorecards')}>
+          <i className="ti ti-forms" aria-hidden="true" />
+          Scorecards
         </button>
         {['admin', 'owner'].includes(profile?.role) && (
           <button
