@@ -72,7 +72,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/evaluations" element={<Evaluations />} />
-            <Route path="/admin" element={profile?.role === 'admin' ? <Admin /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/admin" element={['admin', 'owner'].includes(profile?.role) ? <Admin /> : <Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>

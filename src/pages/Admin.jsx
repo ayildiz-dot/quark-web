@@ -138,12 +138,17 @@ export default function Admin() {
                         <option value="viewer">Viewer</option>
                         <option value="evaluator">Evaluator</option>
                         <option value="admin">Admin</option>
+                        <option value="owner">Owner</option>
                       </select>
-                      <button
-                        className={`btn btn-sm ${u.active ? 'btn-danger' : 'btn-success'}`}
-                        onClick={() => toggleActive(u.id, !u.active)}>
-                        {u.active ? 'Deactivate' : 'Activate'}
-                      </button>
+                      {(profile?.role === 'owner' ||
+                        (profile?.role === 'admin' && u.role !== 'owner')) &&
+                        u.id !== profile.id && (
+                        <button
+                          className={`btn btn-sm ${u.active ? 'btn-danger' : 'btn-success'}`}
+                          onClick={() => toggleActive(u.id, !u.active)}>
+                          {u.active ? 'Deactivate' : 'Activate'}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

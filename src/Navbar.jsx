@@ -32,7 +32,7 @@ export default function Navbar() {
           <i className="ti ti-clipboard-check" aria-hidden="true" />
           Evaluations
         </button>
-        {profile?.role === 'admin' && (
+        {['admin', 'owner'].includes(profile?.role) && (
           <button
             className={`nav-item ${isActive('/admin') ? 'active' : ''}`}
             onClick={() => navigate('/admin')}>
