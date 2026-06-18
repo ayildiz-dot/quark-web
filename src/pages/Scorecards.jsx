@@ -11,6 +11,7 @@ export default function Scorecards() {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [newType, setNewType] = useState('quality')
   const [msg, setMsg] = useState(null)
 
   const canEdit = ['admin', 'owner'].includes(profile?.role)
@@ -35,13 +36,14 @@ export default function Scorecards() {
     if (!newName.trim()) return flash('Scorecard name is required.', false)
     const { data, error } = await supabase
       .from('scorecards')
-      .insert({ name: newName.trim(), description: newDesc.trim(), created_by: profile.id })
+      .insert({ name: newName.trim(), description: newDesc.trim(), type: newType, created_by: profile.id })
       .select()
       .single()
     if (error) return flash(error.message, false)
     setCreating(false)
     setNewName('')
     setNewDesc('')
+    setNewType('quality')
     navigate(`/scorecards/${data.id}/edit`)
   }
 
@@ -84,6 +86,13 @@ export default function Scorecards() {
               <input className="input" placeholder="What is this scorecard for?"
                 value={newDesc} onChange={e => setNewDesc(e.target.value)} />
             </div>
+            <div className="form-field">
+              <label>Type</label>
+              <select className="select" value={newType} onChange={e => setNewType(e.target.value)}>
+                <option value="quality">Quality Evaluation</option>
+                <option value="dsat">DSAT</option>
+              </select>
+            </div>
             <div className="form-field form-field-btn">
               <label>&nbsp;</label>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -91,6 +100,11 @@ export default function Scorecards() {
                 <button className="btn btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
               </div>
             </div>
+          </div>
+          <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-card)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+            {newType === 'quality'
+              ? '📋 Quality scorecards include weighted questions, critical question logic, and automatic scoring.'
+              : '📊 DSAT scorecards include free answer options, sections, and conditional branching — no scoring.'}
           </div>
         </div>
       )}
@@ -100,6 +114,7 @@ export default function Scorecards() {
           <thead>
             <tr>
               <th>Name</th>
+              <th>Type</th>
               <th>Description</th>
               <th>Status</th>
               <th>Created By</th>
@@ -109,11 +124,16 @@ export default function Scorecards() {
           </thead>
           <tbody>
             {scorecards.length === 0 && (
-              <tr><td colSpan="6" className="empty-row">No scorecards yet. Create your first one.</td></tr>
+              <tr><td colSpan="7" className="empty-row">No scorecards yet. Create your first one.</td></tr>
             )}
             {scorecards.map(sc => (
               <tr key={sc.id}>
                 <td style={{ fontWeight: 500 }}>{sc.name}</td>
+                <td>
+                  <span className={`badge ${sc.type === 'quality' ? 'badge-admin' : 'badge-channel'}`}>
+                    {sc.type === 'quality' ? 'Quality' : 'DSAT'}
+                  </span>
+                </td>
                 <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '—'}</td>
                 <td>
                   <span className={`badge ${sc.is_published ? 'badge-pass' : 'badge-fail'}`}>
