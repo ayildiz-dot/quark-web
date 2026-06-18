@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
@@ -13,7 +13,7 @@ import { CSS } from '@dnd-kit/utilities'
 
 export default function ScorecardBuilder() {
   const { id } = useParams()
-  const { profile } = useAuth()
+  const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath } = useAuth()
   const navigate = useNavigate()
 
   const [tab, setTab] = useState('settings')
@@ -26,73 +26,40 @@ export default function ScorecardBuilder() {
   const [dsatOptions, setDsatOptions] = useState([])
   const [msg, setMsg] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [activeQuestion, setActiveQuestion] = useState(null)
-  const [showUnsavedModal, setShowUnsavedModal] = useState(false)
-  const [pendingNav, setPendingNav] = useState(null)
-
-  // Keep a ref in sync so event listeners can read the latest value
-  const unsavedRef = useRef(false)
-  const pendingNavRef = useRef(null)
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 5 }
   }))
 
-  const markChanged = () => {
-    setHasUnsavedChanges(true)
-    unsavedRef.current = true
+  const markChanged = () => setUnsavedChanges(true)
+  const clearChanged = () => setUnsavedChanges(false)
+
+  const safeNavigate = (path) => {
+    if (unsavedChanges) {
+      setPendingNavPath(path)
+      setShowNavModal(true)
+    } else {
+      navigate(path)
+    }
   }
 
-  const clearChanged = () => {
-    setHasUnsavedChanges(false)
-    unsavedRef.current = false
-  }
-
-  // Intercept ALL link clicks on the page when there are unsaved changes
+  // Clear unsaved flag when leaving this page
   useEffect(() => {
-    const handleClick = (e) => {
-      if (!unsavedRef.current) return
-      const anchor = e.target.closest('a[href]')
-      if (!anchor) return
-      const href = anchor.getAttribute('href')
-      if (!href || href.startsWith('http') || href.startsWith('mailto')) return
-      // It's an internal link — intercept it
-      e.preventDefault()
-      e.stopPropagation()
-      pendingNavRef.current = href
-      setPendingNav(href)
-      setShowUnsavedModal(true)
-    }
-    document.addEventListener('click', handleClick, true)
-    return () => document.removeEventListener('click', handleClick, true)
-  }, [])
-
-  // Intercept browser back/forward buttons
-  useEffect(() => {
-    const handlePopState = () => {
-      if (!unsavedRef.current) return
-      window.history.pushState(null, '', window.location.href)
-      pendingNavRef.current = -1
-      setPendingNav(-1)
-      setShowUnsavedModal(true)
-    }
-    window.history.pushState(null, '', window.location.href)
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
+    return () => setUnsavedChanges(false)
   }, [])
 
   // Warn on browser refresh or tab close
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      if (unsavedRef.current) {
+      if (unsavedChanges) {
         e.preventDefault()
         e.returnValue = ''
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [])
+  }, [unsavedChanges])
 
   useEffect(() => { loadAll() }, [id])
 
@@ -127,22 +94,6 @@ export default function ScorecardBuilder() {
   }
 
   const isPublished = scorecard?.is_published
-
-  const confirmLeave = () => {
-    clearChanged()
-    setShowUnsavedModal(false)
-    const dest = pendingNavRef.current
-    pendingNavRef.current = null
-    setPendingNav(null)
-    if (dest === -1) window.history.go(-1)
-    else if (dest) navigate(dest)
-  }
-
-  const cancelLeave = () => {
-    setShowUnsavedModal(false)
-    pendingNavRef.current = null
-    setPendingNav(null)
-  }
 
   const saveAllChanges = async () => {
     try {
@@ -199,7 +150,7 @@ export default function ScorecardBuilder() {
   }
 
   const togglePublish = async () => {
-    if (hasUnsavedChanges) return flash('Save your changes before publishing or unpublishing.', false)
+    if (unsavedChanges) return flash('Save your changes before publishing or unpublishing.', false)
     const newVal = !scorecard.is_published
     const { error } = await supabase.from('scorecards').update({ is_published: newVal }).eq('id', id)
     if (error) return flash(error.message, false)
@@ -396,38 +347,10 @@ export default function ScorecardBuilder() {
 
   return (
     <div className="page">
-
-      {/* UNSAVED CHANGES MODAL */}
-      {showUnsavedModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
-        }}>
-          <div className="card" style={{ maxWidth: 420, width: '100%', padding: 32 }}>
-            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>⚠️ Unsaved Changes</div>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.6 }}>
-              You have unsaved changes on this scorecard. If you leave now, your changes will be lost.
-            </p>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <button className="btn btn-danger" onClick={confirmLeave}>Leave without saving</button>
-              <button className="btn btn-primary" onClick={cancelLeave}>Stay on page</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="page-header">
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
-            onClick={() => {
-              if (hasUnsavedChanges) {
-                pendingNavRef.current = '/scorecards'
-                setPendingNav('/scorecards')
-                setShowUnsavedModal(true)
-              } else {
-                navigate('/scorecards')
-              }
-            }}>
+            onClick={() => safeNavigate('/scorecards')}>
             ← Back to Scorecards
           </button>
           <h1>{scorecard.name}</h1>
@@ -436,7 +359,7 @@ export default function ScorecardBuilder() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {hasUnsavedChanges && (
+          {unsavedChanges && (
             <span style={{ fontSize: 12, color: '#f59e0b' }}>● Unsaved changes</span>
           )}
           <span className={`badge ${scorecard.is_published ? 'badge-pass' : 'badge-fail'}`}>
@@ -445,8 +368,8 @@ export default function ScorecardBuilder() {
           {scorecard.is_published && (
             <button
               className="btn btn-sm btn-primary"
-              style={{ opacity: hasUnsavedChanges ? 1 : 0.4 }}
-              onClick={hasUnsavedChanges ? saveAllChanges : undefined}>
+              style={{ opacity: unsavedChanges ? 1 : 0.4 }}
+              onClick={unsavedChanges ? saveAllChanges : undefined}>
               Save Changes
             </button>
           )}

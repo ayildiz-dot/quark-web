@@ -2,7 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../App'
 
 export default function Navbar() {
-  const { profile, logout } = useAuth()
+  const { profile, logout, unsavedChanges, setShowNavModal, setPendingNavPath } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const isActive = (path) => location.pathname.startsWith(path)
@@ -10,6 +10,15 @@ export default function Navbar() {
   const initials = profile?.name
     ? profile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
     : '?'
+
+  const safeNavigate = (path) => {
+    if (unsavedChanges) {
+      setPendingNavPath(path)
+      setShowNavModal(true)
+    } else {
+      navigate(path)
+    }
+  }
 
   return (
     <nav className="navbar">
@@ -22,26 +31,26 @@ export default function Navbar() {
       <div className="navbar-links">
         <button
           className={`nav-item ${isActive('/dashboard') ? 'active' : ''}`}
-          onClick={() => navigate('/dashboard')}>
+          onClick={() => safeNavigate('/dashboard')}>
           <i className="ti ti-layout-dashboard" aria-hidden="true" />
           Dashboard
         </button>
         <button
           className={`nav-item ${isActive('/evaluations') ? 'active' : ''}`}
-          onClick={() => navigate('/evaluations')}>
+          onClick={() => safeNavigate('/evaluations')}>
           <i className="ti ti-clipboard-check" aria-hidden="true" />
           Evaluations
         </button>
         <button
           className={`nav-item ${isActive('/scorecards') ? 'active' : ''}`}
-          onClick={() => navigate('/scorecards')}>
+          onClick={() => safeNavigate('/scorecards')}>
           <i className="ti ti-forms" aria-hidden="true" />
           Scorecards
         </button>
         {['admin', 'owner'].includes(profile?.role) && (
           <button
             className={`nav-item ${isActive('/admin') ? 'active' : ''}`}
-            onClick={() => navigate('/admin')}>
+            onClick={() => safeNavigate('/admin')}>
             <i className="ti ti-settings" aria-hidden="true" />
             Admin
           </button>

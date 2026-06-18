@@ -1,5 +1,5 @@
 import { useState, useEffect, createContext, useContext } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import Navbar from './components/Navbar'
 import Login from './pages/Login'
@@ -11,6 +11,75 @@ import ScorecardBuilder from './pages/ScorecardBuilder'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
+
+function UnsavedModal({ show, onLeave, onStay }) {
+  if (!show) return null
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
+    }}>
+      <div className="card" style={{ maxWidth: 420, width: '100%', padding: 32 }}>
+        <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>⚠️ Unsaved Changes</div>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.6 }}>
+          You have unsaved changes on this scorecard. If you leave now, your changes will be lost.
+        </p>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button className="btn btn-danger" onClick={onLeave}>Leave without saving</button>
+          <button className="btn btn-primary" onClick={onStay}>Stay on page</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AppShell({ user, profile, logout, fetchProfile }) {
+  const navigate = useNavigate()
+  const [unsavedChanges, setUnsavedChanges] = useState(false)
+  const [showNavModal, setShowNavModal] = useState(false)
+  const [pendingNavPath, setPendingNavPath] = useState(null)
+
+  const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
+
+  const handleLeave = () => {
+    setUnsavedChanges(false)
+    setShowNavModal(false)
+    const dest = pendingNavPath
+    setPendingNavPath(null)
+    if (dest) navigate(dest)
+  }
+
+  const handleStay = () => {
+    setShowNavModal(false)
+    setPendingNavPath(null)
+  }
+
+  return (
+    <AuthContext.Provider value={{
+      user, profile, logout,
+      refreshProfile: () => fetchProfile(user),
+      unsavedChanges, setUnsavedChanges,
+      showNavModal, setShowNavModal,
+      pendingNavPath, setPendingNavPath
+    }}>
+      <div className="app-shell">
+        <UnsavedModal show={showNavModal} onLeave={handleLeave} onStay={handleStay} />
+        <Navbar />
+        <main className="main-content">
+          <Routes>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/evaluations" element={<Evaluations />} />
+            <Route path="/scorecards" element={<Scorecards />} />
+            <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </main>
+      </div>
+    </AuthContext.Provider>
+  )
+}
 
 export default function App() {
   const [user, setUser] = useState(null)
@@ -65,24 +134,5 @@ export default function App() {
 
   if (!user) return <Login />
 
-  const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
-
-  return (
-    <AuthContext.Provider value={{ user, profile, logout, refreshProfile: () => fetchProfile(user) }}>
-      <div className="app-shell">
-        <Navbar />
-        <main className="main-content">
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/evaluations" element={<Evaluations />} />
-            <Route path="/scorecards" element={<Scorecards />} />
-            <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
-            <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
-        </main>
-      </div>
-    </AuthContext.Provider>
-  )
+  return <AppShell user={user} profile={profile} logout={logout} fetchProfile={fetchProfile} />
 }
