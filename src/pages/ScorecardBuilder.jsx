@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
@@ -37,16 +37,17 @@ export default function ScorecardBuilder() {
 
   useEffect(() => { loadAll() }, [id])
 
+  // Warn on browser refresh/close
   useEffect(() => {
     const handleBeforeUnload = (e) => {
-      if (hasUnsavedChanges && scorecard?.is_published) {
+      if (hasUnsavedChanges) {
         e.preventDefault()
         e.returnValue = ''
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [hasUnsavedChanges, scorecard?.is_published])
+  }, [hasUnsavedChanges])
 
   const loadAll = async () => {
     const [sc, meta, grp, qs] = await Promise.all([
@@ -78,12 +79,14 @@ export default function ScorecardBuilder() {
     setTimeout(() => setMsg(null), 3000)
   }
 
-  const markChanged = () => {
-    if (scorecard?.is_published) setHasUnsavedChanges(true)
-  }
+  // For published scorecards: only update state, don't touch Supabase
+  // For draft scorecards: update state AND Supabase immediately
+  const isPublished = scorecard?.is_published
+
+  const markChanged = () => setHasUnsavedChanges(true)
 
   const handleNavigateAway = (destination) => {
-    if (hasUnsavedChanges && scorecard?.is_published) {
+    if (hasUnsavedChanges) {
       setPendingNavigation(destination)
       setShowLeaveWarning(true)
     } else {
@@ -94,6 +97,7 @@ export default function ScorecardBuilder() {
   const confirmLeave = () => {
     setShowLeaveWarning(false)
     setHasUnsavedChanges(false)
+    // Reload from DB to discard local changes
     navigate(pendingNavigation)
   }
 
@@ -102,50 +106,68 @@ export default function ScorecardBuilder() {
     setPendingNavigation(null)
   }
 
+  // SAVE ALL — writes everything staged in state to Supabase
   const saveAllChanges = async () => {
-    await Promise.all([
-      supabase.from('scorecards').update({
+    try {
+      await supabase.from('scorecards').update({
         name: scorecard.name,
         description: scorecard.description,
         updated_at: new Date().toISOString()
-      }).eq('id', id),
-      ...questions.map((q, i) =>
+      }).eq('id', id)
+
+      await Promise.all(questions.map((q, i) =>
         supabase.from('scorecard_questions').update({
-          title: q.title, description: q.description, weight: q.weight,
-          is_weighted: q.is_weighted, is_form_critical: q.is_form_critical,
-          is_group_critical: q.is_group_critical, group_id: q.group_id,
-          position: i + 1
+          title: q.title, description: q.description,
+          weight: q.weight, is_weighted: q.is_weighted,
+          is_form_critical: q.is_form_critical,
+          is_group_critical: q.is_group_critical,
+          group_id: q.group_id, position: i + 1
         }).eq('id', q.id)
-      ),
-      ...groups.map(g =>
-        supabase.from('scorecard_question_groups').update({ name: g.name }).eq('id', g.id)
-      ),
-      ...metadata.map(f =>
+      ))
+
+      await Promise.all(groups.map(g =>
+        supabase.from('scorecard_question_groups')
+          .update({ name: g.name }).eq('id', g.id)
+      ))
+
+      await Promise.all(metadata.map(f =>
         supabase.from('scorecard_metadata_fields').update({
           label: f.label, field_type: f.field_type,
           is_required: f.is_required, options: f.options
         }).eq('id', f.id)
-      )
-    ])
-    setHasUnsavedChanges(false)
-    flash('All changes saved')
-  }
+      ))
 
-  const saveSettings = async () => {
-    const { error } = await supabase.from('scorecards')
-      .update({ name: scorecard.name, description: scorecard.description, updated_at: new Date().toISOString() })
-      .eq('id', id)
-    if (error) return flash(error.message, false)
-    setHasUnsavedChanges(false)
-    flash('Settings saved')
+      if (scorecard.type === 'dsat') {
+        await Promise.all(sections.map(s =>
+          supabase.from('dsat_sections')
+            .update({ title: s.title, description: s.description }).eq('id', s.id)
+        ))
+        await Promise.all(dsatQuestions.map(q =>
+          supabase.from('dsat_questions').update({
+            title: q.title, description: q.description, is_required: q.is_required
+          }).eq('id', q.id)
+        ))
+        await Promise.all(dsatOptions.map(o =>
+          supabase.from('dsat_options').update({
+            label: o.label, jump_to_section_id: o.jump_to_section_id
+          }).eq('id', o.id)
+        ))
+      }
+
+      setHasUnsavedChanges(false)
+      flash('All changes saved ✓')
+    } catch (err) {
+      flash('Failed to save changes: ' + err.message, false)
+    }
   }
 
   const togglePublish = async () => {
     if (hasUnsavedChanges) {
-      return flash('Please save your changes before publishing/unpublishing.', false)
+      return flash('Save your changes before publishing or unpublishing.', false)
     }
     const newVal = !scorecard.is_published
-    const { error } = await supabase.from('scorecards').update({ is_published: newVal }).eq('id', id)
+    const { error } = await supabase.from('scorecards')
+      .update({ is_published: newVal }).eq('id', id)
     if (error) return flash(error.message, false)
     setScorecard(s => ({ ...s, is_published: newVal }))
     flash(newVal ? 'Scorecard published' : 'Scorecard unpublished')
@@ -165,8 +187,11 @@ export default function ScorecardBuilder() {
 
   const updateMetaField = async (fieldId, updates) => {
     setMetadata(m => m.map(f => f.id === fieldId ? { ...f, ...updates } : f))
-    await supabase.from('scorecard_metadata_fields').update(updates).eq('id', fieldId)
-    markChanged()
+    if (!isPublished) {
+      await supabase.from('scorecard_metadata_fields').update(updates).eq('id', fieldId)
+    } else {
+      markChanged()
+    }
   }
 
   const deleteMetaField = async (fieldId) => {
@@ -185,9 +210,13 @@ export default function ScorecardBuilder() {
     markChanged()
   }
 
-  const updateGroup = (groupId, updates) => {
+  const updateGroup = async (groupId, updates) => {
     setGroups(g => g.map(gr => gr.id === groupId ? { ...gr, ...updates } : gr))
-    markChanged()
+    if (!isPublished) {
+      await supabase.from('scorecard_question_groups').update(updates).eq('id', groupId)
+    } else {
+      markChanged()
+    }
   }
 
   const deleteGroup = async (groupId) => {
@@ -210,9 +239,13 @@ export default function ScorecardBuilder() {
     markChanged()
   }
 
-  const updateQuestion = (qId, updates) => {
+  const updateQuestion = async (qId, updates) => {
     setQuestions(q => q.map(qs => qs.id === qId ? { ...qs, ...updates } : qs))
-    markChanged()
+    if (!isPublished) {
+      await supabase.from('scorecard_questions').update(updates).eq('id', qId)
+    } else {
+      markChanged()
+    }
   }
 
   const deleteQuestion = async (qId) => {
@@ -222,7 +255,7 @@ export default function ScorecardBuilder() {
     markChanged()
   }
 
-  // DRAG AND DROP - cross group
+  // DRAG AND DROP
   const handleDragStart = (event) => {
     const q = questions.find(q => q.id === event.active.id)
     setActiveQuestion(q)
@@ -232,19 +265,15 @@ export default function ScorecardBuilder() {
     const { active, over } = event
     setActiveQuestion(null)
     if (!over) return
-
     const activeQ = questions.find(q => q.id === active.id)
     if (!activeQ) return
 
     let newGroupId = activeQ.group_id
-
-    // Check if dropped over a group container
     if (over.id.startsWith('group-')) {
       newGroupId = over.id.replace('group-', '')
     } else if (over.id === 'ungrouped') {
       newGroupId = null
     } else {
-      // Dropped over another question - inherit its group
       const overQ = questions.find(q => q.id === over.id)
       if (overQ) newGroupId = overQ.group_id
     }
@@ -252,24 +281,22 @@ export default function ScorecardBuilder() {
     let reordered = questions.map(q =>
       q.id === active.id ? { ...q, group_id: newGroupId } : q
     )
-
-    // Reorder within the new group
     const oldIndex = reordered.findIndex(q => q.id === active.id)
     const newIndex = over.id === active.id ? oldIndex :
       reordered.findIndex(q => q.id === over.id)
-
     if (newIndex !== -1 && oldIndex !== newIndex) {
       reordered = arrayMove(reordered, oldIndex, newIndex)
     }
-
     setQuestions(reordered)
     markChanged()
 
-    await Promise.all(reordered.map((q, i) =>
-      supabase.from('scorecard_questions').update({
-        position: i + 1, group_id: q.group_id
-      }).eq('id', q.id)
-    ))
+    if (!isPublished) {
+      await Promise.all(reordered.map((q, i) =>
+        supabase.from('scorecard_questions').update({
+          position: i + 1, group_id: q.group_id
+        }).eq('id', q.id)
+      ))
+    }
   }
 
   // DSAT
@@ -282,9 +309,13 @@ export default function ScorecardBuilder() {
     markChanged()
   }
 
-  const updateSection = (sId, updates) => {
+  const updateSection = async (sId, updates) => {
     setSections(s => s.map(sec => sec.id === sId ? { ...sec, ...updates } : sec))
-    markChanged()
+    if (!isPublished) {
+      await supabase.from('dsat_sections').update(updates).eq('id', sId)
+    } else {
+      markChanged()
+    }
   }
 
   const deleteSection = async (sId) => {
@@ -306,9 +337,13 @@ export default function ScorecardBuilder() {
     markChanged()
   }
 
-  const updateDsatQuestion = (qId, updates) => {
+  const updateDsatQuestion = async (qId, updates) => {
     setDsatQuestions(q => q.map(dq => dq.id === qId ? { ...dq, ...updates } : dq))
-    markChanged()
+    if (!isPublished) {
+      await supabase.from('dsat_questions').update(updates).eq('id', qId)
+    } else {
+      markChanged()
+    }
   }
 
   const deleteDsatQuestion = async (qId) => {
@@ -329,9 +364,13 @@ export default function ScorecardBuilder() {
     markChanged()
   }
 
-  const updateOption = (optId, updates) => {
+  const updateOption = async (optId, updates) => {
     setDsatOptions(o => o.map(opt => opt.id === optId ? { ...opt, ...updates } : opt))
-    markChanged()
+    if (!isPublished) {
+      await supabase.from('dsat_options').update(updates).eq('id', optId)
+    } else {
+      markChanged()
+    }
   }
 
   const deleteOption = async (optId) => {
@@ -358,10 +397,11 @@ export default function ScorecardBuilder() {
         }}>
           <div className="card" style={{ maxWidth: 420, width: '100%', padding: 32 }}>
             <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
-              Unsaved Changes
+              ⚠️ Unsaved Changes
             </div>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
-              You have unsaved changes on this published scorecard. If you leave now, your changes will be lost.
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.6 }}>
+              You have unsaved changes on this published scorecard. If you leave now,
+              your changes will be lost and the scorecard will remain as it was.
               Are you sure you want to leave?
             </p>
             <div style={{ display: 'flex', gap: 12 }}>
@@ -383,20 +423,18 @@ export default function ScorecardBuilder() {
             {scorecard.type === 'quality' ? 'Quality Scorecard Builder' : 'DSAT Scorecard Builder'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {hasUnsavedChanges && scorecard.is_published && (
-            <span style={{ fontSize: 12, color: 'var(--warning, #f59e0b)' }}>
-              ● Unsaved changes
-            </span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {hasUnsavedChanges && (
+            <span style={{ fontSize: 12, color: '#f59e0b' }}>● Unsaved changes</span>
           )}
           <span className={`badge ${scorecard.is_published ? 'badge-pass' : 'badge-fail'}`}>
             {scorecard.is_published ? 'Published' : 'Draft'}
           </span>
           {scorecard.is_published && (
             <button
-              className={`btn btn-sm btn-primary ${!hasUnsavedChanges ? 'btn-ghost' : ''}`}
-              onClick={saveAllChanges}
-              disabled={!hasUnsavedChanges}>
+              className="btn btn-sm btn-primary"
+              style={{ opacity: hasUnsavedChanges ? 1 : 0.4, cursor: hasUnsavedChanges ? 'pointer' : 'default' }}
+              onClick={hasUnsavedChanges ? saveAllChanges : undefined}>
               Save Changes
             </button>
           )}
@@ -443,7 +481,15 @@ export default function ScorecardBuilder() {
               Scorecard type cannot be changed after creation.
             </span>
           </div>
-          <button className="btn btn-primary" onClick={saveSettings}>Save Settings</button>
+          {!isPublished && (
+            <button className="btn btn-primary" onClick={async () => {
+              const { error } = await supabase.from('scorecards')
+                .update({ name: scorecard.name, description: scorecard.description, updated_at: new Date().toISOString() })
+                .eq('id', id)
+              if (error) return flash(error.message, false)
+              flash('Settings saved')
+            }}>Save Settings</button>
+          )}
         </div>
       )}
 
@@ -519,13 +565,9 @@ export default function ScorecardBuilder() {
             </button>
           </div>
 
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}>
+          <DndContext sensors={sensors} collisionDetection={closestCenter}
+            onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
 
-            {/* UNGROUPED DROP ZONE */}
             <DroppableZone id="ungrouped">
               <div style={{ minHeight: 40 }}>
                 {ungroupedQuestions.length === 0 && (
@@ -546,7 +588,6 @@ export default function ScorecardBuilder() {
               </div>
             </DroppableZone>
 
-            {/* GROUPS */}
             {groups.map(group => {
               const groupQs = questions.filter(q => q.group_id === group.id)
               return (
@@ -613,13 +654,11 @@ export default function ScorecardBuilder() {
             </p>
             <button className="btn btn-primary btn-sm" onClick={addSection}>+ Add Section</button>
           </div>
-
           {sections.length === 0 && (
             <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
               No sections yet. Add your first section to get started.
             </div>
           )}
-
           {sections.map((section, sIdx) => (
             <div key={section.id} className="card" style={{ marginBottom: 20 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
@@ -643,7 +682,6 @@ export default function ScorecardBuilder() {
                   </button>
                 </div>
               </div>
-
               {dsatQuestions.filter(q => q.section_id === section.id).map(q => (
                 <DsatQuestionCard key={q.id} question={q}
                   options={dsatOptions.filter(o => o.question_id === q.id)}
@@ -654,7 +692,6 @@ export default function ScorecardBuilder() {
                   onUpdateOption={updateOption}
                   onDeleteOption={deleteOption} />
               ))}
-
               {dsatQuestions.filter(q => q.section_id === section.id).length === 0 && (
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No questions in this section yet.</p>
               )}
@@ -681,11 +718,7 @@ function DroppableZone({ id, children }) {
 
 function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: question.id })
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.3 : 1
-  }
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : 1 }
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -712,7 +745,6 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
               onClick={() => onDelete(question.id)}>✕</button>
           </div>
         </div>
-
         {expanded && (
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
             <div className="form-row">
@@ -725,8 +757,7 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
               <div className="form-field" style={{ flex: 1 }}>
                 <label>Weight</label>
                 <input type="number" className="input" min={0} step={0.5}
-                  value={question.weight}
-                  disabled={!question.is_weighted}
+                  value={question.weight} disabled={!question.is_weighted}
                   onChange={e => onUpdate(question.id, { weight: parseFloat(e.target.value) || 0 })} />
               </div>
             </div>
@@ -777,7 +808,6 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
 
 function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDeleteQuestion, onAddOption, onUpdateOption, onDeleteOption }) {
   const [expanded, setExpanded] = useState(false)
-
   return (
     <div className="card" style={{ marginBottom: 10, borderLeft: '3px solid var(--accent)', background: 'var(--bg-main)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -797,7 +827,6 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
             onClick={() => onDeleteQuestion(question.id)}>✕</button>
         </div>
       </div>
-
       {expanded && (
         <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
           <div className="form-row">
