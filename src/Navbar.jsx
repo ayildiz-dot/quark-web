@@ -6,6 +6,7 @@ export default function Navbar() {
   const navigate  = useNavigate()
   const location  = useLocation()
   const isActive  = (path) => location.pathname === path
+  console.log('NAVBAR ROLE:', profile?.role) // temporary debug line
 
   const initials = profile?.name
     ? profile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
