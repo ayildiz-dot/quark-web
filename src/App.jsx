@@ -26,7 +26,7 @@ export default function App() {
     } else {
       const { data: np } = await supabase
         .from('users')
-        .upsert({ id: u.id, email: u.email, name: u.email.split('@')[0], role: 'admin' })
+        .upsert({ id: u.id, email: u.email, name: u.email.split('@')[0], role: 'viewer' })
         .select()
         .maybeSingle()
       setProfile(np)
