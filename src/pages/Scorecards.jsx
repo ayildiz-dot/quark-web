@@ -101,7 +101,7 @@ export default function Scorecards() {
               </div>
             </div>
           </div>
-          <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-card)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
+          <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-secondary)', borderRadius: 8, fontSize: 13, color: 'var(--text-secondary)' }}>
             {newType === 'quality'
               ? '📋 Quality scorecards include weighted questions, critical question logic, and automatic scoring.'
               : '📊 DSAT scorecards include free answer options, sections, and conditional branching — no scoring.'}
@@ -119,12 +119,13 @@ export default function Scorecards() {
               <th>Status</th>
               <th>Created By</th>
               <th>Created At</th>
+              <th>Last Modified</th>
               {canEdit && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
             {scorecards.length === 0 && (
-              <tr><td colSpan="7" className="empty-row">No scorecards yet. Create your first one.</td></tr>
+              <tr><td colSpan={canEdit ? 8 : 7} className="empty-row">No scorecards yet. Create your first one.</td></tr>
             )}
             {scorecards.map(sc => (
               <tr key={sc.id}>
@@ -134,15 +135,18 @@ export default function Scorecards() {
                     {sc.type === 'quality' ? 'Quality' : 'DSAT'}
                   </span>
                 </td>
-                <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '—'}</td>
+                <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '-'}</td>
                 <td>
                   <span className={`badge ${sc.is_published ? 'badge-pass' : 'badge-fail'}`}>
                     {sc.is_published ? 'Published' : 'Draft'}
                   </span>
                 </td>
-                <td style={{ color: 'var(--text-secondary)' }}>{sc.users?.name || '—'}</td>
+                <td style={{ color: 'var(--text-secondary)' }}>{sc.users?.name || '-'}</td>
                 <td style={{ color: 'var(--text-secondary)' }}>
                   {new Date(sc.created_at).toLocaleDateString()}
+                </td>
+                <td style={{ color: 'var(--text-secondary)' }}>
+                  {sc.updated_at ? new Date(sc.updated_at).toLocaleDateString() : '-'}
                 </td>
                 {canEdit && (
                   <td>
