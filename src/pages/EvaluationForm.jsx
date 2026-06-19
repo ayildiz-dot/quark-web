@@ -430,9 +430,9 @@ function SearchableDropdown({ options, value, onChange, placeholder = 'Select...
       {open && (
         <div style={{
           position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
-          background: 'var(--bg-card)', border: '1px solid var(--border)',
-          borderRadius: 8, zIndex: 9999, boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-          overflow: 'hidden', isolation: 'isolate'
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 8, zIndex: 9999, boxShadow: '0 8px 32px rgba(0,0,0,0.8)',
+          overflow: 'hidden'
         }}>
           <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
             <input
