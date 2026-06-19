@@ -47,7 +47,8 @@ function AppShell({ user, profile, logout, fetchProfile }) {
     setShowNavModal(false)
     const dest = pendingNavPath
     setPendingNavPath(null)
-    if (dest) navigate(dest)
+    if (dest === -1) navigate(-1)
+    else if (dest) navigate(dest)
   }
 
   const handleStay = () => {

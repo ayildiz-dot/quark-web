@@ -59,6 +59,22 @@ export default function ScorecardBuilder() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [unsavedChanges])
 
+  useEffect(() => {
+    if (!unsavedChanges) return
+    // Push a dummy state so we can intercept the back button
+    window.history.pushState(null, '', window.location.href)
+    const handlePopState = () => {
+      if (unsavedChanges) {
+        // Push again to prevent the navigation
+        window.history.pushState(null, '', window.location.href)
+        setPendingNavPath(-1)
+        setShowNavModal(true)
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [unsavedChanges])
+
   useEffect(() => { loadAll() }, [id])
 
   const loadAll = async () => {
