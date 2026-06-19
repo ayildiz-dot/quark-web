@@ -117,10 +117,14 @@ export default function App() {
       if (session?.user) fetchProfile(session.user)
       else setLoading(false)
     })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null)
-      if (session?.user) fetchProfile(session.user)
-      else { setProfile(null); setLoading(false) }
+      if (session?.user) {
+        fetchProfile(session.user)
+        if (event === 'SIGNED_IN') {
+          supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', session.user.id)
+        }
+      } else { setProfile(null); setLoading(false) }
     })
     return () => subscription.unsubscribe()
   }, [])
