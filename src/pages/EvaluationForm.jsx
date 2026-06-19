@@ -384,6 +384,15 @@ function QuestionCard({ question, answer, onChange }) {
             {!question.is_weighted && (
               <span className="badge badge-channel" style={{ marginLeft: 8, fontSize: 11 }}>No Weight</span>
             )}
+            {question.is_weighted && (
+              <span style={{
+                marginLeft: 8, fontSize: 11, color: 'var(--text-secondary)',
+                background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                borderRadius: 4, padding: '2px 7px', fontWeight: 500
+              }}>
+                Weight: {question.weight}
+              </span>
+            )}
           </div>
           {question.description && (
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
