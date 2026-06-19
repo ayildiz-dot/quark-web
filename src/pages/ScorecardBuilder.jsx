@@ -107,6 +107,7 @@ export default function ScorecardBuilder() {
           weight: q.weight, is_weighted: q.is_weighted,
           is_form_critical: q.is_form_critical,
           is_group_critical: q.is_group_critical,
+          allow_na: q.allow_na,
           group_id: q.group_id, position: i + 1
         }).eq('id', q.id)
       ))
@@ -206,7 +207,7 @@ export default function ScorecardBuilder() {
     const { data, error } = await supabase.from('scorecard_questions').insert({
       scorecard_id: id, group_id: groupId, title: 'New Question',
       weight: 1, is_weighted: true, is_form_critical: false,
-      is_group_critical: false, position: questions.length + 1
+      is_group_critical: false, allow_na: true, position: questions.length + 1
     }).select().single()
     if (error) return flash(error.message, false)
     setQuestions(q => [...q, data])
@@ -638,6 +639,7 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
             {question.is_form_critical && <span className="badge badge-fail">Form Critical</span>}
             {question.is_group_critical && groupId && <span className="badge badge-fail">Group Critical</span>}
             {!question.is_weighted && <span className="badge badge-channel">No Weight</span>}
+            {!question.allow_na && <span className="badge badge-channel">No N/A</span>}
             <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
               onClick={() => onDelete(question.id)}>✕</button>
           </div>
@@ -693,6 +695,14 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
                   <option value="numbers_only">Numbers only</option>
                   <option value="max:200">Max 200 characters</option>
                   <option value="required">Required comment</option>
+                </select>
+              </div>
+              <div className="form-field">
+                <label>Allow N/A?</label>
+                <select className="select" value={question.allow_na !== false ? 'yes' : 'no'}
+                  onChange={e => onUpdate(question.id, { allow_na: e.target.value === 'yes' })}>
+                  <option value="yes">Yes — evaluator can select N/A</option>
+                  <option value="no">No — must be Pass or Fail</option>
                 </select>
               </div>
             </div>

@@ -403,7 +403,9 @@ function QuestionCard({ question, answer, onChange }) {
         <div style={{ display: 'flex', gap: 8, minWidth: 220 }}>
           <button style={btnStyle('pass')} onClick={() => onChange({ score: 'pass' })}>✓ Pass</button>
           <button style={btnStyle('fail')} onClick={() => onChange({ score: 'fail' })}>✕ Fail</button>
-          <button style={btnStyle('na')} onClick={() => onChange({ score: 'na' })}>N/A</button>
+          {question.allow_na !== false && (
+            <button style={btnStyle('na')} onClick={() => onChange({ score: 'na' })}>N/A</button>
+          )}
         </div>
       </div>
       <div style={{ marginTop: 12 }}>
