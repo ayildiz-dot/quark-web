@@ -11,17 +11,17 @@ export function usePresence(user) {
       config: { presence: { key: user.id } },
     })
 
-    channel
-      .on('presence', { event: 'sync' }, () => {})
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          await channel.track({
-            user_id: user.id,
-            email: user.email,
-            online_at: new Date().toISOString(),
-          })
-        }
-      })
+    channel.on('presence', { event: 'sync' }, () => {})
+
+    channel.subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await channel.track({
+          user_id: user.id,
+          email: user.email,
+          online_at: new Date().toISOString(),
+        })
+      }
+    })
 
     return () => {
       supabase.removeChannel(channel)
