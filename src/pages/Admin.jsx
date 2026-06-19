@@ -17,20 +17,21 @@ export default function Admin() {
 
   // ── Presence listener ──────────────────────────────────────────────
   useEffect(() => {
-    const channel = supabase.channel('quark-presence')
-
-    channel.on('presence', { event: 'sync' }, () => {
-      const state = channel.presenceState()
+    const syncPresence = () => {
+      const channels = supabase.getChannels()
+      const presence = channels.find(c => c.topic === 'realtime:quark-presence')
+      if (!presence) return
+      const state = presence.presenceState()
       const ids = new Set()
       Object.values(state).forEach(presences => {
         presences.forEach(p => ids.add(p.user_id))
       })
       setOnlineIds(ids)
-    })
+    }
 
-    channel.subscribe()
-
-    return () => { supabase.removeChannel(channel) }
+    syncPresence()
+    const interval = setInterval(syncPresence, 3000)
+    return () => clearInterval(interval)
   }, [])
 
   const loadUsers = async () => {
