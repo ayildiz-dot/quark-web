@@ -4,15 +4,34 @@ import { useAuth } from '../App'
 
 export default function Admin() {
   const { profile } = useAuth()
-  const [tab,      setTab]      = useState('users')
-  const [users,    setUsers]    = useState([])
-  const [sampling, setSampling] = useState([])
-  const [msg,      setMsg]      = useState(null)
-  const [newSamp,  setNewSamp]  = useState({
+  const [tab,       setTab]       = useState('users')
+  const [users,     setUsers]     = useState([])
+  const [onlineIds, setOnlineIds] = useState(new Set())
+  const [sampling,  setSampling]  = useState([])
+  const [msg,       setMsg]       = useState(null)
+  const [newSamp,   setNewSamp]   = useState({
     queueName: '', channel: 'all', targetCount: 10, period: 'weekly'
   })
 
   useEffect(() => { loadUsers(); loadSampling() }, [])
+
+  // ── Presence listener ──────────────────────────────────────────────
+  useEffect(() => {
+    const channel = supabase.channel('quark-presence')
+
+    channel.on('presence', { event: 'sync' }, () => {
+      const state = channel.presenceState()
+      const ids = new Set()
+      Object.values(state).forEach(presences => {
+        presences.forEach(p => ids.add(p.user_id))
+      })
+      setOnlineIds(ids)
+    })
+
+    channel.subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [])
 
   const loadUsers = async () => {
     const { data } = await supabase
@@ -106,7 +125,7 @@ export default function Admin() {
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
-                <th>Status</th>
+                <th>Online</th>
                 <th>Last Login</th>
                 <th>Actions</th>
               </tr>
@@ -115,44 +134,60 @@ export default function Admin() {
               {users.length === 0 && (
                 <tr><td colSpan="6" className="empty-row">No users yet.</td></tr>
               )}
-              {users.map(u => (
-                <tr key={u.id}>
-                  <td>{u.name}</td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{u.email}</td>
-                  <td>
-                    <span className={`badge badge-${u.role}`}>{u.role}</span>
-                  </td>
-                  <td>
-                    <span className={`badge ${u.active ? 'badge-pass' : 'badge-fail'}`}>
-                      {u.active ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)' }}>
-                    {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
-                  </td>
-                  <td>
-                    <div className="action-group">
-                      <select className="select select-sm"
-                        value={u.role}
-                        onChange={e => changeRole(u.id, e.target.value)}>
-                        <option value="viewer">Viewer</option>
-                        <option value="evaluator">Evaluator</option>
-                        <option value="admin">Admin</option>
-                        <option value="owner">Owner</option>
-                      </select>
-                      {(profile?.role === 'owner' ||
-                        (profile?.role === 'admin' && u.role !== 'owner')) &&
-                        u.id !== profile.id && (
-                        <button
-                          className={`btn btn-sm ${u.active ? 'btn-danger' : 'btn-success'}`}
-                          onClick={() => toggleActive(u.id, !u.active)}>
-                          {u.active ? 'Deactivate' : 'Activate'}
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {users.map(u => {
+                const isOnline = onlineIds.has(u.id)
+                return (
+                  <tr key={u.id}>
+                    <td>{u.name}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{u.email}</td>
+                    <td>
+                      <span className={`badge badge-${u.role}`}>{u.role}</span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span style={{
+                          width: 9,
+                          height: 9,
+                          borderRadius: '50%',
+                          backgroundColor: isOnline ? '#22c55e' : '#64748b',
+                          flexShrink: 0,
+                          boxShadow: isOnline ? '0 0 6px #22c55e99' : 'none',
+                        }} />
+                        <span style={{
+                          fontSize: 13,
+                          color: isOnline ? '#22c55e' : 'var(--text-secondary)'
+                        }}>
+                          {isOnline ? 'Online' : 'Offline'}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ color: 'var(--text-secondary)' }}>
+                      {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
+                    </td>
+                    <td>
+                      <div className="action-group">
+                        <select className="select select-sm"
+                          value={u.role}
+                          onChange={e => changeRole(u.id, e.target.value)}>
+                          <option value="viewer">Viewer</option>
+                          <option value="evaluator">Evaluator</option>
+                          <option value="admin">Admin</option>
+                          <option value="owner">Owner</option>
+                        </select>
+                        {(profile?.role === 'owner' ||
+                          (profile?.role === 'admin' && u.role !== 'owner')) &&
+                          u.id !== profile.id && (
+                          <button
+                            className={`btn btn-sm ${u.active ? 'btn-danger' : 'btn-success'}`}
+                            onClick={() => toggleActive(u.id, !u.active)}>
+                            {u.active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

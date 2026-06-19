@@ -9,6 +9,7 @@ import Admin from './pages/Admin'
 import Scorecards from './pages/Scorecards'
 import ScorecardBuilder from './pages/ScorecardBuilder'
 import EvaluationForm from './pages/EvaluationForm'
+import { usePresence } from './hooks/usePresence'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -39,6 +40,8 @@ function AppShell({ user, profile, logout, fetchProfile }) {
   const [unsavedChanges, setUnsavedChanges] = useState(false)
   const [showNavModal, setShowNavModal] = useState(false)
   const [pendingNavPath, setPendingNavPath] = useState(null)
+
+  usePresence(user)
 
   const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
 
