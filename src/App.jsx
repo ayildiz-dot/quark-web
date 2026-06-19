@@ -122,7 +122,10 @@ export default function App() {
       if (session?.user) {
         fetchProfile(session.user)
         if (event === 'SIGNED_IN') {
-          supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', session.user.id)
+          supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', session.user.id).then(({ error }) => {
+            if (error) console.error('last_login update failed:', error.message)
+            else console.log('last_login updated for', session.user.email)
+          })
         }
       } else { setProfile(null); setLoading(false) }
     })
