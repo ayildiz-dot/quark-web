@@ -654,7 +654,6 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
             {question.is_form_critical && <span className="badge badge-fail">Form Critical</span>}
             {question.is_group_critical && groupId && <span className="badge badge-fail">Group Critical</span>}
-            {!question.is_weighted && <span className="badge badge-channel">No Weight</span>}
             {!question.allow_na && <span className="badge badge-channel">No N/A</span>}
             <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
               onClick={() => onDelete(question.id)}>✕</button>
@@ -677,14 +676,6 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
               </div>
             </div>
             <div className="form-row" style={{ marginTop: 12 }}>
-              <div className="form-field">
-                <label>Weighted?</label>
-                <select className="select" value={question.is_weighted ? 'yes' : 'no'}
-                  onChange={e => onUpdate(question.id, { is_weighted: e.target.value === 'yes' })}>
-                  <option value="yes">Yes</option>
-                  <option value="no">No (context only)</option>
-                </select>
-              </div>
               <div className="form-field">
                 <label>Form Critical?</label>
                 <select className="select" value={question.is_form_critical ? 'yes' : 'no'}

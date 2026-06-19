@@ -381,9 +381,7 @@ function QuestionCard({ question, answer, onChange }) {
             {question.is_form_critical && (
               <span className="badge badge-fail" style={{ marginLeft: 8, fontSize: 11 }}>Form Critical</span>
             )}
-            {!question.is_weighted && (
-              <span className="badge badge-channel" style={{ marginLeft: 8, fontSize: 11 }}>No Weight</span>
-            )}
+
             {question.is_weighted && (
               <span style={{
                 marginLeft: 8, fontSize: 11, color: 'var(--text-secondary)',
