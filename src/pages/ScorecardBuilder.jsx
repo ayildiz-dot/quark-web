@@ -694,16 +694,7 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
                   </select>
                 </div>
               )}
-              <div className="form-field">
-                <label>Validation</label>
-                <select className="select" value={question.validation_rule || ''}
-                  onChange={e => onUpdate(question.id, { validation_rule: e.target.value || null })}>
-                  <option value="">None</option>
-                  <option value="numbers_only">Numbers only</option>
-                  <option value="max:200">Max 200 characters</option>
-                  <option value="required">Required comment</option>
-                </select>
-              </div>
+
               <div className="form-field">
                 <label>Allow N/A?</label>
                 <select className="select" value={question.allow_na !== false ? 'yes' : 'no'}
