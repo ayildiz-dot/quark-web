@@ -113,7 +113,10 @@ export default function ScorecardBuilder() {
     if (scorecard?.type !== 'quality') return true
     const total = questions.reduce((sum, q) => sum + (q.weight || 1), 0)
     if (total > 100) {
-      return confirm(`The total weight of all questions is ${total}, which exceeds 100. This will still calculate correctly as a percentage but may not reflect your intended scoring. Are you sure you want to continue?`)
+      return confirm(`The total weight of all questions is ${total}, which exceeds 100. Scores will still calculate correctly as a percentage but may not reflect your intended scoring. Are you sure you want to continue?`)
+    }
+    if (total < 100) {
+      return confirm(`The total weight of all questions is ${total}, which is below 100. Scores will still calculate correctly as a percentage but may not reflect your intended scoring. Are you sure you want to continue?`)
     }
     return true
   }
@@ -509,9 +512,27 @@ export default function ScorecardBuilder() {
 
       {tab === 'questions' && scorecard.type === 'quality' && (
         <div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-            <button className="btn btn-primary btn-sm" onClick={() => addQuestion(null)}>+ Add Question</button>
-            <button className="btn btn-ghost btn-sm" onClick={addGroup}>+ Add Group</button>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 20, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={() => addQuestion(null)}>+ Add Question</button>
+              <button className="btn btn-ghost btn-sm" onClick={addGroup}>+ Add Group</button>
+            </div>
+            {(() => {
+              const total = questions.reduce((sum, q) => sum + (q.weight || 1), 0)
+              const color = total === 100 ? 'var(--success)' : total > 100 ? 'var(--danger)' : '#f59e0b'
+              const label = total === 100 ? '✓' : total > 100 ? '▲' : '▼'
+              return (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                  borderRadius: 8, padding: '8px 16px', fontSize: 13
+                }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Total Weight:</span>
+                  <span style={{ fontWeight: 700, fontSize: 16, color }}>{total}</span>
+                  <span style={{ color, fontSize: 12 }}>{label} {total === 100 ? 'Perfect' : total > 100 ? 'Exceeds 100' : 'Below 100'}</span>
+                </div>
+              )
+            })()}
           </div>
 
           <DndContext sensors={sensors} collisionDetection={closestCenter}
