@@ -109,7 +109,17 @@ export default function ScorecardBuilder() {
 
   const isPublished = scorecard?.is_published
 
+  const checkTotalWeight = () => {
+    if (scorecard?.type !== 'quality') return true
+    const total = questions.reduce((sum, q) => sum + (q.weight || 1), 0)
+    if (total > 100) {
+      return confirm(`The total weight of all questions is ${total}, which exceeds 100. This will still calculate correctly as a percentage but may not reflect your intended scoring. Are you sure you want to continue?`)
+    }
+    return true
+  }
+
   const saveAllChanges = async () => {
+    if (!checkTotalWeight()) return
     try {
       await supabase.from('scorecards').update({
         name: scorecard.name,
@@ -165,6 +175,7 @@ export default function ScorecardBuilder() {
   }
 
   const togglePublish = async () => {
+    if (!scorecard.is_published && !checkTotalWeight()) return
     if (unsavedChanges) await saveAllChanges()
     const newVal = !scorecard.is_published
     const { error } = await supabase.from('scorecards').update({ is_published: newVal }).eq('id', id)
