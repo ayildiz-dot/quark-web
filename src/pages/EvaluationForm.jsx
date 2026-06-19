@@ -17,6 +17,7 @@ export default function EvaluationForm() {
   const [answers, setAnswers] = useState({})
   const [msg, setMsg] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const [overallComment, setOverallComment] = useState('')
 
   useEffect(() => { loadScorecards() }, [])
 
@@ -92,6 +93,7 @@ export default function EvaluationForm() {
   const submitEvaluation = async () => {
     if (!metaValid()) return flash('Please fill in all required metadata fields.', false)
     if (!questionsValid()) return flash('Please score all questions before submitting.', false)
+    if (!overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
     setSubmitting(true)
     try {
       const { score, failed_critical } = calculateScore()
@@ -108,6 +110,7 @@ export default function EvaluationForm() {
           score,
           failed_critical,
           metadata_values: metaPayload,
+          overall_comment: overallComment.trim(),
           status: 'submitted',
           submitted_at: new Date().toISOString()
         })
@@ -281,6 +284,19 @@ export default function EvaluationForm() {
           )
         })}
         <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+          <div className="form-field" style={{ marginBottom: 16 }}>
+            <label style={{ fontWeight: 600, fontSize: 14 }}>
+              Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
+            </label>
+            <textarea
+              className="input"
+              rows={4}
+              placeholder="Add an overall comment for this evaluation…"
+              value={overallComment}
+              onChange={e => setOverallComment(e.target.value)}
+              style={{ resize: 'vertical', fontSize: 13 }}
+            />
+          </div>
           <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
             style={{ marginRight: 12 }}>
             {submitting ? 'Submitting…' : 'Submit Evaluation'}
@@ -325,6 +341,7 @@ export default function EvaluationForm() {
               setSelectedScorecard(null)
               setAnswers({})
               setMetaValues({})
+              setOverallComment('')
             }}>
               Start New Evaluation
             </button>
