@@ -44,12 +44,10 @@ export default function ScorecardBuilder() {
     }
   }
 
-  // Clear unsaved flag when leaving this page
   useEffect(() => {
     return () => setUnsavedChanges(false)
   }, [])
 
-  // Warn on browser refresh or tab close
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (unsavedChanges) {
@@ -158,7 +156,6 @@ export default function ScorecardBuilder() {
     flash(newVal ? 'Scorecard published' : 'Scorecard unpublished')
   }
 
-  // METADATA
   const addMetaField = async () => {
     if (metadata.length >= 10) return flash('Maximum 10 metadata fields allowed.', false)
     const { data, error } = await supabase.from('scorecard_metadata_fields').insert({
@@ -182,7 +179,6 @@ export default function ScorecardBuilder() {
     if (isPublished) markChanged()
   }
 
-  // GROUPS
   const addGroup = async () => {
     const { data, error } = await supabase.from('scorecard_question_groups').insert({
       scorecard_id: id, name: 'New Group', position: groups.length + 1
@@ -206,7 +202,6 @@ export default function ScorecardBuilder() {
     if (isPublished) markChanged()
   }
 
-  // QUESTIONS
   const addQuestion = async (groupId = null) => {
     const { data, error } = await supabase.from('scorecard_questions').insert({
       scorecard_id: id, group_id: groupId, title: 'New Question',
@@ -269,7 +264,6 @@ export default function ScorecardBuilder() {
     }
   }
 
-  // DSAT
   const addSection = async () => {
     const { data, error } = await supabase.from('dsat_sections').insert({
       scorecard_id: id, title: 'New Section', position: sections.length + 1
@@ -391,7 +385,6 @@ export default function ScorecardBuilder() {
         ))}
       </div>
 
-      {/* SETTINGS */}
       {tab === 'settings' && (
         <div className="card" style={{ maxWidth: 600 }}>
           <div className="card-title" style={{ marginBottom: 16 }}>Scorecard Settings</div>
@@ -427,7 +420,6 @@ export default function ScorecardBuilder() {
         </div>
       )}
 
-      {/* METADATA */}
       {tab === 'metadata' && scorecard.type === 'quality' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -469,12 +461,11 @@ export default function ScorecardBuilder() {
                 </div>
                 {field.field_type === 'dropdown' && (
                   <div className="form-field" style={{ flex: 3, minWidth: 200 }}>
-                    <label>Options (comma separated)</label>
-                    <input className="input" placeholder="e.g. Chat, Email, Phone"
-                      value={(field.options || []).join(', ')}
-                      onChange={e => updateMetaField(field.id, {
-                        options: e.target.value.split(',').map(o => o.trim()).filter(Boolean)
-                      })} />
+                    <label>Options — type and press Enter or comma to add (max 50)</label>
+                    <DropdownOptionsEditor
+                      options={field.options || []}
+                      onChange={opts => updateMetaField(field.id, { options: opts })}
+                    />
                   </div>
                 )}
                 <div className="form-field form-field-btn">
@@ -488,7 +479,6 @@ export default function ScorecardBuilder() {
         </div>
       )}
 
-      {/* QUESTIONS */}
       {tab === 'questions' && scorecard.type === 'quality' && (
         <div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
@@ -561,7 +551,6 @@ export default function ScorecardBuilder() {
         </div>
       )}
 
-      {/* SECTIONS - DSAT */}
       {tab === 'sections' && scorecard.type === 'dsat' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -784,3 +773,85 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
     </div>
   )
 }
+
+function DropdownOptionsEditor({ options, onChange }) {
+  const [inputVal, setInputVal] = useState('')
+
+  const addOption = (raw) => {
+    const trimmed = raw.trim()
+    if (!trimmed) return
+    if (options.length >= 50) return
+    if (options.includes(trimmed)) return
+    onChange([...options, trimmed])
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      addOption(inputVal)
+      setInputVal('')
+    } else if (e.key === 'Backspace' && inputVal === '' && options.length > 0) {
+      onChange(options.slice(0, -1))
+    }
+  }
+
+  const removeOption = (idx) => {
+    onChange(options.filter((_, i) => i !== idx))
+  }
+
+  return (
+    <div
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        padding: '6px 8px',
+        background: 'var(--bg-card)',
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 6,
+        minHeight: 42,
+        cursor: 'text'
+      }}
+      onClick={(e) => e.currentTarget.querySelector('input')?.focus()}
+    >
+      {options.map((opt, idx) => (
+        <span key={idx} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+          background: 'var(--bg-main)', border: '1px solid var(--border)',
+          borderRadius: 4, padding: '2px 8px', fontSize: 13,
+          color: 'var(--text-primary)', whiteSpace: 'nowrap'
+        }}>
+          {opt}
+          <button
+            onClick={() => removeOption(idx)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--text-secondary)', fontSize: 14, padding: 0,
+              lineHeight: 1, display: 'flex', alignItems: 'center'
+            }}
+          >×</button>
+        </span>
+      ))}
+      {options.length < 50 && (
+        <input
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={() => { addOption(inputVal); setInputVal('') }}
+          placeholder={options.length === 0 ? 'Type an option, press Enter or comma…' : '+'}
+          style={{
+            border: 'none', outline: 'none', background: 'transparent',
+            color: 'var(--text-primary)', fontSize: 13,
+            minWidth: options.length === 0 ? 260 : 40, flex: 1
+          }}
+        />
+      )}
+      {options.length >= 50 && (
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)', alignSelf: 'center' }}>
+          Max 50 options reached
+        </span>
+      )}
+    </div>
+  )
+}
+// force redeploy Fri Jun 19 08:45:34 UTC 2026
