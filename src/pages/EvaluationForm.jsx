@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
@@ -7,14 +7,14 @@ export default function EvaluationForm() {
   const { profile } = useAuth()
   const navigate = useNavigate()
 
-  const [step, setStep] = useState('select') // select | metadata | questions | submitting
+  const [step, setStep] = useState('select')
   const [scorecards, setScorecards] = useState([])
   const [selectedScorecard, setSelectedScorecard] = useState(null)
   const [metadata, setMetadata] = useState([])
   const [groups, setGroups] = useState([])
   const [questions, setQuestions] = useState([])
   const [metaValues, setMetaValues] = useState({})
-  const [answers, setAnswers] = useState({}) // { [questionId]: { score: 'pass'|'fail'|'na', comment: '' } }
+  const [answers, setAnswers] = useState({})
   const [msg, setMsg] = useState(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -40,7 +40,6 @@ export default function EvaluationForm() {
     setMetadata(meta.data || [])
     setGroups(grp.data || [])
     setQuestions(qs.data || [])
-    // Initialise empty answers
     const initAnswers = {}
     for (const q of (qs.data || [])) {
       initAnswers[q.id] = { score: null, comment: '' }
@@ -70,27 +69,21 @@ export default function EvaluationForm() {
   }
 
   const calculateScore = () => {
-    // Check form-critical questions first
     for (const q of questions) {
       if (q.is_form_critical && answers[q.id]?.score === 'fail') {
         return { score: 0, failed_critical: true }
       }
     }
-
-    // Calculate weighted score
     let totalWeight = 0
     let earnedWeight = 0
-
     for (const q of questions) {
       const ans = answers[q.id]?.score
-      if (ans === 'na') continue // N/A excluded from calculation
-      if (!q.is_weighted) continue // unweighted questions don't affect score
-
+      if (ans === 'na') continue
+      if (!q.is_weighted) continue
       const weight = q.weight || 1
       totalWeight += weight
       if (ans === 'pass') earnedWeight += weight
     }
-
     if (totalWeight === 0) return { score: 100, failed_critical: false }
     const score = Math.round((earnedWeight / totalWeight) * 100)
     return { score, failed_critical: false }
@@ -99,19 +92,14 @@ export default function EvaluationForm() {
   const submitEvaluation = async () => {
     if (!metaValid()) return flash('Please fill in all required metadata fields.', false)
     if (!questionsValid()) return flash('Please score all questions before submitting.', false)
-
     setSubmitting(true)
     try {
       const { score, failed_critical } = calculateScore()
-
-      // Build metadata values array
       const metaPayload = metadata.map(f => ({
         field_id: f.id,
         label: f.label,
         value: metaValues[f.id] || ''
       }))
-
-      // Create the evaluation record
       const { data: evaluation, error: evalError } = await supabase
         .from('evaluations')
         .insert({
@@ -125,23 +113,17 @@ export default function EvaluationForm() {
         })
         .select()
         .single()
-
       if (evalError) throw evalError
-
-      // Save individual question scores
       const scoreRows = questions.map(q => ({
         evaluation_id: evaluation.id,
         question_id: q.id,
         score: answers[q.id]?.score,
         comment: answers[q.id]?.comment || null
       }))
-
       const { error: scoresError } = await supabase
         .from('evaluation_scores')
         .insert(scoreRows)
-
       if (scoresError) throw scoresError
-
       setStep('done')
     } catch (err) {
       flash('Failed to submit: ' + err.message, false)
@@ -150,7 +132,6 @@ export default function EvaluationForm() {
     }
   }
 
-  // ── STEP: Select Scorecard ──────────────────────────────────────────
   if (step === 'select') return (
     <div className="page">
       <div className="page-header">
@@ -184,7 +165,6 @@ export default function EvaluationForm() {
     </div>
   )
 
-  // ── STEP: Metadata ──────────────────────────────────────────────────
   if (step === 'metadata') return (
     <div className="page">
       <div className="page-header">
@@ -196,7 +176,6 @@ export default function EvaluationForm() {
         </div>
       </div>
       {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
-
       {metadata.length === 0 ? (
         <div className="card" style={{ maxWidth: 600, color: 'var(--text-secondary)', padding: 24 }}>
           No metadata fields configured for this scorecard.
@@ -211,14 +190,12 @@ export default function EvaluationForm() {
                 {field.is_required && <span style={{ color: 'var(--danger)', marginLeft: 4 }}>*</span>}
               </label>
               {field.field_type === 'dropdown' ? (
-                <select className="select"
+                <SearchableDropdown
+                  options={field.options || []}
                   value={metaValues[field.id] || ''}
-                  onChange={e => setMetaValues(v => ({ ...v, [field.id]: e.target.value }))}>
-                  <option value="">Select...</option>
-                  {(field.options || []).map(opt => (
-                    <option key={opt} value={opt}>{opt}</option>
-                  ))}
-                </select>
+                  onChange={val => setMetaValues(v => ({ ...v, [field.id]: val }))}
+                  placeholder="Select..."
+                />
               ) : field.field_type === 'date' ? (
                 <input type="date" className="input"
                   value={metaValues[field.id] || ''}
@@ -236,7 +213,6 @@ export default function EvaluationForm() {
           ))}
         </div>
       )}
-
       <div style={{ marginTop: 24, maxWidth: 600 }}>
         <button className="btn btn-primary"
           onClick={() => {
@@ -249,13 +225,11 @@ export default function EvaluationForm() {
     </div>
   )
 
-  // ── STEP: Questions ─────────────────────────────────────────────────
   if (step === 'questions') {
     const ungrouped = questions.filter(q => !q.group_id)
     const answered = Object.values(answers).filter(a => a.score !== null).length
     const total = questions.length
     const pct = total > 0 ? Math.round((answered / total) * 100) : 0
-
     return (
       <div className="page">
         <div className="page-header">
@@ -274,25 +248,18 @@ export default function EvaluationForm() {
             </button>
           </div>
         </div>
-
-        {/* Progress bar */}
-        <div style={{ height: 4, background: 'var(--border)', borderRadius: 4, marginBottom: 24, maxWidth: '100%' }}>
+        <div style={{ height: 4, background: 'var(--border)', borderRadius: 4, marginBottom: 24 }}>
           <div style={{
             height: 4, borderRadius: 4, background: 'var(--accent)',
             width: `${pct}%`, transition: 'width 0.3s'
           }} />
         </div>
-
         {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
-
-        {/* Ungrouped questions */}
         {ungrouped.map(q => (
           <QuestionCard key={q.id} question={q}
             answer={answers[q.id]}
             onChange={(updates) => setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))} />
         ))}
-
-        {/* Grouped questions */}
         {groups.map(group => {
           const groupQs = questions.filter(q => q.group_id === group.id)
           if (groupQs.length === 0) return null
@@ -313,7 +280,6 @@ export default function EvaluationForm() {
             </div>
           )
         })}
-
         <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
           <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
             style={{ marginRight: 12 }}>
@@ -327,7 +293,6 @@ export default function EvaluationForm() {
     )
   }
 
-  // ── STEP: Done ──────────────────────────────────────────────────────
   if (step === 'done') {
     const { score, failed_critical } = calculateScore()
     return (
@@ -376,7 +341,6 @@ export default function EvaluationForm() {
 function QuestionCard({ question, answer, onChange }) {
   const score = answer?.score
   const comment = answer?.comment || ''
-
   const btnStyle = (val) => ({
     flex: 1, padding: '8px 0', borderRadius: 6, fontWeight: 500, fontSize: 13,
     cursor: 'pointer', border: '1.5px solid',
@@ -391,7 +355,6 @@ function QuestionCard({ question, answer, onChange }) {
       : 'var(--text-secondary)',
     transition: 'all 0.15s'
   })
-
   return (
     <div className="card" style={{ marginBottom: 12, borderLeft: score === null || score === undefined ? '3px solid var(--border)' : score === 'pass' ? '3px solid var(--success)' : score === 'fail' ? '3px solid var(--danger)' : '3px solid var(--text-secondary)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
@@ -417,13 +380,113 @@ function QuestionCard({ question, answer, onChange }) {
           <button style={btnStyle('na')} onClick={() => onChange({ score: 'na' })}>N/A</button>
         </div>
       </div>
-      {/* Comment field — always visible but optional */}
       <div style={{ marginTop: 12 }}>
         <input className="input" placeholder="Add a comment (optional)…"
           value={comment}
           onChange={e => onChange({ comment: e.target.value })}
           style={{ fontSize: 13 }} />
       </div>
+    </div>
+  )
+}
+
+function SearchableDropdown({ options, value, onChange, placeholder = 'Select...' }) {
+  const [open, setOpen] = React.useState(false)
+  const [search, setSearch] = React.useState('')
+  const ref = React.useRef(null)
+
+  const filtered = options.filter(o =>
+    o.toLowerCase().includes(search.toLowerCase())
+  )
+
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false)
+        setSearch('')
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <div
+        className="select"
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          cursor: 'pointer', userSelect: 'none'
+        }}
+        onClick={() => { setOpen(o => !o); setSearch('') }}
+      >
+        <span style={{ color: value ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+          {value || placeholder}
+        </span>
+        <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8 }}>
+          {open ? '▲' : '▼'}
+        </span>
+      </div>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 8, zIndex: 999, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          overflow: 'hidden'
+        }}>
+          <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+            <input
+              autoFocus
+              className="input"
+              placeholder="Search…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              onClick={e => e.stopPropagation()}
+              style={{ fontSize: 13, padding: '6px 10px' }}
+            />
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '12px 14px', color: 'var(--text-secondary)', fontSize: 13 }}>
+                No options match
+              </div>
+            ) : (
+              filtered.map(opt => (
+                <div
+                  key={opt}
+                  onClick={() => { onChange(opt); setOpen(false); setSearch('') }}
+                  style={{
+                    padding: '10px 14px', fontSize: 14, cursor: 'pointer',
+                    color: opt === value ? 'var(--accent)' : 'var(--text-primary)',
+                    background: opt === value ? 'rgba(99,102,241,0.08)' : 'transparent',
+                    borderLeft: opt === value ? '3px solid var(--accent)' : '3px solid transparent',
+                    transition: 'background 0.1s'
+                  }}
+                  onMouseEnter={e => {
+                    if (opt !== value) e.currentTarget.style.background = 'rgba(255,255,255,0.05)'
+                  }}
+                  onMouseLeave={e => {
+                    if (opt !== value) e.currentTarget.style.background = 'transparent'
+                  }}
+                >
+                  {opt}
+                </div>
+              ))
+            )}
+          </div>
+          {value && (
+            <div style={{ borderTop: '1px solid var(--border)', padding: '8px 14px' }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ color: 'var(--danger)', fontSize: 12 }}
+                onClick={() => { onChange(''); setOpen(false); setSearch('') }}
+              >
+                Clear selection
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
