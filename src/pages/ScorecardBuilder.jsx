@@ -148,7 +148,7 @@ export default function ScorecardBuilder() {
   }
 
   const togglePublish = async () => {
-    if (unsavedChanges) return flash('Save your changes before publishing or unpublishing.', false)
+    if (unsavedChanges) await saveAllChanges()
     const newVal = !scorecard.is_published
     const { error } = await supabase.from('scorecards').update({ is_published: newVal }).eq('id', id)
     if (error) return flash(error.message, false)
