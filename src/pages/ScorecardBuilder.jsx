@@ -116,6 +116,7 @@ export default function ScorecardBuilder() {
   }
 
   const isPublished = scorecard?.is_published
+  console.log('isPublished:', isPublished, 'scorecard.is_published:', scorecard?.is_published)
 
   const checkTotalWeight = () => {
     if (scorecard?.type !== 'quality') return true
