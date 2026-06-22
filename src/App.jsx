@@ -41,14 +41,12 @@ function AppShell({ user, profile, logout, fetchProfile }) {
   const [unsavedChanges, setUnsavedChanges] = useState(false)
   const [showNavModal, setShowNavModal] = useState(false)
   const [pendingNavPath, setPendingNavPath] = useState(null)
-  const [skipSave, setSkipSave] = useState(false)
 
   usePresence(user)
 
   const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
 
   const handleLeave = () => {
-    setSkipSave(true)
     setUnsavedChanges(false)
     setShowNavModal(false)
     const dest = pendingNavPath
@@ -78,7 +76,6 @@ function AppShell({ user, profile, logout, fetchProfile }) {
       unsavedChanges, setUnsavedChanges,
       showNavModal, setShowNavModal,
       pendingNavPath, setPendingNavPath,
-      skipSave, setSkipSave,
       safeNavigate
     }}>
       <div className="app-shell">

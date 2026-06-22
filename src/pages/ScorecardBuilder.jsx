@@ -13,7 +13,7 @@ import { CSS } from '@dnd-kit/utilities'
 
 export default function ScorecardBuilder() {
   const { id } = useParams()
-  const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, skipSave, setSkipSave, safeNavigate } = useAuth()
+  const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, safeNavigate } = useAuth()
   const navigate = useNavigate()
 
   const [tab, setTab] = useState('settings')
@@ -33,6 +33,7 @@ export default function ScorecardBuilder() {
   }))
 
   const leavingRef = React.useRef(false)
+  const skipSaveRef = React.useRef(false)
 
   const markChanged = () => setUnsavedChanges(true)
   const clearChanged = () => setUnsavedChanges(false)
@@ -61,11 +62,11 @@ export default function ScorecardBuilder() {
 
   useEffect(() => {
     leavingRef.current = false
-    setSkipSave(false)
+    skipSaveRef.current = false
     return () => {
       leavingRef.current = true
+      skipSaveRef.current = true
       setUnsavedChanges(false)
-      setSkipSave(false)
     }
   }, [])
 
@@ -134,7 +135,7 @@ export default function ScorecardBuilder() {
       skipSave,
       stack: new Error().stack
     })
-    if (leavingRef.current || skipSave) return
+    if (leavingRef.current || skipSaveRef.current) return
     if (!checkTotalWeight()) return
     try {
       await supabase.from('scorecards').update({
