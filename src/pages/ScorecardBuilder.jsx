@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
@@ -32,6 +32,8 @@ export default function ScorecardBuilder() {
     activationConstraint: { distance: 5 }
   }))
 
+  const leavingRef = React.useRef(false)
+
   const markChanged = () => setUnsavedChanges(true)
   const clearChanged = () => setUnsavedChanges(false)
 
@@ -58,7 +60,10 @@ export default function ScorecardBuilder() {
   
 
   useEffect(() => {
-    return () => setUnsavedChanges(false)
+    return () => {
+      leavingRef.current = true
+      setUnsavedChanges(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -135,6 +140,7 @@ export default function ScorecardBuilder() {
   }
 
   const saveAllChanges = async () => {
+    if (leavingRef.current) return
     if (!checkTotalWeight()) return
     try {
       await supabase.from('scorecards').update({
