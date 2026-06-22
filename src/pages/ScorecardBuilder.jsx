@@ -169,21 +169,51 @@ export default function ScorecardBuilder() {
       ))
 
       if (scorecard.type === 'dsat') {
-        await Promise.all(sections.map(s =>
-          supabase.from('dsat_sections')
-            .update({ title: s.title, description: s.description }).eq('id', s.id)
-        ))
-        await Promise.all(dsatQuestions.map(q =>
-          supabase.from('dsat_questions').update({
-            title: q.title, description: q.description, is_required: q.is_required,
-            question_type: q.question_type || 'options'
-          }).eq('id', q.id)
-        ))
-        await Promise.all(dsatOptions.map(o =>
-          supabase.from('dsat_options').update({
-            label: o.label, jump_to_section_id: o.jump_to_section_id
-          }).eq('id', o.id)
-        ))
+        // Save sections — insert new, update existing
+        const sectionIdMap = {}
+        for (const s of sections) {
+          if (s._isNew) {
+            const { data } = await supabase.from('dsat_sections').insert({
+              scorecard_id: id, title: s.title, description: s.description, position: s.position
+            }).select().single()
+            if (data) sectionIdMap[s.id] = data.id
+          } else {
+            await supabase.from('dsat_sections')
+              .update({ title: s.title, description: s.description }).eq('id', s.id)
+          }
+        }
+        // Save questions — insert new (resolving temp section IDs), update existing
+        const questionIdMap = {}
+        for (const q of dsatQuestions) {
+          const realSectionId = sectionIdMap[q.section_id] || q.section_id
+          if (q._isNew) {
+            const { data } = await supabase.from('dsat_questions').insert({
+              scorecard_id: id, section_id: realSectionId, title: q.title,
+              description: q.description, is_required: q.is_required,
+              question_type: q.question_type || 'options', position: q.position
+            }).select().single()
+            if (data) questionIdMap[q.id] = data.id
+          } else {
+            await supabase.from('dsat_questions').update({
+              title: q.title, description: q.description, is_required: q.is_required,
+              question_type: q.question_type || 'options'
+            }).eq('id', q.id)
+          }
+        }
+        // Save options — insert new (resolving temp question IDs), update existing
+        for (const o of dsatOptions) {
+          const realQuestionId = questionIdMap[o.question_id] || o.question_id
+          if (o._isNew) {
+            await supabase.from('dsat_options').insert({
+              question_id: realQuestionId, label: o.label,
+              jump_to_section_id: o.jump_to_section_id, position: o.position
+            })
+          } else {
+            await supabase.from('dsat_options').update({
+              label: o.label, jump_to_section_id: o.jump_to_section_id
+            }).eq('id', o.id)
+          }
+        }
       }
 
       clearChanged()
@@ -316,31 +346,41 @@ export default function ScorecardBuilder() {
   }
 
   const addSection = async () => {
-    const { data, error } = await supabase.from('dsat_sections').insert({
-      scorecard_id: id, title: 'New Section', position: sections.length + 1
-    }).select().single()
-    if (error) return flash(error.message, false)
-    setSections(s => [...s, data])
-    if (isPublished) markChanged()
+    if (isPublished) {
+      const tempId = 'temp_' + Date.now()
+      setSections(s => [...s, { id: tempId, scorecard_id: id, title: 'New Section', position: s.length + 1, _isNew: true }])
+      markChanged()
+    } else {
+      const { data, error } = await supabase.from('dsat_sections').insert({
+        scorecard_id: id, title: 'New Section', position: sections.length + 1
+      }).select().single()
+      if (error) return flash(error.message, false)
+      setSections(s => [...s, data])
+    }
   }
 
   const addCommentSection = async () => {
-    const { data: sectionData, error: sectionError } = await supabase.from('dsat_sections').insert({
-      scorecard_id: id, title: 'Comments', position: sections.length + 1
-    }).select().single()
-    if (sectionError) return flash(sectionError.message, false)
-    setSections(s => [...s, sectionData])
-
-    const { data: questionData, error: questionError } = await supabase.from('dsat_questions').insert({
-      scorecard_id: id, section_id: sectionData.id, title: 'Comments',
-      is_required: false, question_type: 'free_text',
-      position: 1
-    }).select().single()
-    if (questionError) return flash(questionError.message, false)
-    setDsatQuestions(q => [...q, questionData])
-
-    if (isPublished) markChanged()
-    flash('Comment section added ✓')
+    if (isPublished) {
+      const tempSectionId = 'temp_' + Date.now()
+      const tempQuestionId = 'temp_q_' + Date.now()
+      setSections(s => [...s, { id: tempSectionId, scorecard_id: id, title: 'Comments', position: s.length + 1, _isNew: true }])
+      setDsatQuestions(q => [...q, { id: tempQuestionId, scorecard_id: id, section_id: tempSectionId, title: 'Comments', is_required: false, question_type: 'free_text', position: 1, _isNew: true }])
+      markChanged()
+      flash('Comment section added ✓')
+    } else {
+      const { data: sectionData, error: sectionError } = await supabase.from('dsat_sections').insert({
+        scorecard_id: id, title: 'Comments', position: sections.length + 1
+      }).select().single()
+      if (sectionError) return flash(sectionError.message, false)
+      setSections(s => [...s, sectionData])
+      const { data: questionData, error: questionError } = await supabase.from('dsat_questions').insert({
+        scorecard_id: id, section_id: sectionData.id, title: 'Comments',
+        is_required: false, question_type: 'free_text', position: 1
+      }).select().single()
+      if (questionError) return flash(questionError.message, false)
+      setDsatQuestions(q => [...q, questionData])
+      flash('Comment section added ✓')
+    }
   }
 
   const updateSection = async (sId, updates) => {
@@ -359,13 +399,18 @@ export default function ScorecardBuilder() {
   }
 
   const addDsatQuestion = async (sectionId) => {
-    const { data, error } = await supabase.from('dsat_questions').insert({
-      scorecard_id: id, section_id: sectionId, title: 'New Question',
-      is_required: true, position: dsatQuestions.filter(q => q.section_id === sectionId).length + 1
-    }).select().single()
-    if (error) return flash(error.message, false)
-    setDsatQuestions(q => [...q, data])
-    if (isPublished) markChanged()
+    if (isPublished) {
+      const tempId = 'temp_q_' + Date.now()
+      setDsatQuestions(q => [...q, { id: tempId, scorecard_id: id, section_id: sectionId, title: 'New Question', is_required: true, question_type: 'options', position: dsatQuestions.filter(q => q.section_id === sectionId).length + 1, _isNew: true }])
+      markChanged()
+    } else {
+      const { data, error } = await supabase.from('dsat_questions').insert({
+        scorecard_id: id, section_id: sectionId, title: 'New Question',
+        is_required: true, position: dsatQuestions.filter(q => q.section_id === sectionId).length + 1
+      }).select().single()
+      if (error) return flash(error.message, false)
+      setDsatQuestions(q => [...q, data])
+    }
   }
 
   const updateDsatQuestion = async (qId, updates) => {
@@ -385,12 +430,17 @@ export default function ScorecardBuilder() {
 
   const addOption = async (questionId) => {
     const count = dsatOptions.filter(o => o.question_id === questionId).length
-    const { data, error } = await supabase.from('dsat_options').insert({
-      question_id: questionId, label: `Option ${count + 1}`, position: count + 1
-    }).select().single()
-    if (error) return flash(error.message, false)
-    setDsatOptions(o => [...o, data])
-    if (isPublished) markChanged()
+    if (isPublished) {
+      const tempId = 'temp_o_' + Date.now()
+      setDsatOptions(o => [...o, { id: tempId, question_id: questionId, label: `Option ${count + 1}`, position: count + 1, _isNew: true }])
+      markChanged()
+    } else {
+      const { data, error } = await supabase.from('dsat_options').insert({
+        question_id: questionId, label: `Option ${count + 1}`, position: count + 1
+      }).select().single()
+      if (error) return flash(error.message, false)
+      setDsatOptions(o => [...o, data])
+    }
   }
 
   const updateOption = async (optId, updates) => {
