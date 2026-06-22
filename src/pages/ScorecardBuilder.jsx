@@ -383,7 +383,7 @@ export default function ScorecardBuilder() {
   if (!scorecard) return <div className="page"><p>Scorecard not found.</p></div>
 
   const ungroupedQuestions = questions.filter(q => !q.group_id)
-  const tabs = scorecard.type === 'dsat' ? ['settings', 'sections'] : ['settings', 'metadata', 'questions']
+  const tabs = scorecard.type === 'dsat' ? ['settings', 'metadata', 'sections'] : ['settings', 'metadata', 'questions']
 
   return (
     <div className="page">
@@ -471,7 +471,7 @@ export default function ScorecardBuilder() {
         </div>
       )}
 
-      {tab === 'metadata' && scorecard.type === 'quality' && (
+      {tab === 'metadata' && (
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <p style={{ color: 'var(--text-secondary)' }}>{metadata.length}/10 metadata fields</p>
