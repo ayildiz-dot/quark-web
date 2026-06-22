@@ -415,7 +415,7 @@ export default function ScorecardBuilder() {
           )}
           <button
             className="btn btn-ghost btn-sm"
-            onClick={() => safeNavigate(`/scorecards/${id}/history`)}>
+            onClick={() => navigate(`/scorecards/${id}/history`)}>
             History
           </button>
           <button
