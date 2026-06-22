@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 
 export default function Evaluations() {
+  const { profile } = useAuth()
   const navigate = useNavigate()
   const [data,    setData]    = useState([])
   const [total,   setTotal]   = useState(0)
