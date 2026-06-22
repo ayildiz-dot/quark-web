@@ -173,7 +173,8 @@ export default function ScorecardBuilder() {
         ))
         await Promise.all(dsatQuestions.map(q =>
           supabase.from('dsat_questions').update({
-            title: q.title, description: q.description, is_required: q.is_required
+            title: q.title, description: q.description, is_required: q.is_required,
+            question_type: q.question_type || 'options'
           }).eq('id', q.id)
         ))
         await Promise.all(dsatOptions.map(o =>
@@ -317,6 +318,25 @@ export default function ScorecardBuilder() {
     if (error) return flash(error.message, false)
     setSections(s => [...s, data])
     if (isPublished) markChanged()
+  }
+
+  const addCommentSection = async () => {
+    const { data: sectionData, error: sectionError } = await supabase.from('dsat_sections').insert({
+      scorecard_id: id, title: 'Comments', position: sections.length + 1
+    }).select().single()
+    if (sectionError) return flash(sectionError.message, false)
+    setSections(s => [...s, sectionData])
+
+    const { data: questionData, error: questionError } = await supabase.from('dsat_questions').insert({
+      scorecard_id: id, section_id: sectionData.id, title: 'Comments',
+      is_required: false, question_type: 'free_text',
+      position: 1
+    }).select().single()
+    if (questionError) return flash(questionError.message, false)
+    setDsatQuestions(q => [...q, questionData])
+
+    if (isPublished) markChanged()
+    flash('Comment section added ✓')
   }
 
   const updateSection = async (sId, updates) => {
@@ -626,7 +646,10 @@ export default function ScorecardBuilder() {
             <p style={{ color: 'var(--text-secondary)' }}>
               Build sections and questions. Each answer option can jump to a specific section.
             </p>
-            <button className="btn btn-primary btn-sm" onClick={addSection}>+ Add Section</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-primary btn-sm" onClick={addSection}>+ Add Section</button>
+              <button className="btn btn-ghost btn-sm" onClick={addCommentSection}>+ Add Comment Section</button>
+            </div>
           </div>
           {sections.length === 0 && (
             <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
@@ -763,7 +786,7 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
   )
 }
 
-function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDeleteQuestion, onAddOption, onUpdateOption, onDeleteOption }) {
+function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDeleteQuestion, onAddOption, onUpdateOption, onDeleteOption, freeTextValue, onFreeTextChange }) {
   const [expanded, setExpanded] = useState(false)
   return (
     <div className="card" style={{ marginBottom: 10, borderLeft: '3px solid var(--accent)', background: 'var(--bg-main)' }}>
@@ -802,31 +825,49 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
             </div>
           </div>
           <div style={{ marginTop: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>ANSWER OPTIONS</label>
-              <button className="btn btn-ghost btn-sm" onClick={() => onAddOption(question.id)}>+ Add Option</button>
-            </div>
-            {options.length === 0 && (
-              <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No options yet. Add at least 2.</p>
-            )}
-            {options.map(opt => (
-              <div key={opt.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>○</span>
-                <input className="input" style={{ flex: 2 }} placeholder="Option label"
-                  value={opt.label} onChange={e => onUpdateOption(opt.id, { label: e.target.value })} />
-                <select className="select" style={{ flex: 2 }}
-                  value={opt.jump_to_section_id || ''}
-                  onChange={e => onUpdateOption(opt.id, { jump_to_section_id: e.target.value || null })}>
-                  <option value="">Continue to next section</option>
-                  {sections.map(s => (
-                    <option key={s.id} value={s.id}>Jump to: {s.title}</option>
-                  ))}
-                  <option value="end">End of form</option>
-                </select>
-                <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                  onClick={() => onDeleteOption(opt.id)}>✕</button>
+            {question.question_type === 'free_text' ? (
+              <div>
+                <label style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'block', marginBottom: 8 }}>FREE TEXT RESPONSE</label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  placeholder="Evaluator will type their response here…"
+                  disabled
+                  style={{ resize: 'vertical', opacity: 0.6, cursor: 'not-allowed', width: '100%' }}
+                />
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'block' }}>
+                  This field will accept free-text input during evaluation.
+                </span>
               </div>
-            ))}
+            ) : (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>ANSWER OPTIONS</label>
+                  <button className="btn btn-ghost btn-sm" onClick={() => onAddOption(question.id)}>+ Add Option</button>
+                </div>
+                {options.length === 0 && (
+                  <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No options yet. Add at least 2.</p>
+                )}
+                {options.map(opt => (
+                  <div key={opt.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>○</span>
+                    <input className="input" style={{ flex: 2 }} placeholder="Option label"
+                      value={opt.label} onChange={e => onUpdateOption(opt.id, { label: e.target.value })} />
+                    <select className="select" style={{ flex: 2 }}
+                      value={opt.jump_to_section_id || ''}
+                      onChange={e => onUpdateOption(opt.id, { jump_to_section_id: e.target.value || null })}>
+                      <option value="">Continue to next section</option>
+                      {sections.map(s => (
+                        <option key={s.id} value={s.id}>Jump to: {s.title}</option>
+                      ))}
+                      <option value="end">End of form</option>
+                    </select>
+                    <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+                      onClick={() => onDeleteOption(opt.id)}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
