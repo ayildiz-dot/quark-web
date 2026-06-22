@@ -414,6 +414,11 @@ export default function ScorecardBuilder() {
             </button>
           )}
           <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => safeNavigate(`/scorecards/${id}/history`)}>
+            History
+          </button>
+          <button
             className={`btn btn-sm ${scorecard.is_published ? 'btn-danger' : 'btn-primary'}`}
             onClick={togglePublish}>
             {scorecard.is_published ? 'Unpublish' : 'Publish'}
