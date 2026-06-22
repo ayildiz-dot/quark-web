@@ -83,6 +83,18 @@ export default function ScorecardBuilder() {
 
 
 
+
+  useEffect(() => {
+    if (!unsavedChanges) return
+    window.history.pushState(null, '', window.location.href)
+    const handlePopState = () => {
+      window.history.pushState(null, '', window.location.href)
+      setPendingNavPath(-1)
+      setShowNavModal(true)
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [unsavedChanges])
   useEffect(() => { loadAll() }, [id])
 
   const loadAll = async () => {
