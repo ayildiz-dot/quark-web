@@ -35,6 +35,46 @@ export default function ScorecardBuilder() {
   const markChanged = () => setUnsavedChanges(true)
   const clearChanged = () => setUnsavedChanges(false)
 
+  const logHistory = async (changeType) => {
+    try {
+      await supabase.from('scorecard_history').insert({
+        scorecard_id: id,
+        changed_by: profile.id,
+        change_type: changeType,
+        changed_at: new Date().toISOString(),
+        snapshot: {
+          scorecard: { name: scorecard.name, description: scorecard.description, is_published: scorecard.is_published },
+          questions: questions.map(q => ({
+            title: q.title, weight: q.weight, description: q.description,
+            is_form_critical: q.is_form_critical, allow_na: q.allow_na
+          }))
+        }
+      })
+    } catch (e) {
+      console.warn('History log failed:', e.message)
+    }
+  }
+
+  const logHistory = async (changeType) => {
+    try {
+      await supabase.from('scorecard_history').insert({
+        scorecard_id: id,
+        changed_by: profile.id,
+        change_type: changeType,
+        changed_at: new Date().toISOString(),
+        snapshot: {
+          scorecard: { name: scorecard.name, description: scorecard.description, is_published: scorecard.is_published },
+          questions: questions.map(q => ({
+            title: q.title, weight: q.weight, description: q.description,
+            is_form_critical: q.is_form_critical, allow_na: q.allow_na
+          }))
+        }
+      })
+    } catch (e) {
+      console.warn('History log failed:', e.message)
+    }
+  }
+
   const safeNavigate = (path) => {
     if (unsavedChanges) {
       setPendingNavPath(path)
@@ -171,7 +211,8 @@ export default function ScorecardBuilder() {
       }
 
       clearChanged()
-      flash('All changes saved ✓')
+      await logHistory('save')
+    flash('All changes saved ✓')
     } catch (err) {
       flash('Failed to save: ' + err.message, false)
     }
@@ -184,7 +225,8 @@ export default function ScorecardBuilder() {
     const { error } = await supabase.from('scorecards').update({ is_published: newVal }).eq('id', id)
     if (error) return flash(error.message, false)
     setScorecard(s => ({ ...s, is_published: newVal }))
-    flash(newVal ? 'Scorecard published' : 'Scorecard unpublished')
+    await logHistory(newVal ? 'publish' : 'unpublish')
+  flash(newVal ? 'Scorecard published' : 'Scorecard unpublished')
   }
 
   const addMetaField = async () => {
