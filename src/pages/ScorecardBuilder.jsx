@@ -115,7 +115,11 @@ export default function ScorecardBuilder() {
     setTimeout(() => setMsg(null), 3000)
   }
 
-  const isPublished = scorecard?.is_published
+  const isPublishedRef = React.useRef(false)
+  if (scorecard?.is_published !== undefined) {
+    isPublishedRef.current = scorecard.is_published
+  }
+  const isPublished = isPublishedRef.current
 
 
   const checkTotalWeight = () => {
