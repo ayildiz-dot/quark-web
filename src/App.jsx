@@ -38,6 +38,7 @@ function UnsavedModal({ show, onLeave, onStay }) {
 
 function AppShell({ user, profile, logout, fetchProfile }) {
   const navigate = useNavigate()
+  const leavingWithoutSaveRef = useRef(false)
   const [unsavedChanges, setUnsavedChanges] = useState(false)
   const [showNavModal, setShowNavModal] = useState(false)
   const [pendingNavPath, setPendingNavPath] = useState(null)
@@ -47,6 +48,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
   const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
 
   const handleLeave = () => {
+    leavingWithoutSaveRef.current = true
     setUnsavedChanges(false)
     setShowNavModal(false)
     const dest = pendingNavPath
@@ -65,6 +67,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
       setPendingNavPath(path)
       setShowNavModal(true)
     } else {
+      leavingWithoutSaveRef.current = false
       navigate(path)
     }
   }
@@ -76,7 +79,8 @@ function AppShell({ user, profile, logout, fetchProfile }) {
       unsavedChanges, setUnsavedChanges,
       showNavModal, setShowNavModal,
       pendingNavPath, setPendingNavPath,
-      safeNavigate
+      safeNavigate,
+      leavingWithoutSaveRef
     }}>
       <div className="app-shell">
         <UnsavedModal show={showNavModal} onLeave={handleLeave} onStay={handleStay} />
