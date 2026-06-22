@@ -55,34 +55,7 @@ export default function ScorecardBuilder() {
     }
   }
 
-  const logHistory = async (changeType) => {
-    try {
-      await supabase.from('scorecard_history').insert({
-        scorecard_id: id,
-        changed_by: profile.id,
-        change_type: changeType,
-        changed_at: new Date().toISOString(),
-        snapshot: {
-          scorecard: { name: scorecard.name, description: scorecard.description, is_published: scorecard.is_published },
-          questions: questions.map(q => ({
-            title: q.title, weight: q.weight, description: q.description,
-            is_form_critical: q.is_form_critical, allow_na: q.allow_na
-          }))
-        }
-      })
-    } catch (e) {
-      console.warn('History log failed:', e.message)
-    }
-  }
-
-  const safeNavigate = (path) => {
-    if (unsavedChanges) {
-      setPendingNavPath(path)
-      setShowNavModal(true)
-    } else {
-      navigate(path)
-    }
-  }
+  
 
   useEffect(() => {
     return () => setUnsavedChanges(false)
