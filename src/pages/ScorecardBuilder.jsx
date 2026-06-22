@@ -13,7 +13,7 @@ import { CSS } from '@dnd-kit/utilities'
 
 export default function ScorecardBuilder() {
   const { id } = useParams()
-  const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, safeNavigate, leavingWithoutSaveRef } = useAuth()
+  const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, safeNavigate } = useAuth()
   const navigate = useNavigate()
 
   const [tab, setTab] = useState('settings')
@@ -32,6 +32,7 @@ export default function ScorecardBuilder() {
     activationConstraint: { distance: 5 }
   }))
 
+  const leavingRef = React.useRef(false)
   const skipSaveRef = React.useRef(false)
 
   const markChanged = () => setUnsavedChanges(true)
@@ -60,9 +61,10 @@ export default function ScorecardBuilder() {
   
 
   useEffect(() => {
-    leavingWithoutSaveRef.current = false
+    leavingRef.current = false
     skipSaveRef.current = false
     return () => {
+      leavingRef.current = true
       skipSaveRef.current = true
       setUnsavedChanges(false)
     }
@@ -130,7 +132,7 @@ export default function ScorecardBuilder() {
 
   const saveAllChanges = async () => {
 
-    if (leavingWithoutSaveRef.current || skipSaveRef.current) return
+    if (leavingRef.current || skipSaveRef.current) return
     if (!checkTotalWeight()) return
     try {
       await supabase.from('scorecards').update({
@@ -210,7 +212,7 @@ export default function ScorecardBuilder() {
   }
 
   const updateMetaField = async (fieldId, updates) => {
-    if (leavingWithoutSaveRef.current) return
+    if (leavingRef.current) return
     setMetadata(m => m.map(f => f.id === fieldId ? { ...f, ...updates } : f))
     if (!isPublished) await supabase.from('scorecard_metadata_fields').update(updates).eq('id', fieldId)
     else markChanged()
@@ -232,7 +234,7 @@ export default function ScorecardBuilder() {
   }
 
   const updateGroup = async (groupId, updates) => {
-    if (leavingWithoutSaveRef.current) return
+    if (leavingRef.current) return
     setGroups(g => g.map(gr => gr.id === groupId ? { ...gr, ...updates } : gr))
     if (!isPublished) await supabase.from('scorecard_question_groups').update(updates).eq('id', groupId)
     else markChanged()
@@ -258,7 +260,7 @@ export default function ScorecardBuilder() {
   }
 
   const updateQuestion = async (qId, updates) => {
-    if (leavingWithoutSaveRef.current) return
+    if (leavingRef.current) return
     setQuestions(q => q.map(qs => qs.id === qId ? { ...qs, ...updates } : qs))
     if (!isPublished) await supabase.from('scorecard_questions').update(updates).eq('id', qId)
     else markChanged()
@@ -338,7 +340,7 @@ export default function ScorecardBuilder() {
   }
 
   const updateSection = async (sId, updates) => {
-    if (leavingWithoutSaveRef.current) return
+    if (leavingRef.current) return
     setSections(s => s.map(sec => sec.id === sId ? { ...sec, ...updates } : sec))
     if (!isPublished) await supabase.from('dsat_sections').update(updates).eq('id', sId)
     else markChanged()
@@ -363,7 +365,7 @@ export default function ScorecardBuilder() {
   }
 
   const updateDsatQuestion = async (qId, updates) => {
-    if (leavingWithoutSaveRef.current) return
+    if (leavingRef.current) return
     setDsatQuestions(q => q.map(dq => dq.id === qId ? { ...dq, ...updates } : dq))
     if (!isPublished) await supabase.from('dsat_questions').update(updates).eq('id', qId)
     else markChanged()
@@ -388,7 +390,7 @@ export default function ScorecardBuilder() {
   }
 
   const updateOption = async (optId, updates) => {
-    if (leavingWithoutSaveRef.current) return
+    if (leavingRef.current) return
     setDsatOptions(o => o.map(opt => opt.id === optId ? { ...opt, ...updates } : opt))
     if (!isPublished) await supabase.from('dsat_options').update(updates).eq('id', optId)
     else markChanged()
