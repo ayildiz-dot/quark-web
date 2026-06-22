@@ -62,6 +62,15 @@ function AppShell({ user, profile, logout, fetchProfile }) {
     setPendingNavPath(null)
   }
 
+  const safeNavigate = (path) => {
+    if (unsavedChanges) {
+      setPendingNavPath(path)
+      setShowNavModal(true)
+    } else {
+      navigate(path)
+    }
+  }
+
   return (
     <AuthContext.Provider value={{
       user, profile, logout,
@@ -69,7 +78,8 @@ function AppShell({ user, profile, logout, fetchProfile }) {
       unsavedChanges, setUnsavedChanges,
       showNavModal, setShowNavModal,
       pendingNavPath, setPendingNavPath,
-      skipSave, setSkipSave
+      skipSave, setSkipSave,
+      safeNavigate
     }}>
       <div className="app-shell">
         <UnsavedModal show={showNavModal} onLeave={handleLeave} onStay={handleStay} />

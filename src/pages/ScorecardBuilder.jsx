@@ -13,7 +13,7 @@ import { CSS } from '@dnd-kit/utilities'
 
 export default function ScorecardBuilder() {
   const { id } = useParams()
-  const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, skipSave, setSkipSave } = useAuth()
+  const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, skipSave, setSkipSave, safeNavigate } = useAuth()
   const navigate = useNavigate()
 
   const [tab, setTab] = useState('settings')
@@ -60,6 +60,7 @@ export default function ScorecardBuilder() {
   
 
   useEffect(() => {
+    leavingRef.current = false
     setSkipSave(false)
     return () => {
       leavingRef.current = true
@@ -188,7 +189,6 @@ export default function ScorecardBuilder() {
 
   const togglePublish = async () => {
     if (!scorecard.is_published && !checkTotalWeight()) return
-    if (unsavedChanges) await saveAllChanges()
     const newVal = !scorecard.is_published
     const { error } = await supabase.from('scorecards').update({ is_published: newVal }).eq('id', id)
     if (error) return flash(error.message, false)
@@ -404,7 +404,7 @@ export default function ScorecardBuilder() {
       <div className="page-header">
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
-            onClick={() => navigate('/scorecards')}>
+            onClick={() => safeNavigate('/scorecards')}>
             ← Back to Scorecards
           </button>
           <h1>{scorecard.name}</h1>
