@@ -129,6 +129,11 @@ export default function ScorecardBuilder() {
   }
 
   const saveAllChanges = async () => {
+    console.log('saveAllChanges called', {
+      leavingRef: leavingRef.current,
+      skipSave,
+      stack: new Error().stack
+    })
     if (leavingRef.current || skipSave) return
     if (!checkTotalWeight()) return
     try {
