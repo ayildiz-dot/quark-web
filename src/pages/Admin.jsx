@@ -15,7 +15,6 @@ export default function Admin() {
 
   useEffect(() => { loadUsers(); loadSampling() }, [])
 
-  // ── Presence listener ──────────────────────────────────────────────
   useEffect(() => {
     const syncPresence = () => {
       const channels = supabase.getChannels()
@@ -28,7 +27,6 @@ export default function Admin() {
       })
       setOnlineIds(ids)
     }
-
     syncPresence()
     const interval = setInterval(syncPresence, 3000)
     return () => clearInterval(interval)
@@ -93,6 +91,20 @@ export default function Admin() {
     flash('Requirement removed')
   }
 
+  const canChangeRole = (u) => {
+    if (u.id === profile.id) return false
+    if (profile.role === 'owner') return true
+    if (profile.role === 'admin' && u.role !== 'owner') return true
+    return false
+  }
+
+  const canDeactivate = (u) => {
+    if (u.id === profile.id) return false
+    if (profile.role === 'owner') return true
+    if (profile.role === 'admin' && u.role !== 'owner') return true
+    return false
+  }
+
   return (
     <div className="page">
       <div className="page-header">
@@ -117,7 +129,6 @@ export default function Admin() {
         </button>
       </div>
 
-      {/* USER MANAGEMENT */}
       {tab === 'users' && (
         <div className="table-wrap">
           <table className="table">
@@ -147,17 +158,12 @@ export default function Admin() {
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                         <span style={{
-                          width: 9,
-                          height: 9,
-                          borderRadius: '50%',
+                          width: 9, height: 9, borderRadius: '50%',
                           backgroundColor: isOnline ? '#22c55e' : '#64748b',
                           flexShrink: 0,
                           boxShadow: isOnline ? '0 0 6px #22c55e99' : 'none',
                         }} />
-                        <span style={{
-                          fontSize: 13,
-                          color: isOnline ? '#22c55e' : 'var(--text-secondary)'
-                        }}>
+                        <span style={{ fontSize: 13, color: isOnline ? '#22c55e' : 'var(--text-secondary)' }}>
                           {isOnline ? 'Online' : 'Offline'}
                         </span>
                       </div>
@@ -167,17 +173,19 @@ export default function Admin() {
                     </td>
                     <td>
                       <div className="action-group">
-                        <select className="select select-sm"
-                          value={u.role}
-                          onChange={e => changeRole(u.id, e.target.value)}>
-                          <option value="viewer">Viewer</option>
-                          <option value="evaluator">Evaluator</option>
-                          <option value="admin">Admin</option>
-                          <option value="owner">Owner</option>
-                        </select>
-                        {(profile?.role === 'owner' ||
-                          (profile?.role === 'admin' && u.role !== 'owner')) &&
-                          u.id !== profile.id && (
+                        {canChangeRole(u) && (
+                          <select className="select select-sm"
+                            value={u.role}
+                            onChange={e => changeRole(u.id, e.target.value)}>
+                            <option value="viewer">Viewer</option>
+                            <option value="evaluator">Evaluator</option>
+                            <option value="admin">Admin</option>
+                            {profile.role === 'owner' && (
+                              <option value="owner">Owner</option>
+                            )}
+                          </select>
+                        )}
+                        {canDeactivate(u) && (
                           <button
                             className={`btn btn-sm ${u.active ? 'btn-danger' : 'btn-success'}`}
                             onClick={() => toggleActive(u.id, !u.active)}>
@@ -194,7 +202,6 @@ export default function Admin() {
         </div>
       )}
 
-      {/* SAMPLING REQUIREMENTS */}
       {tab === 'sampling' && (
         <div>
           <div className="card" style={{ marginBottom: 20 }}>

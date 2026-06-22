@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../App'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 
@@ -142,9 +143,11 @@ export default function Evaluations() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
           <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>
-          <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
-            + New Evaluation
-          </button>
+          {profile?.role !== 'viewer' && (
+              <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
+                + New Evaluation
+              </button>
+            )}
         </div>
       </div>
 
