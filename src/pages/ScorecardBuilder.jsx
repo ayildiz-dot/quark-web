@@ -145,28 +145,56 @@ export default function ScorecardBuilder() {
         updated_at: new Date().toISOString()
       }).eq('id', id)
 
-      await Promise.all(questions.map((q, i) =>
-        supabase.from('scorecard_questions').update({
-          title: q.title, description: q.description,
-          weight: q.weight, is_weighted: q.is_weighted,
-          is_form_critical: q.is_form_critical,
-          is_group_critical: q.is_group_critical,
-          allow_na: q.allow_na,
-          group_id: q.group_id, position: i + 1
-        }).eq('id', q.id)
-      ))
+      // Groups — insert new, update existing
+      const groupIdMap = {}
+      for (const g of groups) {
+        if (g._isNew) {
+          const { data } = await supabase.from('scorecard_question_groups').insert({
+            scorecard_id: id, name: g.name, position: g.position
+          }).select().single()
+          if (data) groupIdMap[g.id] = data.id
+        } else {
+          await supabase.from('scorecard_question_groups')
+            .update({ name: g.name }).eq('id', g.id)
+        }
+      }
 
-      await Promise.all(groups.map(g =>
-        supabase.from('scorecard_question_groups')
-          .update({ name: g.name }).eq('id', g.id)
-      ))
+      // Questions — insert new (resolving temp group IDs), update existing
+      for (const [i, q] of questions.entries()) {
+        const realGroupId = groupIdMap[q.group_id] || q.group_id
+        if (q._isNew) {
+          await supabase.from('scorecard_questions').insert({
+            scorecard_id: id, group_id: realGroupId, title: q.title,
+            description: q.description, weight: q.weight, is_weighted: q.is_weighted,
+            is_form_critical: q.is_form_critical, is_group_critical: q.is_group_critical,
+            allow_na: q.allow_na, position: i + 1
+          })
+        } else {
+          await supabase.from('scorecard_questions').update({
+            title: q.title, description: q.description,
+            weight: q.weight, is_weighted: q.is_weighted,
+            is_form_critical: q.is_form_critical,
+            is_group_critical: q.is_group_critical,
+            allow_na: q.allow_na,
+            group_id: realGroupId, position: i + 1
+          }).eq('id', q.id)
+        }
+      }
 
-      await Promise.all(metadata.map(f =>
-        supabase.from('scorecard_metadata_fields').update({
-          label: f.label, field_type: f.field_type,
-          is_required: f.is_required, options: f.options
-        }).eq('id', f.id)
-      ))
+      // Metadata — insert new, update existing
+      for (const f of metadata) {
+        if (f._isNew) {
+          await supabase.from('scorecard_metadata_fields').insert({
+            scorecard_id: id, label: f.label, field_type: f.field_type,
+            is_required: f.is_required, options: f.options, position: f.position
+          })
+        } else {
+          await supabase.from('scorecard_metadata_fields').update({
+            label: f.label, field_type: f.field_type,
+            is_required: f.is_required, options: f.options
+          }).eq('id', f.id)
+        }
+      }
 
       if (scorecard.type === 'dsat') {
         // Save sections — insert new, update existing
@@ -236,13 +264,18 @@ export default function ScorecardBuilder() {
 
   const addMetaField = async () => {
     if (metadata.length >= 10) return flash('Maximum 10 metadata fields allowed.', false)
-    const { data, error } = await supabase.from('scorecard_metadata_fields').insert({
-      scorecard_id: id, label: 'New Field', field_type: 'text',
-      is_required: true, position: metadata.length + 1
-    }).select().single()
-    if (error) return flash(error.message, false)
-    setMetadata(m => [...m, data])
-    markChanged()
+    if (isPublished) {
+      const tempId = 'temp_m_' + Date.now()
+      setMetadata(m => [...m, { id: tempId, scorecard_id: id, label: 'New Field', field_type: 'text', is_required: true, position: m.length + 1, _isNew: true }])
+      markChanged()
+    } else {
+      const { data, error } = await supabase.from('scorecard_metadata_fields').insert({
+        scorecard_id: id, label: 'New Field', field_type: 'text',
+        is_required: true, position: metadata.length + 1
+      }).select().single()
+      if (error) return flash(error.message, false)
+      setMetadata(m => [...m, data])
+    }
   }
 
   const updateMetaField = async (fieldId, updates) => {
@@ -259,12 +292,17 @@ export default function ScorecardBuilder() {
   }
 
   const addGroup = async () => {
-    const { data, error } = await supabase.from('scorecard_question_groups').insert({
-      scorecard_id: id, name: 'New Group', position: groups.length + 1
-    }).select().single()
-    if (error) return flash(error.message, false)
-    setGroups(g => [...g, data])
-    if (isPublished) markChanged()
+    if (isPublished) {
+      const tempId = 'temp_g_' + Date.now()
+      setGroups(g => [...g, { id: tempId, scorecard_id: id, name: 'New Group', position: g.length + 1, _isNew: true }])
+      markChanged()
+    } else {
+      const { data, error } = await supabase.from('scorecard_question_groups').insert({
+        scorecard_id: id, name: 'New Group', position: groups.length + 1
+      }).select().single()
+      if (error) return flash(error.message, false)
+      setGroups(g => [...g, data])
+    }
   }
 
   const updateGroup = async (groupId, updates) => {
@@ -283,14 +321,19 @@ export default function ScorecardBuilder() {
   }
 
   const addQuestion = async (groupId = null) => {
-    const { data, error } = await supabase.from('scorecard_questions').insert({
-      scorecard_id: id, group_id: groupId, title: 'New Question',
-      weight: 1, is_weighted: true, is_form_critical: false,
-      is_group_critical: false, allow_na: true, position: questions.length + 1
-    }).select().single()
-    if (error) return flash(error.message, false)
-    setQuestions(q => [...q, data])
-    if (isPublished) markChanged()
+    if (isPublished) {
+      const tempId = 'temp_q_' + Date.now()
+      setQuestions(q => [...q, { id: tempId, scorecard_id: id, group_id: groupId, title: 'New Question', weight: 1, is_weighted: true, is_form_critical: false, is_group_critical: false, allow_na: true, position: q.length + 1, _isNew: true }])
+      markChanged()
+    } else {
+      const { data, error } = await supabase.from('scorecard_questions').insert({
+        scorecard_id: id, group_id: groupId, title: 'New Question',
+        weight: 1, is_weighted: true, is_form_critical: false,
+        is_group_critical: false, allow_na: true, position: questions.length + 1
+      }).select().single()
+      if (error) return flash(error.message, false)
+      setQuestions(q => [...q, data])
+    }
   }
 
   const updateQuestion = async (qId, updates) => {
