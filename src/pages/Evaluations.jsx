@@ -25,6 +25,9 @@ export default function Evaluations() {
   useEffect(() => {
     loadScorecards()
     fetchEvals(1)
+  }, [])
+
+  useEffect(() => {
     if (profile?.id) loadDrafts()
   }, [profile?.id])
 
