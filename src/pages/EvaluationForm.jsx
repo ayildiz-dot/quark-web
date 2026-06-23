@@ -31,6 +31,7 @@ export default function EvaluationForm() {
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
   const draftIdRef = useRef(null)
+  const leavingRef = useRef(false)
 
   const location = useLocation()
 
@@ -53,13 +54,18 @@ export default function EvaluationForm() {
 
   // Auto-save every 30 seconds when mid-evaluation
   useEffect(() => {
+    leavingRef.current = false
     const interval = setInterval(() => {
       const s = stateRef.current
+      if (leavingRef.current) return
       if (s.step && s.step !== 'select' && s.step !== 'done' && s.selectedScorecard) {
         saveDraft(s, draftIdRef.current, false)
       }
     }, 30000)
-    return () => clearInterval(interval)
+    return () => {
+      leavingRef.current = true
+      clearInterval(interval)
+    }
   }, [])
 
   const saveDraft = async (s, existingDraftId, showMsg = true) => {
@@ -265,6 +271,7 @@ export default function EvaluationForm() {
     if (!metaValid()) return flash('Please fill in all required metadata fields.', false)
     if (!questionsValid()) return flash('Please answer all required questions before submitting.', false)
     if (selectedScorecard.type !== 'dsat' && !overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
+    leavingRef.current = true
     setSubmitting(true)
     try {
       const metaPayload = metadata.map(f => ({
