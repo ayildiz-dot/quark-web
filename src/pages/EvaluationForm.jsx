@@ -25,15 +25,16 @@ export default function EvaluationForm() {
   const [dsatCurrentSectionId, setDsatCurrentSectionId] = useState(null)
   const [dsatSectionHistory,   setDsatSectionHistory]   = useState([])
   const [draftId,              setDraftId]              = useState(null)
+  const [draftSaving,          setDraftSaving]          = useState(false)
+  const [lastSaved,            setLastSaved]            = useState(null)
 
-  // Refs to always have latest state available in cleanup (avoids stale closures)
+  // Always-current ref for auto-save interval
   const stateRef = useRef({})
   const draftIdRef = useRef(null)
-  const submittedRef = useRef(false)
 
   const location = useLocation()
 
-  // Keep refs in sync with state
+  // Keep refs in sync
   useEffect(() => {
     stateRef.current = {
       step, selectedScorecard, metadata, groups, questions,
@@ -42,25 +43,30 @@ export default function EvaluationForm() {
       dsatCurrentSectionId, dsatSectionHistory
     }
   })
-
   useEffect(() => { draftIdRef.current = draftId }, [draftId])
 
   useEffect(() => {
     loadScorecards()
-    if (location.state?.draft) {
-      resumeDraft(location.state.draft)
-    }
+    if (location.state?.draft) resumeDraft(location.state.draft)
+  }, [])
 
-    // Save draft ONLY on true unmount, not on every re-render
-    return () => {
+  // Auto-save every 30 seconds when mid-evaluation
+  useEffect(() => {
+    const interval = setInterval(() => {
       const s = stateRef.current
-      if (submittedRef.current) return
-      if (!s.selectedScorecard || s.step === 'select' || s.step === 'done') return
-      saveDraftOnUnmount(s, draftIdRef.current)
-    }
-  }, []) // empty deps = runs once, cleans up on unmount only
+      if (s.step && s.step !== 'select' && s.step !== 'done' && s.selectedScorecard) {
+        saveDraft(s, draftIdRef.current, false)
+      }
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
-  const saveDraftOnUnmount = (s, existingDraftId) => {
+  const saveDraft = async (s, existingDraftId, showMsg = true) => {
+    if (!s) s = stateRef.current
+    if (!existingDraftId) existingDraftId = draftIdRef.current
+    if (!s.selectedScorecard || s.step === 'select' || s.step === 'done') return
+
+    setDraftSaving(true)
     const state = {
       step: s.step,
       selectedScorecard: s.selectedScorecard,
@@ -78,46 +84,56 @@ export default function EvaluationForm() {
       dsatSectionHistory: s.dsatSectionHistory,
     }
 
-    if (existingDraftId) {
-      // Update existing draft
-      fetch(`https://aavrqnweoigfkmxianvf.supabase.co/rest/v1/evaluations?id=eq.${existingDraftId}`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'Prefer': 'return=minimal'
-        },
-        body: JSON.stringify({ draft_state: state, submitted_at: new Date().toISOString() }),
-        keepalive: true
-      }).catch(() => {})
-    } else {
-      // Create new draft
-      fetch(`https://aavrqnweoigfkmxianvf.supabase.co/rest/v1/evaluations`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          'Prefer': 'return=minimal'
-        },
-        body: JSON.stringify({
-          scorecard_id: s.selectedScorecard.id,
-          evaluator_id: profile.id,
-          score: 0,
-          failed_critical: false,
-          metadata_values: [],
-          status: 'draft',
-          draft_state: state,
-          submitted_at: new Date().toISOString()
-        }),
-        keepalive: true
-      }).catch(() => {})
+    try {
+      if (existingDraftId) {
+        await supabase.from('evaluations')
+          .update({ draft_state: state, submitted_at: new Date().toISOString() })
+          .eq('id', existingDraftId)
+      } else {
+        // Upsert: one draft per user per scorecard
+        const { data: existing } = await supabase
+          .from('evaluations')
+          .select('id')
+          .eq('evaluator_id', profile.id)
+          .eq('scorecard_id', s.selectedScorecard.id)
+          .eq('status', 'draft')
+          .maybeSingle()
+
+        if (existing) {
+          await supabase.from('evaluations')
+            .update({ draft_state: state, submitted_at: new Date().toISOString() })
+            .eq('id', existing.id)
+          setDraftId(existing.id)
+          draftIdRef.current = existing.id
+        } else {
+          const { data } = await supabase.from('evaluations').insert({
+            scorecard_id: s.selectedScorecard.id,
+            evaluator_id: profile.id,
+            score: 0,
+            failed_critical: false,
+            metadata_values: [],
+            status: 'draft',
+            draft_state: state,
+            submitted_at: new Date().toISOString()
+          }).select().single()
+          if (data) {
+            setDraftId(data.id)
+            draftIdRef.current = data.id
+          }
+        }
+      }
+      setLastSaved(new Date())
+      if (showMsg) flash('Draft saved ✓')
+    } catch (e) {
+      if (showMsg) flash('Failed to save draft', false)
+    } finally {
+      setDraftSaving(false)
     }
   }
 
   const resumeDraft = (draft) => {
     const s = draft.draft_state
+    if (!s) return
     setDraftId(draft.id)
     draftIdRef.current = draft.id
     setSelectedScorecard(s.selectedScorecard)
@@ -134,6 +150,7 @@ export default function EvaluationForm() {
     setDsatCurrentSectionId(s.dsatCurrentSectionId || null)
     setDsatSectionHistory(s.dsatSectionHistory || [])
     setStep(s.step || 'metadata')
+    setLastSaved(new Date(draft.submitted_at))
   }
 
   const loadScorecards = async () => {
@@ -187,12 +204,15 @@ export default function EvaluationForm() {
       setDsatOptions([])
       setDsatAnswers({})
     }
+    setDraftId(null)
+    draftIdRef.current = null
+    setLastSaved(null)
     setStep('metadata')
   }
 
   const flash = (text, ok = true) => {
     setMsg({ text, ok })
-    setTimeout(() => setMsg(null), 4000)
+    setTimeout(() => setMsg(null), 3000)
   }
 
   const metaValid = () => {
@@ -284,15 +304,13 @@ export default function EvaluationForm() {
         if (scoresError) throw scoresError
       }
 
-      // Delete draft if this was resumed from one
+      // Delete draft if exists
       if (draftId) {
         await supabase.from('evaluations').delete().eq('id', draftId)
         setDraftId(null)
         draftIdRef.current = null
       }
 
-      // Mark as submitted so unmount cleanup doesn't create a new draft
-      submittedRef.current = true
       setStep('done')
     } catch (err) {
       flash('Failed to submit: ' + err.message, false)
@@ -300,6 +318,18 @@ export default function EvaluationForm() {
       setSubmitting(false)
     }
   }
+
+  // Draft save button shown in header during evaluation
+  const DraftSaveButton = () => (
+    <button
+      className="btn btn-ghost btn-sm"
+      onClick={() => saveDraft(stateRef.current, draftIdRef.current, true)}
+      disabled={draftSaving}
+      style={{ fontSize: 12, color: 'var(--text-secondary)' }}
+    >
+      {draftSaving ? 'Saving…' : lastSaved ? `Draft saved ${lastSaved.toLocaleTimeString()}` : 'Save Draft'}
+    </button>
+  )
 
   if (step === 'select') return (
     <div className="page">
@@ -354,6 +384,7 @@ export default function EvaluationForm() {
           <h1>{selectedScorecard.name}</h1>
           <p className="page-sub">Step 1 of 2 — Interaction details</p>
         </div>
+        <DraftSaveButton />
       </div>
       {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
       {metadata.length === 0 ? (
@@ -423,6 +454,7 @@ export default function EvaluationForm() {
             <p className="page-sub">Step 2 of 2 — {isDsat ? 'Complete the DSAT form' : 'Score each question'}</p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <DraftSaveButton />
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               {answered}/{total} answered
             </span>
@@ -495,14 +527,10 @@ export default function EvaluationForm() {
                         {q.is_required && <span style={{ color: 'var(--danger)', marginLeft: 4 }}>*</span>}
                       </div>
                       {q.question_type === 'free_text' ? (
-                        <textarea
-                          className="input"
-                          rows={3}
-                          placeholder="Type your answer…"
+                        <textarea className="input" rows={3} placeholder="Type your answer…"
                           value={dsatAnswers[q.id]?.value || ''}
                           onChange={e => setDsatAnswers(a => ({ ...a, [q.id]: { value: e.target.value } }))}
-                          style={{ resize: 'both', fontSize: 13, maxWidth: '100%', boxSizing: 'border-box' }}
-                        />
+                          style={{ resize: 'both', fontSize: 13, maxWidth: '100%', boxSizing: 'border-box' }} />
                       ) : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                           {qOpts.map(opt => {
@@ -631,7 +659,6 @@ export default function EvaluationForm() {
           )}
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button className="btn btn-primary" onClick={() => {
-              submittedRef.current = false
               setStep('select')
               setSelectedScorecard(null)
               setAnswers({})
@@ -639,6 +666,7 @@ export default function EvaluationForm() {
               setOverallComment('')
               setDraftId(null)
               draftIdRef.current = null
+              setLastSaved(null)
             }}>
               Start New Evaluation
             </button>
@@ -716,9 +744,7 @@ function SearchableDropdown({ options, value, onChange, placeholder = 'Select...
   const [open, setOpen] = React.useState(false)
   const [search, setSearch] = React.useState('')
   const ref = React.useRef(null)
-
   const filtered = options.filter(o => o.toLowerCase().includes(search.toLowerCase()))
-
   React.useEffect(() => {
     const handler = (e) => {
       if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setSearch('') }
@@ -726,7 +752,6 @@ function SearchableDropdown({ options, value, onChange, placeholder = 'Select...
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
-
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <div className="select"

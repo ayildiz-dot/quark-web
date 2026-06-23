@@ -38,8 +38,10 @@ export default function Evaluations() {
   }
 
   const deleteDraft = async (id) => {
-    await supabase.from('evaluations').delete().eq('id', id)
-    setDrafts(d => d.filter(dr => dr.id !== id))
+    const { error } = await supabase.from('evaluations').delete().eq('id', id)
+    if (!error) {
+      setDrafts(d => d.filter(dr => dr.id !== id))
+    }
   }
 
   const loadScorecards = async () => {
@@ -288,6 +290,11 @@ export default function Evaluations() {
                     }}>
                       <div>
                         <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                          {draft.eval_id && (
+                            <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'monospace', marginRight: 6 }}>
+                              #{draft.eval_id}
+                            </span>
+                          )}
                           {draft.scorecards?.name || 'Unknown Scorecard'}
                           <span style={{
                             marginLeft: 8, fontSize: 11, fontWeight: 600,
