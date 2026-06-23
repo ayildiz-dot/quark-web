@@ -64,7 +64,7 @@ export default function Evaluations() {
     try {
       let q = supabase
         .from('evaluations')
-        .select('*, scorecards(name, version), users(name, email)', { count: 'exact' })
+        .select('*, scorecards(name), users(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
         .order('submitted_at', { ascending: false })
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
@@ -85,7 +85,7 @@ export default function Evaluations() {
   const openDetail = async (id) => {
     const { data: ev } = await supabase
       .from('evaluations')
-      .select('*, scorecards(name, version), users(name, email)')
+      .select('*, scorecards(name), users(name, email)')
       .eq('id', id)
       .single()
     const { data: scores } = await supabase
