@@ -103,7 +103,13 @@ export default function EvaluationForm() {
 
   const questionsValid = () => {
     if (selectedScorecard?.type === 'dsat') {
-      for (const q of dsatQuestions) {
+      // Only validate questions from sections the user actually visited
+      const visitedSectionIds = new Set([
+        ...dsatSectionHistory,
+        dsatCurrentSectionId
+      ])
+      const visitedQuestions = dsatQuestions.filter(q => visitedSectionIds.has(q.section_id))
+      for (const q of visitedQuestions) {
         if (q.is_required && !dsatAnswers[q.id]?.value) return false
       }
       return true
@@ -148,8 +154,13 @@ export default function EvaluationForm() {
       }))
 
       if (selectedScorecard.type === 'dsat') {
-        // DSAT evaluations have no scoring — just store answers as metadata
-        const dsatPayload = dsatQuestions.map(q => ({
+        // DSAT evaluations have no scoring — only store answers from visited sections
+        const visitedSectionIds = new Set([
+          ...dsatSectionHistory,
+          dsatCurrentSectionId
+        ])
+        const visitedQuestions = dsatQuestions.filter(q => visitedSectionIds.has(q.section_id))
+        const dsatPayload = visitedQuestions.map(q => ({
           field_id: q.id,
           label: q.title,
           value: dsatAnswers[q.id]?.value || ''
