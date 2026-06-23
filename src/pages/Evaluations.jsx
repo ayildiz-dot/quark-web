@@ -19,7 +19,7 @@ export default function Evaluations() {
   const [scorecards, setScorecards] = useState([])
   const [drafts, setDrafts] = useState([])
   const [showDrafts, setShowDrafts] = useState(false)
-  const [showDraftLimit, setShowDraftLimit] = useState(false)
+
   const LIMIT = 50
 
   useEffect(() => {
@@ -184,10 +184,7 @@ export default function Evaluations() {
               {drafts.length > 0 ? `Drafts (${drafts.length})` : 'Drafts'}
             </button>
           {profile?.role !== 'viewer' && (
-              <button className="btn btn-primary" onClick={() => {
-                if (drafts.length >= 5) return setShowDraftLimit(true)
-                navigate('/evaluations/new')
-              }}>
+              <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
                 + New Evaluation
               </button>
             )}
@@ -341,24 +338,6 @@ export default function Evaluations() {
                   )
                 })
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* DRAFT LIMIT WARNING MODAL */}
-      {showDraftLimit && (
-        <div className="modal-backdrop">
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
-            <div className="modal-body" style={{ padding: '32px 28px' }}>
-              <div style={{ fontSize: 36, marginBottom: 16 }}>⚠️</div>
-              <h2 style={{ marginBottom: 12, fontSize: 17 }}>Draft Limit Reached</h2>
-              <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>
-                You must complete or delete at least 1 draft evaluation to be able to start a new evaluation.
-              </p>
-              <button className="btn btn-primary" onClick={() => setShowDraftLimit(false)}>
-                Okay
-              </button>
             </div>
           </div>
         </div>

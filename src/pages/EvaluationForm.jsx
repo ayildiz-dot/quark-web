@@ -27,6 +27,7 @@ export default function EvaluationForm() {
   const [draftId,              setDraftId]              = useState(null)
   const [draftSaving,          setDraftSaving]          = useState(false)
   const [lastSaved,            setLastSaved]            = useState(null)
+  const [showDraftLimit,       setShowDraftLimit]       = useState(false)
 
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
@@ -102,41 +103,27 @@ export default function EvaluationForm() {
         await supabase.from('evaluations')
           .update({ draft_state: state, submitted_at: new Date().toISOString() })
           .eq('id', existingDraftId)
-      } else {
-        // Upsert: one draft per user per scorecard
+    } else {
+      // First save for this evaluation — always insert a new row
+      const profileId = s.profileId
+      if (!profileId) { if (showMsg) flash('Not logged in — cannot save draft', false); setDraftSaving(false); return }
+      const { data } = await supabase.from('evaluations').insert({
+        scorecard_id: s.selectedScorecard.id,
+        evaluator_id: profileId,
+        score: 0,
+        failed_critical: false,
+        metadata_values: [],
+        status: 'draft',
+        draft_state: state,
+        submitted_at: new Date().toISOString()
+      }).select().single()
+      if (data) {
+        setDraftId(data.id)
+        draftIdRef.current = data.id
+      }
+    }
         const profileId = s.profileId
         if (!profileId) { if (showMsg) flash('Not logged in — cannot save draft', false); setDraftSaving(false); return }
-        const { data: existing } = await supabase
-          .from('evaluations')
-          .select('id')
-          .eq('evaluator_id', profileId)
-          .eq('scorecard_id', s.selectedScorecard.id)
-          .eq('status', 'draft')
-          .maybeSingle()
-
-        if (existing) {
-          await supabase.from('evaluations')
-            .update({ draft_state: state, submitted_at: new Date().toISOString() })
-            .eq('id', existing.id)
-          setDraftId(existing.id)
-          draftIdRef.current = existing.id
-        } else {
-          const { data } = await supabase.from('evaluations').insert({
-            scorecard_id: s.selectedScorecard.id,
-            evaluator_id: profileId,
-            score: 0,
-            failed_critical: false,
-            metadata_values: [],
-            status: 'draft',
-            draft_state: state,
-            submitted_at: new Date().toISOString()
-          }).select().single()
-          if (data) {
-            setDraftId(data.id)
-            draftIdRef.current = data.id
-          }
-        }
-      }
       setLastSaved(new Date())
       if (showMsg) flash('Draft saved ✓')
     } catch (e) {
@@ -179,6 +166,19 @@ export default function EvaluationForm() {
   }
 
   const selectScorecard = async (sc) => {
+    // Check draft limit for this specific scorecard
+    if (profile?.id) {
+      const { count } = await supabase
+        .from('evaluations')
+        .select('id', { count: 'exact', head: true })
+        .eq('evaluator_id', profile.id)
+        .eq('scorecard_id', sc.id)
+        .eq('status', 'draft')
+      if (count >= 5) {
+        setShowDraftLimit(true)
+        return
+      }
+    }
     setSelectedScorecard(sc)
     const { data: metaData } = await supabase
       .from('scorecard_metadata_fields')
@@ -357,6 +357,22 @@ export default function EvaluationForm() {
         </div>
       </div>
       {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+      {showDraftLimit && (
+        <div className="modal-backdrop">
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
+            <div className="modal-body" style={{ padding: '32px 28px' }}>
+              <div style={{ fontSize: 36, marginBottom: 16 }}>⚠️</div>
+              <h2 style={{ marginBottom: 12, fontSize: 17 }}>Draft Limit Reached</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>
+                You must complete or delete at least 1 draft evaluation to be able to start a new evaluation for this scorecard.
+              </p>
+              <button className="btn btn-primary" onClick={() => setShowDraftLimit(false)}>
+                Okay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {scorecards.length === 0 && (
         <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
           No published scorecards available. Ask an admin to publish a scorecard first.
