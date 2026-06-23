@@ -32,6 +32,7 @@ export default function EvaluationForm() {
   const stateRef = useRef({})
   const draftIdRef = useRef(null)
   const leavingRef = useRef(false)
+  const debounceRef = useRef(null)
 
   const location = useLocation()
 
@@ -52,21 +53,26 @@ export default function EvaluationForm() {
     if (location.state?.draft) resumeDraft(location.state.draft)
   }, [])
 
-  // Auto-save every 30 seconds when mid-evaluation
+  // Reset leavingRef on mount, set on unmount
   useEffect(() => {
     leavingRef.current = false
-    const interval = setInterval(() => {
-      const s = stateRef.current
+    return () => {
+      leavingRef.current = true
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [])
+
+  // Trigger auto-save 2 seconds after any answer/metadata change
+  const triggerAutoSave = () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
       if (leavingRef.current) return
+      const s = stateRef.current
       if (s.step && s.step !== 'select' && s.step !== 'done' && s.selectedScorecard) {
         saveDraft(s, draftIdRef.current, false)
       }
-    }, 30000)
-    return () => {
-      leavingRef.current = true
-      clearInterval(interval)
-    }
-  }, [])
+    }, 2000)
+  }
 
   const saveDraft = async (s, existingDraftId, showMsg = true) => {
     if (!s) s = stateRef.current
@@ -415,21 +421,21 @@ export default function EvaluationForm() {
                 <SearchableDropdown
                   options={field.options || []}
                   value={metaValues[field.id] || ''}
-                  onChange={val => setMetaValues(v => ({ ...v, [field.id]: val }))}
+                  onChange={val => { setMetaValues(v => ({ ...v, [field.id]: val })); triggerAutoSave() }}
                   placeholder="Select..."
                 />
               ) : field.field_type === 'date' ? (
                 <input type="date" className="input"
                   value={metaValues[field.id] || ''}
-                  onChange={e => setMetaValues(v => ({ ...v, [field.id]: e.target.value }))} />
+                  onChange={e => { setMetaValues(v => ({ ...v, [field.id]: e.target.value })); triggerAutoSave() }} />
               ) : field.field_type === 'number' ? (
                 <input type="number" className="input"
                   value={metaValues[field.id] || ''}
-                  onChange={e => setMetaValues(v => ({ ...v, [field.id]: e.target.value }))} />
+                  onChange={e => { setMetaValues(v => ({ ...v, [field.id]: e.target.value })); triggerAutoSave() }} />
               ) : (
                 <input type="text" className="input"
                   value={metaValues[field.id] || ''}
-                  onChange={e => setMetaValues(v => ({ ...v, [field.id]: e.target.value }))} />
+                  onChange={e => { setMetaValues(v => ({ ...v, [field.id]: e.target.value })); triggerAutoSave() }} />
               )}
             </div>
           ))}
@@ -540,7 +546,7 @@ export default function EvaluationForm() {
                       {q.question_type === 'free_text' ? (
                         <textarea className="input" rows={3} placeholder="Type your answer…"
                           value={dsatAnswers[q.id]?.value || ''}
-                          onChange={e => setDsatAnswers(a => ({ ...a, [q.id]: { value: e.target.value } }))}
+                          onChange={e => { setDsatAnswers(a => ({ ...a, [q.id]: { value: e.target.value } })); triggerAutoSave() }}
                           style={{ resize: 'both', fontSize: 13, maxWidth: '100%', boxSizing: 'border-box' }} />
                       ) : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -548,7 +554,7 @@ export default function EvaluationForm() {
                             const selected = dsatAnswers[q.id]?.value === opt.label
                             return (
                               <button key={opt.id}
-                                onClick={() => setDsatAnswers(a => ({ ...a, [q.id]: { value: opt.label } }))}
+                                onClick={() => { setDsatAnswers(a => ({ ...a, [q.id]: { value: opt.label } })); triggerAutoSave() }}
                                 style={{
                                   padding: '7px 16px', borderRadius: 6,
                                   fontSize: 13, fontWeight: 500, cursor: 'pointer',
