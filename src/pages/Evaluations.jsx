@@ -241,14 +241,14 @@ export default function Evaluations() {
                   <td>{ev.users?.name || '—'}</td>
                   <td>
                     <span>{ev.scorecards?.name || '—'}</span>
-                    {ev.scorecard_version_id && (
+                    {ev.scorecard_version && (
                       <span style={{
                         marginLeft: 6, fontSize: 11, fontWeight: 600,
                         padding: '2px 6px', borderRadius: 4,
                         background: 'rgba(99,102,241,0.12)',
                         color: 'var(--accent)',
                         border: '1px solid rgba(99,102,241,0.3)'
-                      }}>v{ev.scorecard_version_id}</span>
+                      }}>v{ev.scorecard_version}</span>
                     )}
                   </td>
                   <td>
@@ -369,14 +369,14 @@ export default function Evaluations() {
                 <span><b>ID:</b> #{detail.eval_id || '—'}</span>
                 <span>
                   <b>Scorecard:</b> {detail.scorecards?.name}
-                  {detail.scorecard_version_id && (
+                  {detail.scorecard_version && (
                     <span style={{
                       marginLeft: 6, fontSize: 11, fontWeight: 600,
                       padding: '2px 6px', borderRadius: 4,
                       background: 'rgba(99,102,241,0.12)',
                       color: 'var(--accent)',
                       border: '1px solid rgba(99,102,241,0.3)'
-                    }}>v{detail.scorecard_version_id}</span>
+                    }}>v{detail.scorecard_version}</span>
                   )}
                 </span>
                 <span><b>Evaluator:</b> {detail.users?.name}</span>
