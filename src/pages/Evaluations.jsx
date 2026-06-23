@@ -35,7 +35,7 @@ export default function Evaluations() {
     if (!profile?.id) return
     const { data, error } = await supabase
       .from('evaluations')
-      .select('*, scorecards(name, type)')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type)')
       .eq('status', 'draft')
       .eq('evaluator_id', profile.id)
       .order('submitted_at', { ascending: false })
