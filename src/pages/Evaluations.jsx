@@ -39,9 +39,13 @@ export default function Evaluations() {
   }
 
   const deleteDraft = async (id) => {
-    const { error } = await supabase.from('evaluations').delete().eq('id', id)
+    console.log('deleteDraft called with id:', id)
+    const { error, data } = await supabase.from('evaluations').delete().eq('id', id).select()
+    console.log('delete result:', { error, data })
     if (!error) {
       setDrafts(d => d.filter(dr => dr.id !== id))
+    } else {
+      console.error('Delete failed:', error)
     }
   }
 
