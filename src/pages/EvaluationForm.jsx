@@ -342,7 +342,6 @@ export default function EvaluationForm() {
         {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
 
         {isDsat ? (
-          // DSAT: Google Forms-style — one section at a time
           (() => {
             const sortedSections = [...dsatSections].sort((a, b) => a.position - b.position)
             const currentSection = dsatSections.find(s => s.id === dsatCurrentSectionId)
@@ -457,64 +456,83 @@ export default function EvaluationForm() {
                     </button>
                   )}
                 </div>
+                {isLastSection && (
+                  <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+                    <div className="form-field" style={{ marginBottom: 16 }}>
+                      <label style={{ fontWeight: 600, fontSize: 14 }}>
+                        Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
+                      </label>
+                      <textarea
+                        className="input"
+                        rows={4}
+                        placeholder="Add an overall comment for this evaluation…"
+                        value={overallComment}
+                        onChange={e => setOverallComment(e.target.value)}
+                        style={{ resize: 'vertical', fontSize: 13 }}
+                      />
+                    </div>
+                    <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
+                      style={{ marginRight: 12 }}>
+                      {submitting ? 'Submitting…' : 'Submit Evaluation'}
+                    </button>
+                    <button className="btn btn-ghost" onClick={goToPrevSection}>
+                      ← Back
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })()
-          // Quality scorecard: existing question cards
+        ) : (
           <>
-        {ungrouped.map(q => (
-          <QuestionCard key={q.id} question={q}
-            answer={answers[q.id]}
-            onChange={(updates) => setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))} />
-        ))}
-        {groups.map(group => {
-          const groupQs = questions.filter(q => q.group_id === group.id)
-          if (groupQs.length === 0) return null
-          return (
-            <div key={group.id} style={{ marginBottom: 24 }}>
-              <div style={{
-                fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
-                letterSpacing: '0.08em', textTransform: 'uppercase',
-                marginBottom: 10, paddingLeft: 2
-              }}>
-                {group.name}
+            {ungrouped.map(q => (
+              <QuestionCard key={q.id} question={q}
+                answer={answers[q.id]}
+                onChange={(updates) => setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))} />
+            ))}
+            {groups.map(group => {
+              const groupQs = questions.filter(q => q.group_id === group.id)
+              if (groupQs.length === 0) return null
+              return (
+                <div key={group.id} style={{ marginBottom: 24 }}>
+                  <div style={{
+                    fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
+                    letterSpacing: '0.08em', textTransform: 'uppercase',
+                    marginBottom: 10, paddingLeft: 2
+                  }}>
+                    {group.name}
+                  </div>
+                  {groupQs.map(q => (
+                    <QuestionCard key={q.id} question={q}
+                      answer={answers[q.id]}
+                      onChange={(updates) => setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))} />
+                  ))}
+                </div>
+              )
+            })}
+            <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+              <div className="form-field" style={{ marginBottom: 16 }}>
+                <label style={{ fontWeight: 600, fontSize: 14 }}>
+                  Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
+                </label>
+                <textarea
+                  className="input"
+                  rows={4}
+                  placeholder="Add an overall comment for this evaluation…"
+                  value={overallComment}
+                  onChange={e => setOverallComment(e.target.value)}
+                  style={{ resize: 'vertical', fontSize: 13 }}
+                />
               </div>
-              {groupQs.map(q => (
-                <QuestionCard key={q.id} question={q}
-                  answer={answers[q.id]}
-                  onChange={(updates) => setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))} />
-              ))}
+              <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
+                style={{ marginRight: 12 }}>
+                {submitting ? 'Submitting…' : 'Submit Evaluation'}
+              </button>
+              <button className="btn btn-ghost" onClick={() => setStep('metadata')}>
+                ← Back to Details
+              </button>
             </div>
-          )
-        })}
           </>
-        )}
-        {(!isDsat || (() => {
-          const currentSection = dsatSections.find(s => s.id === dsatCurrentSectionId)
-          return currentSection?.position === Math.max(...dsatSections.map(s => s.position))
-        })()) && (
-          <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
-            <div className="form-field" style={{ marginBottom: 16 }}>
-              <label style={{ fontWeight: 600, fontSize: 14 }}>
-                Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
-              </label>
-              <textarea
-                className="input"
-                rows={4}
-                placeholder="Add an overall comment for this evaluation…"
-                value={overallComment}
-                onChange={e => setOverallComment(e.target.value)}
-                style={{ resize: 'vertical', fontSize: 13 }}
-              />
-            </div>
-            <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
-              style={{ marginRight: 12 }}>
-              {submitting ? 'Submitting…' : 'Submit Evaluation'}
-            </button>
-            <button className="btn btn-ghost" onClick={() => setStep('metadata')}>
-              ← Back to Details
-            </button>
-          </div>
         )}
       </div>
     )
