@@ -69,6 +69,14 @@ export default function Admin() {
     flash(active ? 'Account activated' : 'Account deactivated')
   }
 
+  const sendResetLink = async (email) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'https://quark-iota.vercel.app/reset-password'
+    })
+    if (error) return flash(error.message, false)
+    flash(`Reset link sent to ${email}`)
+  }
+
   const addSampling = async () => {
     if (!newSamp.queueName) return flash('Queue name is required.', false)
     const { error } = await supabase.from('sampling_requirements').upsert({
@@ -190,6 +198,14 @@ export default function Admin() {
                             className={`btn btn-sm ${u.active ? 'btn-danger' : 'btn-success'}`}
                             onClick={() => toggleActive(u.id, !u.active)}>
                             {u.active ? 'Deactivate' : 'Activate'}
+                          </button>
+                        )}
+                        {canDeactivate(u) && (
+                          <button
+                            className="btn btn-sm btn-ghost"
+                            style={{ color: 'var(--accent)' }}
+                            onClick={() => sendResetLink(u.email)}>
+                            Reset Password
                           </button>
                         )}
                       </div>

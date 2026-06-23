@@ -10,6 +10,7 @@ import Scorecards from './pages/Scorecards'
 import ScorecardBuilder from './pages/ScorecardBuilder'
 import EvaluationForm from './pages/EvaluationForm'
 import ScorecardHistory from './pages/ScorecardHistory'
+import ResetPassword from './pages/ResetPassword'
 import { usePresence } from './hooks/usePresence'
 
 export const AuthContext = createContext(null)
@@ -94,7 +95,8 @@ function AppShell({ user, profile, logout, fetchProfile }) {
             <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
             <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
             <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>
       </div>

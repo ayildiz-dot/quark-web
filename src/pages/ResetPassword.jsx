@@ -1,0 +1,88 @@
+import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
+
+export default function ResetPassword() {
+  const [password, setPassword]   = useState('')
+  const [confirm,  setConfirm]    = useState('')
+  const [loading,  setLoading]    = useState(false)
+  const [error,    setError]      = useState(null)
+  const [done,     setDone]       = useState(false)
+  const [validLink, setValidLink] = useState(false)
+
+  useEffect(() => {
+    // Supabase puts the token in the URL hash when the user clicks the email link
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setValidLink(true)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const handleReset = async () => {
+    if (!password) return setError('Please enter a new password.')
+    if (password.length < 6) return setError('Password must be at least 6 characters.')
+    if (password !== confirm) return setError('Passwords do not match.')
+    setLoading(true)
+    setError(null)
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) {
+      setError(error.message)
+    } else {
+      setDone(true)
+      // Sign out so the user goes to Login clean
+      await supabase.auth.signOut()
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="login-logo">
+          <span style={{ fontSize: 32 }}>⬡</span>
+          <span className="brand-name">Quark</span>
+        </div>
+        <h1 className="login-title">Reset your password</h1>
+        <p className="login-sub">Enter a new password for your Quark account</p>
+
+        {done ? (
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 16 }}>
+              ✅ Password updated! You can now sign in with your new password.
+            </div>
+            <a href="/" className="btn btn-primary" style={{ display: 'inline-block', textDecoration: 'none' }}>
+              Go to sign in
+            </a>
+          </div>
+        ) : !validLink ? (
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.6 }}>
+            ⏳ Waiting for your reset link to load…<br/>
+            <span style={{ fontSize: 12 }}>If this page stays here, the link may have expired. Request a new one from the sign-in page.</span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {error && <div className="login-error">{error}</div>}
+            <div className="form-field" style={{ minWidth: 'auto' }}>
+              <label>New password</label>
+              <input className="input" type="password" placeholder="••••••••"
+                value={password} onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleReset()}
+                style={{ width: '100%' }} />
+            </div>
+            <div className="form-field" style={{ minWidth: 'auto' }}>
+              <label>Confirm new password</label>
+              <input className="input" type="password" placeholder="••••••••"
+                value={confirm} onChange={e => setConfirm(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleReset()}
+                style={{ width: '100%' }} />
+            </div>
+            <button className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}
+              onClick={handleReset} disabled={loading}>
+              {loading ? 'Updating…' : 'Set new password'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
