@@ -64,7 +64,7 @@ export default function Evaluations() {
     try {
       let q = supabase
         .from('evaluations')
-        .select('*, scorecards(name), users(name, email)', { count: 'exact' })
+        .select('*, scorecards(name, version), users(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
         .order('submitted_at', { ascending: false })
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
@@ -85,7 +85,7 @@ export default function Evaluations() {
   const openDetail = async (id) => {
     const { data: ev } = await supabase
       .from('evaluations')
-      .select('*, scorecards(name), users(name, email)')
+      .select('*, scorecards(name, version), users(name, email)')
       .eq('id', id)
       .single()
     const { data: scores } = await supabase
@@ -239,7 +239,18 @@ export default function Evaluations() {
                     {new Date(ev.submitted_at).toLocaleDateString()}
                   </td>
                   <td>{ev.users?.name || '—'}</td>
-                  <td>{ev.scorecards?.name || '—'}</td>
+                  <td>
+                    <span>{ev.scorecards?.name || '—'}</span>
+                    {ev.scorecard_version_id && (
+                      <span style={{
+                        marginLeft: 6, fontSize: 11, fontWeight: 600,
+                        padding: '2px 6px', borderRadius: 4,
+                        background: 'rgba(99,102,241,0.12)',
+                        color: 'var(--accent)',
+                        border: '1px solid rgba(99,102,241,0.3)'
+                      }}>v{ev.scorecard_version_id}</span>
+                    )}
+                  </td>
                   <td>
                     <span style={{ fontWeight: 600, color: scoreColor(ev.score, ev.failed_critical) }}>
                       {ev.failed_critical ? '0%' : `${ev.score}%`}
@@ -356,7 +367,18 @@ export default function Evaluations() {
               {/* Metadata values */}
               <div className="detail-meta">
                 <span><b>ID:</b> #{detail.eval_id || '—'}</span>
-                <span><b>Scorecard:</b> {detail.scorecards?.name}</span>
+                <span>
+                  <b>Scorecard:</b> {detail.scorecards?.name}
+                  {detail.scorecard_version_id && (
+                    <span style={{
+                      marginLeft: 6, fontSize: 11, fontWeight: 600,
+                      padding: '2px 6px', borderRadius: 4,
+                      background: 'rgba(99,102,241,0.12)',
+                      color: 'var(--accent)',
+                      border: '1px solid rgba(99,102,241,0.3)'
+                    }}>v{detail.scorecard_version_id}</span>
+                  )}
+                </span>
                 <span><b>Evaluator:</b> {detail.users?.name}</span>
                 <span><b>Date:</b> {new Date(detail.submitted_at).toLocaleString()}</span>
                 {(detail.metadata_values || []).map((m, i) => (
