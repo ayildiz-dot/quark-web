@@ -24,10 +24,11 @@ export default function Evaluations() {
   useEffect(() => {
     loadScorecards()
     fetchEvals(1)
-    loadDrafts()
-  }, [])
+    if (profile?.id) loadDrafts()
+  }, [profile?.id])
 
   const loadDrafts = async () => {
+    if (!profile?.id) return
     const { data } = await supabase
       .from('evaluations')
       .select('*, scorecards(name, type)')
