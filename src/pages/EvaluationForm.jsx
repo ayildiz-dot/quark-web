@@ -537,31 +537,34 @@ export default function EvaluationForm() {
   }
 
   if (step === 'done') {
-    const { score, failed_critical } = calculateScore()
+    const isDsat = selectedScorecard?.type === 'dsat'
+    const { score, failed_critical } = isDsat ? { score: null, failed_critical: false } : calculateScore()
     return (
       <div className="page">
         <div style={{ maxWidth: 520, margin: '60px auto', textAlign: 'center' }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>
-            {failed_critical ? '❌' : score >= 80 ? '✅' : score >= 60 ? '⚠️' : '❌'}
+            {isDsat ? '✅' : failed_critical ? '❌' : score >= 80 ? '✅' : score >= 60 ? '⚠️' : '❌'}
           </div>
           <h1 style={{ marginBottom: 8 }}>Evaluation Submitted</h1>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
             {selectedScorecard.name}
           </p>
-          <div className="card" style={{ marginBottom: 32 }}>
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Final Score</div>
-            <div style={{
-              fontSize: 48, fontWeight: 700,
-              color: failed_critical ? 'var(--danger)' : score >= 80 ? 'var(--success)' : score >= 60 ? '#f59e0b' : 'var(--danger)'
-            }}>
-              {failed_critical ? '0%' : `${score}%`}
-            </div>
-            {failed_critical && (
-              <div style={{ fontSize: 13, color: 'var(--danger)', marginTop: 8 }}>
-                A form-critical question was failed
+          {!isDsat && (
+            <div className="card" style={{ marginBottom: 32 }}>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Final Score</div>
+              <div style={{
+                fontSize: 48, fontWeight: 700,
+                color: failed_critical ? 'var(--danger)' : score >= 80 ? 'var(--success)' : score >= 60 ? '#f59e0b' : 'var(--danger)'
+              }}>
+                {failed_critical ? '0%' : `${score}%`}
               </div>
-            )}
-          </div>
+              {failed_critical && (
+                <div style={{ fontSize: 13, color: 'var(--danger)', marginTop: 8 }}>
+                  A form-critical question was failed
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button className="btn btn-primary" onClick={() => {
               setStep('select')
