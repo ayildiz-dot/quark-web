@@ -966,13 +966,16 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
                     <input className="input" style={{ flex: 2 }} placeholder="Option label"
                       value={opt.label} onChange={e => onUpdateOption(opt.id, { label: e.target.value })} />
                     <select className="select" style={{ flex: 2 }}
-                      value={opt.jump_to_section_id || ''}
-                      onChange={e => onUpdateOption(opt.id, { jump_to_section_id: e.target.value || null })}>
+                      value={opt.jump_to_section_id ?? ''}
+                      onChange={e => {
+                        const val = e.target.value
+                        onUpdateOption(opt.id, { jump_to_section_id: (val === '' || val === 'end') ? null : val })
+                      }}>
                       <option value="">Continue to next section</option>
                       {sections.map(s => (
                         <option key={s.id} value={s.id}>Jump to: {s.title}</option>
                       ))}
-                      <option value="end">End of form</option>
+                      <option value="end">End of form (skip remaining sections)</option>
                     </select>
                     <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                       onClick={() => onDeleteOption(opt.id)}>✕</button>

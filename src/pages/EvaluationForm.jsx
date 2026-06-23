@@ -138,7 +138,7 @@ export default function EvaluationForm() {
   const submitEvaluation = async () => {
     if (!metaValid()) return flash('Please fill in all required metadata fields.', false)
     if (!questionsValid()) return flash('Please answer all required questions before submitting.', false)
-    if (!overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
+    if (selectedScorecard.type !== 'dsat' && !overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
     setSubmitting(true)
     try {
       const metaPayload = metadata.map(f => ({
@@ -162,7 +162,7 @@ export default function EvaluationForm() {
             score: 100,
             failed_critical: false,
             metadata_values: [...metaPayload, ...dsatPayload],
-            overall_comment: overallComment.trim(),
+            overall_comment: null,
             status: 'submitted',
             submitted_at: new Date().toISOString()
           })
@@ -458,19 +458,6 @@ export default function EvaluationForm() {
                 </div>
                 {isLastSection && (
                   <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
-                    <div className="form-field" style={{ marginBottom: 16 }}>
-                      <label style={{ fontWeight: 600, fontSize: 14 }}>
-                        Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
-                      </label>
-                      <textarea
-                        className="input"
-                        rows={4}
-                        placeholder="Add an overall comment for this evaluation…"
-                        value={overallComment}
-                        onChange={e => setOverallComment(e.target.value)}
-                        style={{ resize: 'vertical', fontSize: 13 }}
-                      />
-                    </div>
                     <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
                       style={{ marginRight: 12 }}>
                       {submitting ? 'Submitting…' : 'Submit Evaluation'}
