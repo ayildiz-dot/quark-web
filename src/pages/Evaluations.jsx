@@ -57,6 +57,7 @@ export default function Evaluations() {
       let q = supabase
         .from('evaluations')
         .select('*, scorecards(name), users(name, email)', { count: 'exact' })
+        .eq('status', 'submitted')
         .order('submitted_at', { ascending: false })
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
 
@@ -208,6 +209,7 @@ export default function Evaluations() {
           <table className="table">
             <thead>
               <tr>
+                <th>#</th>
                 <th>Date</th>
                 <th>Evaluator</th>
                 <th>Scorecard</th>
@@ -222,6 +224,9 @@ export default function Evaluations() {
               )}
               {data.map(ev => (
                 <tr key={ev.id}>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 12, fontFamily: 'monospace' }}>
+                    #{ev.eval_id || '—'}
+                  </td>
                   <td style={{ color: 'var(--text-secondary)' }}>
                     {new Date(ev.submitted_at).toLocaleDateString()}
                   </td>
@@ -337,6 +342,7 @@ export default function Evaluations() {
 
               {/* Metadata values */}
               <div className="detail-meta">
+                <span><b>ID:</b> #{detail.eval_id || '—'}</span>
                 <span><b>Scorecard:</b> {detail.scorecards?.name}</span>
                 <span><b>Evaluator:</b> {detail.users?.name}</span>
                 <span><b>Date:</b> {new Date(detail.submitted_at).toLocaleString()}</span>
