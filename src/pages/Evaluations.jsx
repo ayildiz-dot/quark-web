@@ -33,12 +33,13 @@ export default function Evaluations() {
 
   const loadDrafts = async () => {
     if (!profile?.id) return
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('evaluations')
       .select('*, scorecards(name, type)')
       .eq('status', 'draft')
       .eq('evaluator_id', profile.id)
       .order('submitted_at', { ascending: false })
+    console.log('loadDrafts result:', { data, error, profileId: profile?.id })
     setDrafts(data || [])
   }
 
