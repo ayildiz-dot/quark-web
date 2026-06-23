@@ -18,6 +18,10 @@ export default function EvaluationForm() {
   const [msg, setMsg] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [overallComment, setOverallComment] = useState('')
+  const [dsatSections,   setDsatSections]   = useState([])
+  const [dsatQuestions,  setDsatQuestions]  = useState([])
+  const [dsatOptions,    setDsatOptions]    = useState([])
+  const [dsatAnswers,    setDsatAnswers]    = useState({})
 
   useEffect(() => { loadScorecards() }, [])
 
@@ -32,20 +36,49 @@ export default function EvaluationForm() {
 
   const selectScorecard = async (sc) => {
     setSelectedScorecard(sc)
-    const [meta, grp, qs] = await Promise.all([
-      supabase.from('scorecard_metadata_fields').select('*').eq('scorecard_id', sc.id).order('position'),
-      supabase.from('scorecard_question_groups').select('*').eq('scorecard_id', sc.id).order('position'),
-      supabase.from('scorecard_questions').select('*').eq('scorecard_id', sc.id).order('position'),
-    ])
-    setMetadata(meta.data || [])
-    setGroups(grp.data || [])
-    setQuestions(qs.data || [])
-    const initAnswers = {}
-    for (const q of (qs.data || [])) {
-      initAnswers[q.id] = { score: null, comment: '' }
-    }
-    setAnswers(initAnswers)
+    // Always load metadata fields
+    const { data: metaData } = await supabase
+      .from('scorecard_metadata_fields')
+      .select('*').eq('scorecard_id', sc.id).order('position')
+    setMetadata(metaData || [])
     setMetaValues({})
+
+    if (sc.type === 'dsat') {
+      // Load DSAT-specific tables
+      const [secs, dqs, opts] = await Promise.all([
+        supabase.from('dsat_sections').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('dsat_questions').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('dsat_options').select('*').order('position'),
+      ])
+      setDsatSections(secs.data || [])
+      setDsatQuestions(dqs.data || [])
+      setDsatOptions(opts.data || [])
+      const initDsatAnswers = {}
+      for (const q of (dqs.data || [])) {
+        initDsatAnswers[q.id] = { value: '' }
+      }
+      setDsatAnswers(initDsatAnswers)
+      setGroups([])
+      setQuestions([])
+      setAnswers({})
+    } else {
+      // Load quality scorecard tables
+      const [grp, qs] = await Promise.all([
+        supabase.from('scorecard_question_groups').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('scorecard_questions').select('*').eq('scorecard_id', sc.id).order('position'),
+      ])
+      setGroups(grp.data || [])
+      setQuestions(qs.data || [])
+      const initAnswers = {}
+      for (const q of (qs.data || [])) {
+        initAnswers[q.id] = { score: null, comment: '' }
+      }
+      setAnswers(initAnswers)
+      setDsatSections([])
+      setDsatQuestions([])
+      setDsatOptions([])
+      setDsatAnswers({})
+    }
     setStep('metadata')
   }
 
@@ -62,6 +95,12 @@ export default function EvaluationForm() {
   }
 
   const questionsValid = () => {
+    if (selectedScorecard?.type === 'dsat') {
+      for (const q of dsatQuestions) {
+        if (q.is_required && !dsatAnswers[q.id]?.value) return false
+      }
+      return true
+    }
     for (const q of questions) {
       if (answers[q.id]?.score === null || answers[q.id]?.score === undefined) return false
     }
@@ -91,41 +130,64 @@ export default function EvaluationForm() {
 
   const submitEvaluation = async () => {
     if (!metaValid()) return flash('Please fill in all required metadata fields.', false)
-    if (!questionsValid()) return flash('Please score all questions before submitting.', false)
+    if (!questionsValid()) return flash('Please answer all required questions before submitting.', false)
     if (!overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
     setSubmitting(true)
     try {
-      const { score, failed_critical } = calculateScore()
       const metaPayload = metadata.map(f => ({
         field_id: f.id,
         label: f.label,
         value: metaValues[f.id] || ''
       }))
-      const { data: evaluation, error: evalError } = await supabase
-        .from('evaluations')
-        .insert({
-          scorecard_id: selectedScorecard.id,
-          evaluator_id: profile.id,
-          score,
-          failed_critical,
-          metadata_values: metaPayload,
-          overall_comment: overallComment.trim(),
-          status: 'submitted',
-          submitted_at: new Date().toISOString()
-        })
-        .select()
-        .single()
-      if (evalError) throw evalError
-      const scoreRows = questions.map(q => ({
-        evaluation_id: evaluation.id,
-        question_id: q.id,
-        score: answers[q.id]?.score,
-        comment: answers[q.id]?.comment || null
-      }))
-      const { error: scoresError } = await supabase
-        .from('evaluation_scores')
-        .insert(scoreRows)
-      if (scoresError) throw scoresError
+
+      if (selectedScorecard.type === 'dsat') {
+        // DSAT evaluations have no scoring — just store answers as metadata
+        const dsatPayload = dsatQuestions.map(q => ({
+          field_id: q.id,
+          label: q.title,
+          value: dsatAnswers[q.id]?.value || ''
+        }))
+        const { error: evalError } = await supabase
+          .from('evaluations')
+          .insert({
+            scorecard_id: selectedScorecard.id,
+            evaluator_id: profile.id,
+            score: 100,
+            failed_critical: false,
+            metadata_values: [...metaPayload, ...dsatPayload],
+            overall_comment: overallComment.trim(),
+            status: 'submitted',
+            submitted_at: new Date().toISOString()
+          })
+        if (evalError) throw evalError
+      } else {
+        const { score, failed_critical } = calculateScore()
+        const { data: evaluation, error: evalError } = await supabase
+          .from('evaluations')
+          .insert({
+            scorecard_id: selectedScorecard.id,
+            evaluator_id: profile.id,
+            score,
+            failed_critical,
+            metadata_values: metaPayload,
+            overall_comment: overallComment.trim(),
+            status: 'submitted',
+            submitted_at: new Date().toISOString()
+          })
+          .select()
+          .single()
+        if (evalError) throw evalError
+        const scoreRows = questions.map(q => ({
+          evaluation_id: evaluation.id,
+          question_id: q.id,
+          score: answers[q.id]?.score,
+          comment: answers[q.id]?.comment || null
+        }))
+        const { error: scoresError } = await supabase
+          .from('evaluation_scores')
+          .insert(scoreRows)
+        if (scoresError) throw scoresError
+      }
       setStep('done')
     } catch (err) {
       flash('Failed to submit: ' + err.message, false)
@@ -239,9 +301,12 @@ export default function EvaluationForm() {
   )
 
   if (step === 'questions') {
+    const isDsat = selectedScorecard?.type === 'dsat'
     const ungrouped = questions.filter(q => !q.group_id)
-    const answered = Object.values(answers).filter(a => a.score !== null).length
-    const total = questions.length
+    const answered = isDsat
+      ? Object.values(dsatAnswers).filter(a => a.value).length
+      : Object.values(answers).filter(a => a.score !== null).length
+    const total = isDsat ? dsatQuestions.length : questions.length
     const pct = total > 0 ? Math.round((answered / total) * 100) : 0
     return (
       <div className="page">
@@ -250,7 +315,7 @@ export default function EvaluationForm() {
             <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
               onClick={() => setStep('metadata')}>← Back</button>
             <h1>{selectedScorecard.name}</h1>
-            <p className="page-sub">Step 2 of 2 — Score each question</p>
+            <p className="page-sub">Step 2 of 2 — {isDsat ? 'Complete the DSAT form' : 'Score each question'}</p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
@@ -268,6 +333,81 @@ export default function EvaluationForm() {
           }} />
         </div>
         {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+
+        {isDsat ? (
+          // DSAT: render sections with their questions
+          dsatSections.map(section => {
+            const sectionQs = dsatQuestions.filter(q => q.section_id === section.id)
+            if (sectionQs.length === 0) return null
+            return (
+              <div key={section.id} style={{ marginBottom: 28 }}>
+                <div style={{
+                  fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
+                  letterSpacing: '0.08em', textTransform: 'uppercase',
+                  marginBottom: 10, paddingLeft: 2
+                }}>
+                  {section.title}
+                </div>
+                {sectionQs.map(q => {
+                  const qOpts = dsatOptions.filter(o => o.question_id === q.id)
+                  return (
+                    <div key={q.id} className="card" style={{ marginBottom: 12,
+                      borderLeft: dsatAnswers[q.id]?.value
+                        ? '3px solid var(--accent)'
+                        : '3px solid var(--border)'
+                    }}>
+                      <div style={{ fontWeight: 500, marginBottom: 12 }}>
+                        {q.title}
+                        {q.is_required && (
+                          <span style={{ color: 'var(--danger)', marginLeft: 4 }}>*</span>
+                        )}
+                      </div>
+                      {q.question_type === 'free_text' ? (
+                        <textarea
+                          className="input"
+                          rows={3}
+                          placeholder="Type your answer…"
+                          value={dsatAnswers[q.id]?.value || ''}
+                          onChange={e => setDsatAnswers(a => ({
+                            ...a, [q.id]: { value: e.target.value }
+                          }))}
+                          style={{ resize: 'vertical', fontSize: 13 }}
+                        />
+                      ) : (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          {qOpts.map(opt => {
+                            const selected = dsatAnswers[q.id]?.value === opt.title
+                            return (
+                              <button
+                                key={opt.id}
+                                onClick={() => setDsatAnswers(a => ({
+                                  ...a, [q.id]: { value: opt.title }
+                                }))}
+                                style={{
+                                  padding: '7px 16px', borderRadius: 6,
+                                  fontSize: 13, fontWeight: 500, cursor: 'pointer',
+                                  border: '1.5px solid',
+                                  borderColor: selected ? 'var(--accent)' : 'var(--border)',
+                                  background: selected ? 'rgba(99,102,241,0.12)' : 'transparent',
+                                  color: selected ? 'var(--accent)' : 'var(--text-secondary)',
+                                  transition: 'all 0.15s'
+                                }}
+                              >
+                                {opt.title}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })
+        ) : (
+          // Quality scorecard: existing question cards
+          <>
         {ungrouped.map(q => (
           <QuestionCard key={q.id} question={q}
             answer={answers[q.id]}
@@ -293,6 +433,8 @@ export default function EvaluationForm() {
             </div>
           )
         })}
+          </>
+        )}
         <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
           <div className="form-field" style={{ marginBottom: 16 }}>
             <label style={{ fontWeight: 600, fontSize: 14 }}>
