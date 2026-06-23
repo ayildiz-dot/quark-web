@@ -17,12 +17,30 @@ export default function Evaluations() {
     search: '', dateFrom: '', dateTo: '', scorecard: ''
   })
   const [scorecards, setScorecards] = useState([])
+  const [drafts, setDrafts] = useState([])
+  const [showDrafts, setShowDrafts] = useState(false)
   const LIMIT = 50
 
   useEffect(() => {
     loadScorecards()
     fetchEvals(1)
+    loadDrafts()
   }, [])
+
+  const loadDrafts = async () => {
+    const { data } = await supabase
+      .from('evaluations')
+      .select('*, scorecards(name, type)')
+      .eq('status', 'draft')
+      .eq('evaluator_id', profile.id)
+      .order('submitted_at', { ascending: false })
+    setDrafts(data || [])
+  }
+
+  const deleteDraft = async (id) => {
+    await supabase.from('evaluations').delete().eq('id', id)
+    setDrafts(d => d.filter(dr => dr.id !== id))
+  }
 
   const loadScorecards = async () => {
     const { data } = await supabase
@@ -144,6 +162,18 @@ export default function Evaluations() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
           <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>
+          <button
+              className="btn btn-ghost"
+              style={{
+                opacity: drafts.length === 0 ? 0.4 : 1,
+                cursor: drafts.length === 0 ? 'default' : 'pointer',
+                pointerEvents: drafts.length === 0 ? 'none' : 'auto'
+              }}
+              onClick={() => setShowDrafts(true)}
+              disabled={drafts.length === 0}
+            >
+              {drafts.length > 0 ? `Drafts (${drafts.length})` : 'Drafts'}
+            </button>
           {profile?.role !== 'viewer' && (
               <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
                 + New Evaluation
@@ -226,6 +256,74 @@ export default function Evaluations() {
         <button className="btn btn-ghost btn-sm"
           disabled={page * LIMIT >= total} onClick={() => fetchEvals(page + 1)}>Next →</button>
       </div>
+
+      {/* DRAFTS MODAL */}
+      {showDrafts && (
+        <div className="modal-backdrop" onClick={() => setShowDrafts(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <div className="modal-header">
+              <h2>Draft Evaluations</h2>
+              <button className="btn-close" onClick={() => setShowDrafts(false)}>✕</button>
+            </div>
+            <div className="modal-body">
+              {drafts.length === 0 ? (
+                <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: 24 }}>
+                  No draft evaluations.
+                </p>
+              ) : (
+                drafts.map(draft => {
+                  const state = draft.draft_state
+                  const stepLabel = state?.step === 'metadata' ? 'Stopped at: Interaction Details'
+                    : state?.step === 'questions' ? 'Stopped at: Questions'
+                    : 'In progress'
+                  return (
+                    <div key={draft.id} style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '14px 0', borderBottom: '1px solid var(--border)'
+                    }}>
+                      <div>
+                        <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                          {draft.scorecards?.name || 'Unknown Scorecard'}
+                          <span style={{
+                            marginLeft: 8, fontSize: 11, fontWeight: 600,
+                            padding: '2px 6px', borderRadius: 4,
+                            background: draft.scorecards?.type === 'dsat' ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
+                            color: draft.scorecards?.type === 'dsat' ? 'var(--danger)' : 'var(--accent)',
+                            textTransform: 'uppercase'
+                          }}>
+                            {draft.scorecards?.type === 'dsat' ? 'DSAT' : 'Quality'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                          {stepLabel} · Saved {new Date(draft.submitted_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => {
+                            setShowDrafts(false)
+                            navigate('/evaluations/new', { state: { draft } })
+                          }}
+                        >
+                          Resume
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ color: 'var(--danger)' }}
+                          onClick={() => deleteDraft(draft.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* DETAIL MODAL */}
       {detail && (

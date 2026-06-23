@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
@@ -25,7 +25,123 @@ export default function EvaluationForm() {
   const [dsatCurrentSectionId, setDsatCurrentSectionId] = useState(null)
   const [dsatSectionHistory,  setDsatSectionHistory]  = useState([])
 
-  useEffect(() => { loadScorecards() }, [])
+  const [draftId, setDraftId] = useState(null)
+  const location = useLocation()
+
+  useEffect(() => {
+    loadScorecards()
+    // If navigated here with a draft, resume it
+    if (location.state?.draft) {
+      resumeDraft(location.state.draft)
+    }
+  }, [])
+
+  // Auto-save draft when navigating away mid-evaluation
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (step !== 'select' && step !== 'done' && selectedScorecard) {
+        saveDraftSync()
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      // Also save when component unmounts mid-evaluation
+      if (step !== 'select' && step !== 'done' && selectedScorecard) {
+        saveDraft()
+      }
+    }
+  }, [step, selectedScorecard, metaValues, answers, dsatAnswers, overallComment, dsatCurrentSectionId, dsatSectionHistory])
+
+  const saveDraft = async () => {
+    if (!selectedScorecard || step === 'select' || step === 'done') return
+    const state = {
+      step,
+      selectedScorecard,
+      metadata,
+      groups,
+      questions,
+      metaValues,
+      answers,
+      overallComment,
+      dsatSections,
+      dsatQuestions,
+      dsatOptions,
+      dsatAnswers,
+      dsatCurrentSectionId,
+      dsatSectionHistory,
+    }
+    if (draftId) {
+      await supabase.from('evaluations').update({
+        draft_state: state,
+        submitted_at: new Date().toISOString()
+      }).eq('id', draftId)
+    } else {
+      const { data } = await supabase.from('evaluations').insert({
+        scorecard_id: selectedScorecard.id,
+        evaluator_id: profile.id,
+        score: 0,
+        failed_critical: false,
+        metadata_values: [],
+        status: 'draft',
+        draft_state: state,
+        submitted_at: new Date().toISOString()
+      }).select().single()
+      if (data) setDraftId(data.id)
+    }
+  }
+
+  const saveDraftSync = () => {
+    // Best-effort synchronous save via sendBeacon for page unload
+    if (!selectedScorecard || step === 'select' || step === 'done') return
+    const state = {
+      step, selectedScorecard, metadata, groups, questions,
+      metaValues, answers, overallComment,
+      dsatSections, dsatQuestions, dsatOptions, dsatAnswers,
+      dsatCurrentSectionId, dsatSectionHistory,
+    }
+    // Use fetch with keepalive for reliable unload saves
+    fetch(`https://aavrqnweoigfkmxianvf.supabase.co/rest/v1/evaluations`, {
+      method: draftId ? 'PATCH' : 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        ...(draftId ? {} : {}),
+      },
+      body: JSON.stringify(draftId
+        ? { draft_state: state }
+        : {
+            scorecard_id: selectedScorecard.id,
+            evaluator_id: profile.id,
+            score: 0, failed_critical: false,
+            metadata_values: [], status: 'draft',
+            draft_state: state,
+            submitted_at: new Date().toISOString()
+          }
+      ),
+      keepalive: true
+    }).catch(() => {})
+  }
+
+  const resumeDraft = (draft) => {
+    const s = draft.draft_state
+    setDraftId(draft.id)
+    setSelectedScorecard(s.selectedScorecard)
+    setMetadata(s.metadata || [])
+    setGroups(s.groups || [])
+    setQuestions(s.questions || [])
+    setMetaValues(s.metaValues || {})
+    setAnswers(s.answers || {})
+    setOverallComment(s.overallComment || '')
+    setDsatSections(s.dsatSections || [])
+    setDsatQuestions(s.dsatQuestions || [])
+    setDsatOptions(s.dsatOptions || [])
+    setDsatAnswers(s.dsatAnswers || {})
+    setDsatCurrentSectionId(s.dsatCurrentSectionId || null)
+    setDsatSectionHistory(s.dsatSectionHistory || [])
+    setStep(s.step || 'metadata')
+  }
 
   const loadScorecards = async () => {
     const { data } = await supabase
@@ -205,6 +321,11 @@ export default function EvaluationForm() {
           .from('evaluation_scores')
           .insert(scoreRows)
         if (scoresError) throw scoresError
+      }
+      // Delete draft if this was resumed from one
+      if (draftId) {
+        await supabase.from('evaluations').delete().eq('id', draftId)
+        setDraftId(null)
       }
       setStep('done')
     } catch (err) {
@@ -572,6 +693,7 @@ export default function EvaluationForm() {
               setAnswers({})
               setMetaValues({})
               setOverallComment('')
+              setDraftId(null)
             }}>
               Start New Evaluation
             </button>
