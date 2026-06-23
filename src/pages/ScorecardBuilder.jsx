@@ -25,6 +25,9 @@ export default function ScorecardBuilder() {
   const [dsatQuestions, setDsatQuestions] = useState([])
   const [dsatOptions, setDsatOptions] = useState([])
   const [msg, setMsg] = useState(null)
+  const [showVersionModal, setShowVersionModal] = useState(false)
+  const [versionReason, setVersionReason] = useState('')
+  const [pendingSave, setPendingSave] = useState(false)
   const [loading, setLoading] = useState(true)
   const [activeQuestion, setActiveQuestion] = useState(null)
 
@@ -38,13 +41,15 @@ export default function ScorecardBuilder() {
   const markChanged = () => setUnsavedChanges(true)
   const clearChanged = () => setUnsavedChanges(false)
 
-  const logHistory = async (changeType) => {
+  const logHistory = async (changeType, reason = null, versionNum = null) => {
     try {
       await supabase.from('scorecard_history').insert({
         scorecard_id: id,
         changed_by: profile.id,
         change_type: changeType,
         changed_at: new Date().toISOString(),
+        version_reason: reason,
+        version_number: versionNum,
         snapshot: {
           scorecard: { name: scorecard.name, description: scorecard.description, is_published: scorecard.is_published },
           questions: questions.map(q => ({
@@ -147,9 +152,15 @@ export default function ScorecardBuilder() {
   }
 
   const saveAllChanges = async () => {
-
     if (leavingRef.current || skipSaveRef.current) return
     if (!checkTotalWeight()) return
+    // Show version reason modal — actual save runs in executeVersionSave
+    setVersionReason('')
+    setShowVersionModal(true)
+  }
+
+  const executeVersionSave = async (reason) => {
+    if (leavingRef.current || skipSaveRef.current) return
     try {
       await supabase.from('scorecards').update({
         name: scorecard.name,
@@ -257,8 +268,17 @@ export default function ScorecardBuilder() {
       }
 
       clearChanged()
-      await logHistory('save')
-    flash('All changes saved ✓')
+      // Get current version number from latest history entry
+      const { data: latestHistory } = await supabase
+        .from('scorecard_history')
+        .select('version_number')
+        .eq('scorecard_id', id)
+        .order('changed_at', { ascending: false })
+        .limit(1)
+        .single()
+      const nextVersion = ((latestHistory?.version_number) || 1) + 1
+      await logHistory('save', reason, nextVersion)
+      flash('All changes saved ✓')
     } catch (err) {
       flash('Failed to save: ' + err.message, false)
     }
@@ -559,6 +579,57 @@ export default function ScorecardBuilder() {
       </div>
 
       {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+
+      {showVersionModal && (
+        <div className="modal-backdrop" onClick={() => { setShowVersionModal(false); setPendingSave(false) }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h2>Reason for Change</h2>
+              <button className="btn-close" onClick={() => { setShowVersionModal(false); setPendingSave(false) }}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: 'var(--text-secondary)', marginBottom: 16, fontSize: 14 }}>
+                This scorecard is published. Please provide a reason for this change — it will be recorded in the version history.
+              </p>
+              <div className="form-field" style={{ marginBottom: 20 }}>
+                <label>Reason <span style={{ color: 'var(--danger)' }}>*</span></label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="e.g. Updated question weights following calibration session on 20 June 2026"
+                  value={versionReason}
+                  onChange={e => setVersionReason(e.target.value)}
+                  style={{ resize: 'vertical' }}
+                  autoFocus
+                />
+                {versionReason.trim().length === 0 && pendingSave && (
+                  <span style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4, display: 'block' }}>
+                    A reason is required before saving.
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn btn-ghost" onClick={() => { setShowVersionModal(false); setPendingSave(false) }}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    setPendingSave(true)
+                    if (!versionReason.trim()) return
+                    setShowVersionModal(false)
+                    await executeVersionSave(versionReason.trim())
+                    setVersionReason('')
+                    setPendingSave(false)
+                  }}
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="tabs">
         {tabs.map(t => (

@@ -126,6 +126,8 @@ export default function ScorecardHistory() {
                 <th>When</th>
                 <th>Who</th>
                 <th>Action</th>
+                <th>Version</th>
+                <th>Reason</th>
                 <th>Scorecard Name</th>
                 <th>Questions</th>
                 <th>Snapshot</th>
@@ -156,6 +158,16 @@ export default function ScorecardHistory() {
                           {typeInfo.label}
                         </span>
                       </td>
+                      <td style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>
+                        {entry.version_number
+                          ? <span style={{ fontWeight: 600, color: 'var(--accent)' }}>v{entry.version_number}</span>
+                          : <span style={{ fontSize: 12 }}>—</span>}
+                      </td>
+                      <td style={{ maxWidth: 260 }}>
+                        {entry.version_reason
+                          ? <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>{entry.version_reason}</span>
+                          : <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>—</span>}
+                      </td>
                       <td>{snap?.scorecard?.name || '—'}</td>
                       <td style={{ color: 'var(--text-secondary)' }}>
                         {snap?.questions?.length ?? 0} question{snap?.questions?.length !== 1 ? 's' : ''}
@@ -180,7 +192,7 @@ export default function ScorecardHistory() {
                     </tr>
                     {isExpanded && (
                       <tr key={entry.id + '-exp'}>
-                        <td colSpan="7" style={{ background: 'var(--bg-secondary)', padding: '12px 20px' }}>
+                        <td colSpan="9" style={{ background: 'var(--bg-secondary)', padding: '12px 20px' }}>
                           <div style={{ fontSize: 13, marginBottom: 8, fontWeight: 600 }}>Questions in this version:</div>
                           {(snap?.questions || []).length === 0
                             ? <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No questions recorded.</div>
