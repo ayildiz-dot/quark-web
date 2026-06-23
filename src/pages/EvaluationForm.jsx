@@ -103,27 +103,25 @@ export default function EvaluationForm() {
         await supabase.from('evaluations')
           .update({ draft_state: state, submitted_at: new Date().toISOString() })
           .eq('id', existingDraftId)
-    } else {
-      // First save for this evaluation — always insert a new row
-      const profileId = s.profileId
-      if (!profileId) { if (showMsg) flash('Not logged in — cannot save draft', false); setDraftSaving(false); return }
-      const { data } = await supabase.from('evaluations').insert({
-        scorecard_id: s.selectedScorecard.id,
-        evaluator_id: profileId,
-        score: 0,
-        failed_critical: false,
-        metadata_values: [],
-        status: 'draft',
-        draft_state: state,
-        submitted_at: new Date().toISOString()
-      }).select().single()
-      if (data) {
-        setDraftId(data.id)
-        draftIdRef.current = data.id
-      }
-    }
+      } else {
+        // First save for this evaluation — always insert a new row
         const profileId = s.profileId
         if (!profileId) { if (showMsg) flash('Not logged in — cannot save draft', false); setDraftSaving(false); return }
+        const { data } = await supabase.from('evaluations').insert({
+          scorecard_id: s.selectedScorecard.id,
+          evaluator_id: profileId,
+          score: 0,
+          failed_critical: false,
+          metadata_values: [],
+          status: 'draft',
+          draft_state: state,
+          submitted_at: new Date().toISOString()
+        }).select().single()
+        if (data) {
+          setDraftId(data.id)
+          draftIdRef.current = data.id
+        }
+      }
       setLastSaved(new Date())
       if (showMsg) flash('Draft saved ✓')
     } catch (e) {
