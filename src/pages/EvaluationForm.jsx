@@ -26,7 +26,6 @@ export default function EvaluationForm() {
       .from('scorecards')
       .select('*')
       .eq('is_published', true)
-      .eq('type', 'quality')
       .order('name')
     setScorecards(data || [])
   }
@@ -155,7 +154,18 @@ export default function EvaluationForm() {
             onClick={() => selectScorecard(sc)}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>{sc.name}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 600, fontSize: 15 }}>{sc.name}</span>
+                  <span style={{
+                    fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                    background: sc.type === 'dsat' ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
+                    color: sc.type === 'dsat' ? 'var(--danger)' : 'var(--accent)',
+                    border: sc.type === 'dsat' ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(99,102,241,0.3)',
+                    textTransform: 'uppercase', letterSpacing: '0.05em'
+                  }}>
+                    {sc.type === 'dsat' ? 'DSAT' : 'Quality'}
+                  </span>
+                </div>
                 {sc.description && (
                   <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{sc.description}</div>
                 )}
