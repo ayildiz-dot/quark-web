@@ -1,9 +1,18 @@
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../App'
 
 export default function Navbar() {
   const { profile, logout, unsavedChanges, setShowNavModal, setPendingNavPath } = useAuth()
   const navigate = useNavigate()
+  const [theme, setTheme] = useState(() => localStorage.getItem('quark-theme') || 'dark')
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('quark-theme', theme)
+  }, [theme])
+
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
   const location = useLocation()
   const isActive = (path) => location.pathname.startsWith(path)
 
@@ -71,6 +80,12 @@ export default function Navbar() {
         <button
           className="btn btn-ghost btn-sm"
           style={{ width: '100%', marginTop: '8px', justifyContent: 'center' }}
+          onClick={toggleTheme}>
+          {theme === 'dark' ? '☀ Light mode' : '☾ Dark mode'}
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ width: '100%', marginTop: '4px', justifyContent: 'center' }}
           onClick={logout}>
           Sign out
         </button>
