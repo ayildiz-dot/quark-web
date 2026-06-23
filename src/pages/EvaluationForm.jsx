@@ -18,10 +18,12 @@ export default function EvaluationForm() {
   const [msg, setMsg] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [overallComment, setOverallComment] = useState('')
-  const [dsatSections,   setDsatSections]   = useState([])
-  const [dsatQuestions,  setDsatQuestions]  = useState([])
-  const [dsatOptions,    setDsatOptions]    = useState([])
-  const [dsatAnswers,    setDsatAnswers]    = useState({})
+  const [dsatSections,        setDsatSections]        = useState([])
+  const [dsatQuestions,       setDsatQuestions]       = useState([])
+  const [dsatOptions,         setDsatOptions]         = useState([])
+  const [dsatAnswers,         setDsatAnswers]         = useState({})
+  const [dsatCurrentSectionId, setDsatCurrentSectionId] = useState(null)
+  const [dsatSectionHistory,  setDsatSectionHistory]  = useState([])
 
   useEffect(() => { loadScorecards() }, [])
 
@@ -50,7 +52,8 @@ export default function EvaluationForm() {
         supabase.from('dsat_questions').select('*').eq('scorecard_id', sc.id).order('position'),
         supabase.from('dsat_options').select('*').order('position'),
       ])
-      setDsatSections(secs.data || [])
+      const secsData = secs.data || []
+      setDsatSections(secsData)
       setDsatQuestions(dqs.data || [])
       setDsatOptions(opts.data || [])
       const initDsatAnswers = {}
@@ -58,6 +61,10 @@ export default function EvaluationForm() {
         initDsatAnswers[q.id] = { value: '' }
       }
       setDsatAnswers(initDsatAnswers)
+      // Start at the first section (lowest position)
+      const firstSection = secsData.sort((a, b) => a.position - b.position)[0]
+      setDsatCurrentSectionId(firstSection?.id || null)
+      setDsatSectionHistory([])
       setGroups([])
       setQuestions([])
       setAnswers({})
@@ -335,21 +342,55 @@ export default function EvaluationForm() {
         {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
 
         {isDsat ? (
-          // DSAT: render sections with their questions
-          dsatSections.map(section => {
-            const sectionQs = dsatQuestions.filter(q => q.section_id === section.id)
-            if (sectionQs.length === 0) return null
+          // DSAT: Google Forms-style — one section at a time
+          (() => {
+            const sortedSections = [...dsatSections].sort((a, b) => a.position - b.position)
+            const currentSection = dsatSections.find(s => s.id === dsatCurrentSectionId)
+            if (!currentSection) return null
+            const sectionQs = dsatQuestions
+              .filter(q => q.section_id === currentSection.id)
+              .sort((a, b) => a.position - b.position)
+            const isLastSection = currentSection.position === Math.max(...dsatSections.map(s => s.position))
+            const currentSectionComplete = sectionQs.every(q =>
+              !q.is_required || dsatAnswers[q.id]?.value
+            )
+            const goToNextSection = () => {
+              const routingQ = sectionQs.find(q => q.question_type === 'options')
+              let nextSectionId = null
+              if (routingQ) {
+                const chosenLabel = dsatAnswers[routingQ.id]?.value
+                const chosenOpt = dsatOptions.find(
+                  o => o.question_id === routingQ.id && o.label === chosenLabel
+                )
+                if (chosenOpt?.jump_to_section_id) {
+                  nextSectionId = chosenOpt.jump_to_section_id
+                }
+              }
+              if (!nextSectionId) {
+                const currentIdx = sortedSections.findIndex(s => s.id === currentSection.id)
+                nextSectionId = sortedSections[currentIdx + 1]?.id || null
+              }
+              if (nextSectionId) {
+                setDsatSectionHistory(h => [...h, currentSection.id])
+                setDsatCurrentSectionId(nextSectionId)
+              }
+            }
+            const goToPrevSection = () => {
+              const prev = dsatSectionHistory[dsatSectionHistory.length - 1]
+              if (prev) {
+                setDsatSectionHistory(h => h.slice(0, -1))
+                setDsatCurrentSectionId(prev)
+              }
+            }
             return (
-              <div key={section.id} style={{ marginBottom: 28 }}>
-                <div style={{
-                  fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)',
-                  letterSpacing: '0.08em', textTransform: 'uppercase',
-                  marginBottom: 10, paddingLeft: 2
-                }}>
-                  {section.title}
+              <div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>
+                  Section: <strong style={{ color: 'var(--text-primary)' }}>{currentSection.title}</strong>
                 </div>
                 {sectionQs.map(q => {
-                  const qOpts = dsatOptions.filter(o => o.question_id === q.id)
+                  const qOpts = dsatOptions
+                    .filter(o => o.question_id === q.id)
+                    .sort((a, b) => a.position - b.position)
                   return (
                     <div key={q.id} className="card" style={{ marginBottom: 12,
                       borderLeft: dsatAnswers[q.id]?.value
@@ -376,12 +417,12 @@ export default function EvaluationForm() {
                       ) : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                           {qOpts.map(opt => {
-                            const selected = dsatAnswers[q.id]?.value === opt.title
+                            const selected = dsatAnswers[q.id]?.value === opt.label
                             return (
                               <button
                                 key={opt.id}
                                 onClick={() => setDsatAnswers(a => ({
-                                  ...a, [q.id]: { value: opt.title }
+                                  ...a, [q.id]: { value: opt.label }
                                 }))}
                                 style={{
                                   padding: '7px 16px', borderRadius: 6,
@@ -393,7 +434,7 @@ export default function EvaluationForm() {
                                   transition: 'all 0.15s'
                                 }}
                               >
-                                {opt.title}
+                                {opt.label}
                               </button>
                             )
                           })}
@@ -402,10 +443,23 @@ export default function EvaluationForm() {
                     </div>
                   )
                 })}
+                <div style={{ display: 'flex', gap: 12, marginTop: 24, alignItems: 'center' }}>
+                  {dsatSectionHistory.length > 0 && (
+                    <button className="btn btn-ghost" onClick={goToPrevSection}>← Back</button>
+                  )}
+                  {!isLastSection && (
+                    <button
+                      className="btn btn-primary"
+                      onClick={goToNextSection}
+                      disabled={!currentSectionComplete}
+                    >
+                      Next →
+                    </button>
+                  )}
+                </div>
               </div>
             )
-          })
-        ) : (
+          })()
           // Quality scorecard: existing question cards
           <>
         {ungrouped.map(q => (
@@ -435,28 +489,33 @@ export default function EvaluationForm() {
         })}
           </>
         )}
-        <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
-          <div className="form-field" style={{ marginBottom: 16 }}>
-            <label style={{ fontWeight: 600, fontSize: 14 }}>
-              Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
-            </label>
-            <textarea
-              className="input"
-              rows={4}
-              placeholder="Add an overall comment for this evaluation…"
-              value={overallComment}
-              onChange={e => setOverallComment(e.target.value)}
-              style={{ resize: 'vertical', fontSize: 13 }}
-            />
+        {(!isDsat || (() => {
+          const currentSection = dsatSections.find(s => s.id === dsatCurrentSectionId)
+          return currentSection?.position === Math.max(...dsatSections.map(s => s.position))
+        })()) && (
+          <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+            <div className="form-field" style={{ marginBottom: 16 }}>
+              <label style={{ fontWeight: 600, fontSize: 14 }}>
+                Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
+              </label>
+              <textarea
+                className="input"
+                rows={4}
+                placeholder="Add an overall comment for this evaluation…"
+                value={overallComment}
+                onChange={e => setOverallComment(e.target.value)}
+                style={{ resize: 'vertical', fontSize: 13 }}
+              />
+            </div>
+            <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
+              style={{ marginRight: 12 }}>
+              {submitting ? 'Submitting…' : 'Submit Evaluation'}
+            </button>
+            <button className="btn btn-ghost" onClick={() => setStep('metadata')}>
+              ← Back to Details
+            </button>
           </div>
-          <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
-            style={{ marginRight: 12 }}>
-            {submitting ? 'Submitting…' : 'Submit Evaluation'}
-          </button>
-          <button className="btn btn-ghost" onClick={() => setStep('metadata')}>
-            ← Back to Details
-          </button>
-        </div>
+        )}
       </div>
     )
   }
