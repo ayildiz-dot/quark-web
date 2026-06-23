@@ -8,23 +8,26 @@ export default function ResetPassword() {
   const [error,     setError]     = useState(null)
   const [done,      setDone]      = useState(false)
   const [validLink, setValidLink] = useState(false)
+  const [checking,  setChecking]  = useState(true)
 
   useEffect(() => {
-    // Supabase puts the token in the URL hash: #access_token=...&type=recovery
-    // We need to detect this and exchange it for a session
-    const hash = window.location.hash
-    if (hash && hash.includes('type=recovery')) {
-      // Let Supabase parse the hash and establish the session
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) {
-          setValidLink(true)
-        }
-      })
-    }
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && window.location.hash.includes('type=recovery'))) {
+    // Supabase verify link lands here after exchanging the token for a session
+    // By the time we mount, the session may already exist — check immediately
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
         setValidLink(true)
+        setChecking(false)
+        return
+      }
+      setChecking(false)
+    }
+    init()
+
+    // Also listen for the event in case it fires after mount
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') {
+        if (session) setValidLink(true)
       }
     })
     return () => subscription.unsubscribe()
@@ -50,6 +53,23 @@ export default function ResetPassword() {
   const goToLogin = async () => {
     await supabase.auth.signOut()
     window.location.href = '/'
+  }
+
+  if (checking) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <div className="login-logo">
+            <span style={{ fontSize: 32 }}>⬡</span>
+            <span className="brand-name">Quark</span>
+          </div>
+          <div style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>
+            <div className="spinner" style={{ margin: '0 auto 12px' }} />
+            Verifying your reset link…
+          </div>
+        </div>
+      </div>
+    )
   }
 
   if (done) {
@@ -109,12 +129,10 @@ export default function ResetPassword() {
             lineHeight: 1.7
           }}>
             <div style={{ fontSize: 22, marginBottom: 6 }}>⏳</div>
-            Waiting for your reset link to load…
+            This reset link has expired or is invalid.
             <br />
             <span style={{ fontSize: 12 }}>
-              If this page stays here, the link may have expired.
-              <br />
-              Request a new one from the sign-in page.
+              Reset links are single-use and expire after 1 hour.
             </span>
             <div style={{ marginTop: 14 }}>
               <button
@@ -122,7 +140,7 @@ export default function ResetPassword() {
                 style={{ color: 'var(--accent)' }}
                 onClick={goToLogin}
               >
-                Back to sign in
+                Request a new link
               </button>
             </div>
           </div>
