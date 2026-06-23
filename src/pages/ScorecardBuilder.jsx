@@ -277,6 +277,9 @@ export default function ScorecardBuilder() {
         .limit(1)
         .single()
       const nextVersion = ((latestHistory?.version_number) || 1) + 1
+      // Update the version column on the scorecard row
+      await supabase.from('scorecards').update({ version: nextVersion }).eq('id', id)
+      setScorecard(s => ({ ...s, version: nextVersion }))
       await logHistory('save', reason, nextVersion)
       flash('All changes saved ✓')
     } catch (err) {
