@@ -32,17 +32,15 @@ export default function Login() {
     if (!email) return setError('Please enter your email address above.')
     setLoading(true)
     setError(null)
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: 'https://quark-iota.vercel.app/reset-password'
-      })
-      if (error) throw error
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'https://quark-iota.vercel.app/reset-password'
+    })
+    if (error) {
+      setError(error.message || error.error_description || error.msg || 'Failed to send reset email. Please try again.')
+    } else {
       setResetSent(true)
-    } catch (e) {
-      setError(e.message || e.error_description || e.msg || JSON.stringify(e) || 'Something went wrong. Please try again.')
-    } finally {
-      setLoading(false)
     }
+    setLoading(false)
   }
 
   return (
