@@ -323,7 +323,15 @@ export default function EvaluationForm() {
   const DraftSaveButton = () => (
     <button
       className="btn btn-ghost btn-sm"
-      onClick={() => saveDraft(stateRef.current, draftIdRef.current, true)}
+      onClick={() => {
+        console.log('Saving draft state:', {
+          step: stateRef.current.step,
+          dsatCurrentSectionId: stateRef.current.dsatCurrentSectionId,
+          dsatSectionHistory: stateRef.current.dsatSectionHistory,
+          dsatAnswers: stateRef.current.dsatAnswers,
+        })
+        saveDraft(stateRef.current, draftIdRef.current, true)
+      }}
       disabled={draftSaving}
       style={{ fontSize: 12, color: 'var(--text-secondary)' }}
     >
