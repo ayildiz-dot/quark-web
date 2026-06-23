@@ -10,7 +10,6 @@ export default function ResetPassword() {
   const [validLink, setValidLink] = useState(false)
 
   useEffect(() => {
-    // Supabase puts the token in the URL hash when the user clicks the email link
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') setValidLink(true)
     })
@@ -26,11 +25,11 @@ export default function ResetPassword() {
     const { error } = await supabase.auth.updateUser({ password })
     if (error) {
       setError(error.message)
-    } else {
-      setDone(true)
-      // Sign out so the user goes to Login clean
-      await supabase.auth.signOut()
+      setLoading(false)
+      return
     }
+    setDone(true)
+    await supabase.auth.signOut()
     setLoading(false)
   }
 
@@ -45,40 +44,96 @@ export default function ResetPassword() {
         <p className="login-sub">Enter a new password for your Quark account</p>
 
         {done ? (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 16 }}>
-              ✅ Password updated! You can now sign in with your new password.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
+            <div style={{
+              background: 'rgba(34,197,94,0.08)',
+              border: '1px solid rgba(34,197,94,0.3)',
+              borderRadius: 10,
+              padding: '16px 20px',
+              fontSize: 14,
+              color: 'var(--text-secondary)',
+              textAlign: 'center',
+              lineHeight: 1.7,
+              width: '100%'
+            }}>
+              <div style={{ fontSize: 22, marginBottom: 6 }}>✅</div>
+              <strong style={{ color: 'var(--text-primary)' }}>Password updated successfully!</strong><br />
+              You have successfully updated your password.<br />
+              You can now sign in with your new credentials.
             </div>
-            <a href="/" className="btn btn-primary" style={{ display: 'inline-block', textDecoration: 'none' }}>
-              Go to sign in
+            
+              href="/"
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'center',
+                textDecoration: 'none'
+              }}
+            >
+              <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+                Go to sign in
+              </button>
             </a>
           </div>
+
         ) : !validLink ? (
-          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center', lineHeight: 1.6 }}>
-            ⏳ Waiting for your reset link to load…<br/>
-            <span style={{ fontSize: 12 }}>If this page stays here, the link may have expired. Request a new one from the sign-in page.</span>
+          <div style={{
+            background: 'var(--bg-card)',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            padding: '16px 20px',
+            fontSize: 13,
+            color: 'var(--text-secondary)',
+            textAlign: 'center',
+            lineHeight: 1.7
+          }}>
+            <div style={{ fontSize: 22, marginBottom: 6 }}>⏳</div>
+            Waiting for your reset link to load…<br />
+            <span style={{ fontSize: 12 }}>
+              If this page stays here, the link may have expired.<br />
+              Request a new one from the sign-in page.
+            </span>
+            <div style={{ marginTop: 14 }}>
+              <a href="/" style={{ color: 'var(--accent)', fontSize: 13, textDecoration: 'none' }}>
+                ← Back to sign in
+              </a>
+            </div>
           </div>
+
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {error && <div className="login-error">{error}</div>}
             <div className="form-field" style={{ minWidth: 'auto' }}>
               <label>New password</label>
-              <input className="input" type="password" placeholder="••••••••"
-                value={password} onChange={e => setPassword(e.target.value)}
+              <input
+                className="input"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleReset()}
-                style={{ width: '100%' }} />
+                style={{ width: '100%' }}
+              />
             </div>
             <div className="form-field" style={{ minWidth: 'auto' }}>
               <label>Confirm new password</label>
-              <input className="input" type="password" placeholder="••••••••"
-                value={confirm} onChange={e => setConfirm(e.target.value)}
+              <input
+                className="input"
+                type="password"
+                placeholder="••••••••"
+                value={confirm}
+                onChange={e => setConfirm(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleReset()}
-                style={{ width: '100%' }} />
+                style={{ width: '100%' }}
+              />
             </div>
-            <button className="btn btn-primary"
+            <button
+              className="btn btn-primary"
               style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}
-              onClick={handleReset} disabled={loading}>
-              {loading ? 'Updating…' : 'Set new password'}
+              onClick={handleReset}
+              disabled={loading}
+            >
+              {loading ? 'Saving…' : 'Save new password'}
             </button>
           </div>
         )}

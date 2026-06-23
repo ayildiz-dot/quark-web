@@ -95,7 +95,6 @@ function AppShell({ user, profile, logout, fetchProfile }) {
             <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
             <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
             <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
-                <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>
@@ -161,6 +160,9 @@ export default function App() {
       <span>Loading Quark…</span>
     </div>
   )
+
+  // Public routes — shown regardless of auth state
+  if (window.location.pathname === '/reset-password') return <ResetPassword />
 
   if (!user) return <Login />
 

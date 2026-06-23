@@ -60,10 +60,12 @@ export default function Login() {
             <label>Email address</label>
             <input className="input" type="email" placeholder="you@kaizengaming.com" value={email} onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSubmit()} style={{ width: '100%' }} />
           </div>
+          {mode !== 'forgot' && (
           <div className="form-field" style={{ minWidth: 'auto' }}>
             <label>Password</label>
             <input className="input" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSubmit()} style={{ width: '100%' }} />
           </div>
+          )}
           {mode === 'login' && (
             <div style={{ textAlign: 'right', marginTop: -4, marginBottom: -4 }}>
               <button
