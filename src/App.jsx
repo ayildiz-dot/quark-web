@@ -51,8 +51,11 @@ function AppShell({ user, profile, logout, fetchProfile }) {
     setShowNavModal(false)
     const dest = pendingNavPath
     setPendingNavPath(null)
-    if (dest === -1) navigate(-1)
-    else if (dest) navigate(dest)
+    if (dest === -1) {
+      // Go back twice: once to undo our dummy pushState, once to actually leave
+      navigate(-1)
+      setTimeout(() => navigate(-1), 50)
+    } else if (dest) navigate(dest)
   }
 
   const handleStay = () => {
