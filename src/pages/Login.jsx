@@ -22,7 +22,7 @@ export default function Login() {
       }
       if (result.error) throw result.error
     } catch (e) {
-      setError(e.message)
+      setError(e.message || e.error_description || e.msg || 'Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -39,7 +39,7 @@ export default function Login() {
       if (error) throw error
       setResetSent(true)
     } catch (e) {
-      setError(e.message)
+      setError(e.message || e.error_description || e.msg || 'Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
