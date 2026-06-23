@@ -40,7 +40,8 @@ export default function EvaluationForm() {
       step, selectedScorecard, metadata, groups, questions,
       metaValues, answers, overallComment,
       dsatSections, dsatQuestions, dsatOptions, dsatAnswers,
-      dsatCurrentSectionId, dsatSectionHistory
+      dsatCurrentSectionId, dsatSectionHistory,
+      profileId: profile?.id
     }
   })
   useEffect(() => { draftIdRef.current = draftId }, [draftId])
@@ -91,10 +92,12 @@ export default function EvaluationForm() {
           .eq('id', existingDraftId)
       } else {
         // Upsert: one draft per user per scorecard
+        const profileId = s.profileId
+        if (!profileId) { if (showMsg) flash('Not logged in — cannot save draft', false); setDraftSaving(false); return }
         const { data: existing } = await supabase
           .from('evaluations')
           .select('id')
-          .eq('evaluator_id', profile.id)
+          .eq('evaluator_id', profileId)
           .eq('scorecard_id', s.selectedScorecard.id)
           .eq('status', 'draft')
           .maybeSingle()
@@ -108,7 +111,7 @@ export default function EvaluationForm() {
         } else {
           const { data } = await supabase.from('evaluations').insert({
             scorecard_id: s.selectedScorecard.id,
-            evaluator_id: profile.id,
+            evaluator_id: profileId,
             score: 0,
             failed_critical: false,
             metadata_values: [],
