@@ -147,10 +147,11 @@ export default function EvaluationForm() {
     setDsatQuestions(s.dsatQuestions || [])
     setDsatOptions(s.dsatOptions || [])
     setDsatAnswers(s.dsatAnswers || {})
-    setDsatCurrentSectionId(s.dsatCurrentSectionId || null)
     setDsatSectionHistory(s.dsatSectionHistory || [])
-    setStep(s.step || 'metadata')
+    setDsatCurrentSectionId(s.dsatCurrentSectionId || null)
     setLastSaved(new Date(draft.submitted_at))
+    // Set step last so all DSAT state is ready before the questions step renders
+    setTimeout(() => setStep(s.step || 'metadata'), 0)
   }
 
   const loadScorecards = async () => {
@@ -323,15 +324,7 @@ export default function EvaluationForm() {
   const DraftSaveButton = () => (
     <button
       className="btn btn-ghost btn-sm"
-      onClick={() => {
-        console.log('Saving draft state:', {
-          step: stateRef.current.step,
-          dsatCurrentSectionId: stateRef.current.dsatCurrentSectionId,
-          dsatSectionHistory: stateRef.current.dsatSectionHistory,
-          dsatAnswers: stateRef.current.dsatAnswers,
-        })
-        saveDraft(stateRef.current, draftIdRef.current, true)
-      }}
+      onClick={() => saveDraft(stateRef.current, draftIdRef.current, true)}
       disabled={draftSaving}
       style={{ fontSize: 12, color: 'var(--text-secondary)' }}
     >
