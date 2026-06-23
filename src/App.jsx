@@ -162,7 +162,10 @@ export default function App() {
   )
 
   // Public routes — shown regardless of auth state
-  if (window.location.pathname === '/reset-password') return <ResetPassword />
+  // Also intercept when Supabase auto-signs in via recovery token
+  const isRecovery = window.location.pathname === '/reset-password' ||
+    window.location.hash.includes('type=recovery')
+  if (isRecovery) return <ResetPassword />
 
   if (!user) return <Login />
 

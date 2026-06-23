@@ -10,8 +10,22 @@ export default function ResetPassword() {
   const [validLink, setValidLink] = useState(false)
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') setValidLink(true)
+    // Supabase puts the token in the URL hash: #access_token=...&type=recovery
+    // We need to detect this and exchange it for a session
+    const hash = window.location.hash
+    if (hash && hash.includes('type=recovery')) {
+      // Let Supabase parse the hash and establish the session
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          setValidLink(true)
+        }
+      })
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && window.location.hash.includes('type=recovery'))) {
+        setValidLink(true)
+      }
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -31,6 +45,11 @@ export default function ResetPassword() {
     setDone(true)
     await supabase.auth.signOut()
     setLoading(false)
+  }
+
+  const goToLogin = async () => {
+    await supabase.auth.signOut()
+    window.location.href = '/'
   }
 
   if (done) {
@@ -61,7 +80,7 @@ export default function ResetPassword() {
           <button
             className="btn btn-primary"
             style={{ width: '100%', justifyContent: 'center' }}
-            onClick={() => window.location.href = '/'}
+            onClick={goToLogin}
           >
             Go to sign in
           </button>
@@ -101,7 +120,7 @@ export default function ResetPassword() {
               <button
                 className="btn btn-ghost btn-sm"
                 style={{ color: 'var(--accent)' }}
-                onClick={() => window.location.href = '/'}
+                onClick={goToLogin}
               >
                 Back to sign in
               </button>
