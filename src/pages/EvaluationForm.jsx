@@ -411,7 +411,7 @@ export default function EvaluationForm() {
                           onChange={e => setDsatAnswers(a => ({
                             ...a, [q.id]: { value: e.target.value }
                           }))}
-                          style={{ resize: 'vertical', fontSize: 13 }}
+                          style={{ resize: 'both', fontSize: 13 }}
                         />
                       ) : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
