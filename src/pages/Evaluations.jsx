@@ -29,7 +29,7 @@ export default function Evaluations() {
 
   useEffect(() => {
     if (profile?.id) loadDrafts()
-  }, [profile?.id])
+  }, [profile])
 
   const loadDrafts = async () => {
     if (!profile?.id) return
@@ -182,7 +182,7 @@ export default function Evaluations() {
                 cursor: drafts.length === 0 ? 'default' : 'pointer',
                 pointerEvents: drafts.length === 0 ? 'none' : 'auto'
               }}
-              onClick={() => setShowDrafts(true)}
+              onClick={() => { loadDrafts(); setShowDrafts(true) }}
               disabled={drafts.length === 0}
             >
               {drafts.length > 0 ? `Drafts (${drafts.length})` : 'Drafts'}
