@@ -11,6 +11,22 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
+// System tags map a flexibly-labelled metadata field to a known role the dashboard can query.
+// Quality scorecards get the core set; DSAT adds category levels.
+const SYSTEM_TAGS = [
+  { value: '', label: 'None', types: ['quality', 'dsat'] },
+  { value: 'ticket_id', label: 'Ticket ID', types: ['quality', 'dsat'] },
+  { value: 'communication_date', label: 'Communication Date', types: ['quality', 'dsat'] },
+  { value: 'market', label: 'Market', types: ['quality', 'dsat'] },
+  { value: 'bpo', label: 'BPO', types: ['quality', 'dsat'] },
+  { value: 'agent_email', label: "Agent's Email", types: ['quality', 'dsat'] },
+  { value: 'channel', label: 'Channel', types: ['quality', 'dsat'] },
+  { value: 'category_level_1', label: 'Category Level 1', types: ['dsat'] },
+  { value: 'category_level_2', label: 'Category Level 2', types: ['dsat'] },
+]
+
+const tagsForType = (type) => SYSTEM_TAGS.filter(t => t.types.includes(type))
+
 export default function ScorecardBuilder() {
   const { id } = useParams()
   const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, safeNavigate } = useAuth()
@@ -209,12 +225,14 @@ export default function ScorecardBuilder() {
         if (f._isNew) {
           await supabase.from('scorecard_metadata_fields').insert({
             scorecard_id: id, label: f.label, field_type: f.field_type,
-            is_required: f.is_required, options: f.options, position: f.position
+            is_required: f.is_required, options: f.options, position: f.position,
+            system_tag: f.system_tag || null
           })
         } else {
           await supabase.from('scorecard_metadata_fields').update({
             label: f.label, field_type: f.field_type,
-            is_required: f.is_required, options: f.options
+            is_required: f.is_required, options: f.options,
+            system_tag: f.system_tag || null
           }).eq('id', f.id)
         }
       }
@@ -714,6 +732,15 @@ export default function ScorecardBuilder() {
                     onChange={e => updateMetaField(field.id, { is_required: e.target.value === 'yes' })}>
                     <option value="yes">Required</option>
                     <option value="no">Optional</option>
+                  </select>
+                </div>
+                <div className="form-field" style={{ flex: 1, minWidth: 150 }}>
+                  <label>System Tag</label>
+                  <select className="select" value={field.system_tag || ''}
+                    onChange={e => updateMetaField(field.id, { system_tag: e.target.value || null })}>
+                    {tagsForType(scorecard.type).map(t => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
                   </select>
                 </div>
                 {field.field_type === 'dropdown' && (
