@@ -3,6 +3,26 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
+// Default metadata fields seeded on every new scorecard, pre-tagged for the dashboard.
+// Admins can edit or delete these afterwards — they are sensible defaults, not locked-in.
+const CORE_META_FIELDS = [
+  { label: 'Ticket ID',          field_type: 'number',   system_tag: 'ticket_id',          is_required: true },
+  { label: 'Communication Date', field_type: 'date',     system_tag: 'communication_date', is_required: true },
+  { label: 'Market',             field_type: 'dropdown', system_tag: 'market',             is_required: true,  options: [] },
+  { label: 'BPO',                field_type: 'dropdown', system_tag: 'bpo',                is_required: true,  options: [] },
+  { label: "Agent's Email",      field_type: 'text',     system_tag: 'agent_email',        is_required: true },
+  { label: 'Channel',            field_type: 'dropdown', system_tag: 'channel',            is_required: true,  options: [] },
+]
+
+// DSAT scorecards additionally capture the agent's own category selections.
+const DSAT_EXTRA_META_FIELDS = [
+  { label: 'Category Level 1', field_type: 'dropdown', system_tag: 'category_level_1', is_required: true, options: [] },
+  { label: 'Category Level 2', field_type: 'dropdown', system_tag: 'category_level_2', is_required: true, options: [] },
+]
+
+const seededFieldsForType = (type) =>
+  type === 'dsat' ? [...CORE_META_FIELDS, ...DSAT_EXTRA_META_FIELDS] : [...CORE_META_FIELDS]
+
 export default function Scorecards() {
   const { profile } = useAuth()
   const navigate = useNavigate()
@@ -40,6 +60,20 @@ export default function Scorecards() {
       .select()
       .single()
     if (error) return flash(error.message, false)
+
+    // Seed default, pre-tagged metadata fields so the dashboard has reliable fields to query.
+    const seedFields = seededFieldsForType(newType).map((f, i) => ({
+      scorecard_id: data.id,
+      label: f.label,
+      field_type: f.field_type,
+      is_required: f.is_required,
+      options: f.options ?? null,
+      system_tag: f.system_tag,
+      position: i + 1,
+    }))
+    const { error: seedError } = await supabase.from('scorecard_metadata_fields').insert(seedFields)
+    if (seedError) flash('Scorecard created, but seeding metadata failed: ' + seedError.message, false)
+
     setCreating(false)
     setNewName('')
     setNewDesc('')
