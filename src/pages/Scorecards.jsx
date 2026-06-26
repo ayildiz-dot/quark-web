@@ -6,18 +6,18 @@ import { useAuth } from '../App'
 // Default metadata fields seeded on every new scorecard, pre-tagged for the dashboard.
 // Admins can edit or delete these afterwards — they are sensible defaults, not locked-in.
 const CORE_META_FIELDS = [
-  { label: 'Ticket ID',          field_type: 'number',   system_tag: 'ticket_id',          is_required: true },
-  { label: 'Communication Date', field_type: 'date',     system_tag: 'communication_date', is_required: true },
-  { label: 'Market',             field_type: 'dropdown', system_tag: 'market',             is_required: true,  options: [] },
-  { label: 'BPO',                field_type: 'dropdown', system_tag: 'bpo',                is_required: true,  options: [] },
-  { label: "Agent's Email",      field_type: 'text',     system_tag: 'agent_email',        is_required: true },
-  { label: 'Channel',            field_type: 'dropdown', system_tag: 'channel',            is_required: true,  options: [] },
+  { label: 'Ticket ID',          field_type: 'number',            is_required: true },
+  { label: 'Communication Date', field_type: 'date',     is_required: true },
+  { label: 'Market',             field_type: 'dropdown',             is_required: true,  options: [] },
+  { label: 'BPO',                field_type: 'dropdown',                is_required: true,  options: [] },
+  { label: "Agent's Email",      field_type: 'text',            is_required: true },
+  { label: 'Channel',            field_type: 'dropdown',            is_required: true,  options: [] },
 ]
 
 // DSAT scorecards additionally capture the agent's own category selections.
 const DSAT_EXTRA_META_FIELDS = [
-  { label: 'Category Level 1', field_type: 'dropdown', system_tag: 'category_level_1', is_required: true, options: [] },
-  { label: 'Category Level 2', field_type: 'dropdown', system_tag: 'category_level_2', is_required: true, options: [] },
+  { label: 'Category Level 1', field_type: 'dropdown', is_required: true, options: [] },
+  { label: 'Category Level 2', field_type: 'dropdown', is_required: true, options: [] },
 ]
 
 const seededFieldsForType = (type) =>
@@ -32,6 +32,7 @@ export default function Scorecards() {
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [newType, setNewType] = useState('quality')
+  const [newThreshold, setNewThreshold] = useState(90)
   const [msg, setMsg] = useState(null)
 
   const canEdit = ['admin', 'owner'].includes(profile?.role)
@@ -56,7 +57,7 @@ export default function Scorecards() {
     if (!newName.trim()) return flash('Scorecard name is required.', false)
     const { data, error } = await supabase
       .from('scorecards')
-      .insert({ name: newName.trim(), description: newDesc.trim(), type: newType, created_by: profile.id })
+      .insert({ name: newName.trim(), description: newDesc.trim(), type: newType, created_by: profile.id, pass_threshold: newType === 'quality' ? Number(newThreshold) || 90 : null })
       .select()
       .single()
     if (error) return flash(error.message, false)
@@ -68,7 +69,6 @@ export default function Scorecards() {
       field_type: f.field_type,
       is_required: f.is_required,
       options: f.options ?? null,
-      system_tag: f.system_tag,
       position: i + 1,
     }))
     const { error: seedError } = await supabase.from('scorecard_metadata_fields').insert(seedFields)
@@ -78,6 +78,7 @@ export default function Scorecards() {
     setNewName('')
     setNewDesc('')
     setNewType('quality')
+    setNewThreshold(90)
     navigate(`/scorecards/${data.id}/edit`)
   }
 
@@ -127,6 +128,13 @@ export default function Scorecards() {
                 <option value="dsat">DSAT</option>
               </select>
             </div>
+            {newType === 'quality' && (
+              <div className="form-field">
+                <label>Pass Threshold (%)</label>
+                <input type="number" className="input" min={0} max={100}
+                  value={newThreshold} onChange={e => setNewThreshold(e.target.value)} />
+              </div>
+            )}
             <div className="form-field form-field-btn">
               <label>&nbsp;</label>
               <div style={{ display: 'flex', gap: 8 }}>

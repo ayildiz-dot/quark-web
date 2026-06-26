@@ -11,22 +11,6 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
-// System tags map a flexibly-labelled metadata field to a known role the dashboard can query.
-// Quality scorecards get the core set; DSAT adds category levels.
-const SYSTEM_TAGS = [
-  { value: '', label: 'None', types: ['quality', 'dsat'] },
-  { value: 'ticket_id', label: 'Ticket ID', types: ['quality', 'dsat'] },
-  { value: 'communication_date', label: 'Communication Date', types: ['quality', 'dsat'] },
-  { value: 'market', label: 'Market', types: ['quality', 'dsat'] },
-  { value: 'bpo', label: 'BPO', types: ['quality', 'dsat'] },
-  { value: 'agent_email', label: "Agent's Email", types: ['quality', 'dsat'] },
-  { value: 'channel', label: 'Channel', types: ['quality', 'dsat'] },
-  { value: 'category_level_1', label: 'Category Level 1', types: ['dsat'] },
-  { value: 'category_level_2', label: 'Category Level 2', types: ['dsat'] },
-]
-
-const tagsForType = (type) => SYSTEM_TAGS.filter(t => t.types.includes(type))
-
 export default function ScorecardBuilder() {
   const { id } = useParams()
   const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, safeNavigate } = useAuth()
@@ -225,14 +209,12 @@ export default function ScorecardBuilder() {
         if (f._isNew) {
           await supabase.from('scorecard_metadata_fields').insert({
             scorecard_id: id, label: f.label, field_type: f.field_type,
-            is_required: f.is_required, options: f.options, position: f.position,
-            system_tag: f.system_tag || null
+            is_required: f.is_required, options: f.options, position: f.position
           })
         } else {
           await supabase.from('scorecard_metadata_fields').update({
             label: f.label, field_type: f.field_type,
-            is_required: f.is_required, options: f.options,
-            system_tag: f.system_tag || null
+            is_required: f.is_required, options: f.options
           }).eq('id', f.id)
         }
       }
@@ -259,15 +241,13 @@ export default function ScorecardBuilder() {
             const { data } = await supabase.from('dsat_questions').insert({
               scorecard_id: id, section_id: realSectionId, title: q.title,
               description: q.description, is_required: q.is_required,
-              question_type: q.question_type || 'options', position: q.position,
-              system_tag: q.system_tag || null
+              question_type: q.question_type || 'options', position: q.position
             }).select().single()
             if (data) questionIdMap[q.id] = data.id
           } else {
             await supabase.from('dsat_questions').update({
               title: q.title, description: q.description, is_required: q.is_required,
-              question_type: q.question_type || 'options',
-              system_tag: q.system_tag || null
+              question_type: q.question_type || 'options'
             }).eq('id', q.id)
           }
         }
@@ -277,13 +257,11 @@ export default function ScorecardBuilder() {
           if (o._isNew) {
             await supabase.from('dsat_options').insert({
               question_id: realQuestionId, label: o.label,
-              jump_to_section_id: o.jump_to_section_id, position: o.position,
-              is_controllable: o.is_controllable || false
+              jump_to_section_id: o.jump_to_section_id, position: o.position
             })
           } else {
             await supabase.from('dsat_options').update({
-              label: o.label, jump_to_section_id: o.jump_to_section_id,
-              is_controllable: o.is_controllable || false
+              label: o.label, jump_to_section_id: o.jump_to_section_id
             }).eq('id', o.id)
           }
         }
@@ -738,15 +716,6 @@ export default function ScorecardBuilder() {
                     <option value="no">Optional</option>
                   </select>
                 </div>
-                <div className="form-field" style={{ flex: 1, minWidth: 150 }}>
-                  <label>System Tag</label>
-                  <select className="select" value={field.system_tag || ''}
-                    onChange={e => updateMetaField(field.id, { system_tag: e.target.value || null })}>
-                    {tagsForType(scorecard.type).map(t => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </select>
-                </div>
                 {field.field_type === 'dropdown' && (
                   <div className="form-field" style={{ flex: 3, minWidth: 200 }}>
                     <label>Options — type and press Enter or comma to add (max 50)</label>
@@ -1040,14 +1009,6 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
                 <option value="no">Optional</option>
               </select>
             </div>
-            <div className="form-field">
-              <label>Controllability Question?</label>
-              <select className="select" value={question.system_tag === 'controllability' ? 'yes' : 'no'}
-                onChange={e => onUpdateQuestion(question.id, { system_tag: e.target.value === 'yes' ? 'controllability' : null })}>
-                <option value="no">No</option>
-                <option value="yes">Yes — drives controllability rate</option>
-              </select>
-            </div>
           </div>
           <div style={{ marginTop: 16 }}>
             {question.question_type === 'free_text' ? (
@@ -1090,22 +1051,6 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
                       ))}
                       <option value="end">End of form (skip remaining sections)</option>
                     </select>
-                    {question.system_tag === 'controllability' && (
-                      <button
-                        type="button"
-                        onClick={() => onUpdateOption(opt.id, { is_controllable: !opt.is_controllable })}
-                        style={{
-                          flexShrink: 0, padding: '7px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                          cursor: 'pointer', border: '1.5px solid',
-                          borderColor: opt.is_controllable ? 'var(--success)' : 'var(--border)',
-                          background: opt.is_controllable ? 'rgba(34,197,94,0.12)' : 'transparent',
-                          color: opt.is_controllable ? 'var(--success)' : 'var(--text-secondary)',
-                          whiteSpace: 'nowrap'
-                        }}
-                        title="Mark this option as meaning 'Controllable'">
-                        {opt.is_controllable ? '✓ Controllable' : 'Mark Controllable'}
-                      </button>
-                    )}
                     <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                       onClick={() => onDeleteOption(opt.id)}>✕</button>
                   </div>
