@@ -20,6 +20,31 @@ const DSAT_EXTRA_META_FIELDS = [
   { label: 'Category Level 2', field_type: 'dropdown', is_required: true, options: [] },
 ]
 
+// Starter dashboard widgets auto-inserted on every new scorecard (shared per scorecard).
+// config.measure keys are resolved by the dashboard measure engine.
+const STARTER_WIDGETS = {
+  quality: [
+    { widget_type: 'stat_card', title: 'Overall Quality Score', position: 0,
+      config: { measure: 'avg_quality_score', date_field: 'submitted_at' } },
+    { widget_type: 'stat_card', title: 'Total Evaluations', position: 1,
+      config: { measure: 'eval_count', date_field: 'submitted_at' } },
+    { widget_type: 'line_chart', title: 'Quality — Week over Week', position: 2,
+      config: { date_field: 'submitted_at', bucket: 'week',
+                series: ['avg_quality_score', 'eval_count'] } },
+  ],
+  dsat: [
+    { widget_type: 'stat_card', title: 'Controllability Rate', position: 0,
+      config: { measure: 'controllability_rate', date_field: 'communication_date' } },
+    { widget_type: 'stat_card', title: 'Total DSATs Evaluated', position: 1,
+      config: { measure: 'eval_count', date_field: 'communication_date' } },
+    { widget_type: 'line_chart', title: 'Controllability — Week over Week', position: 2,
+      config: { date_field: 'communication_date', bucket: 'week',
+                series: ['controllability_rate', 'eval_count'] } },
+  ],
+}
+
+const starterWidgetsForType = (type) => STARTER_WIDGETS[type] || STARTER_WIDGETS.quality
+
 const seededFieldsForType = (type) =>
   type === 'dsat' ? [...CORE_META_FIELDS, ...DSAT_EXTRA_META_FIELDS] : [...CORE_META_FIELDS]
 
@@ -73,6 +98,17 @@ export default function Scorecards() {
     }))
     const { error: seedError } = await supabase.from('scorecard_metadata_fields').insert(seedFields)
     if (seedError) flash('Scorecard created, but seeding metadata failed: ' + seedError.message, false)
+
+    // Seed starter dashboard widgets (shared per scorecard).
+    const starterWidgets = starterWidgetsForType(newType).map(w => ({
+      scorecard_id: data.id,
+      widget_type: w.widget_type,
+      title: w.title,
+      config: w.config,
+      position: w.position,
+    }))
+    const { error: widgetError } = await supabase.from('dashboard_widgets').insert(starterWidgets)
+    if (widgetError) flash('Scorecard created, but seeding dashboard widgets failed: ' + widgetError.message, false)
 
     setCreating(false)
     setNewName('')
