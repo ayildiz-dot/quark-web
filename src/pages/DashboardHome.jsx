@@ -27,6 +27,8 @@ function DivisionPicker() {
   const [divisions, setDivisions] = useState([])
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [newName, setNewName] = useState('')
 
   useEffect(() => { load() }, [])
 
@@ -50,8 +52,83 @@ function DivisionPicker() {
     }
   }
 
-  // Non-managers only see active divisions; managers see all (with toggle)
-  const visible = canManage ? divisions : divisions.filter(d => d.is_active)
+  const handleCreate = async () => {
+    const name = newName.trim()
+    if (!name) return
+    if (divisions.some(d => d.name.toLowerCase() === name.toLowerCase())) {
+      alert('A division with that name already exists.')
+      return
+    }
+    if (!confirm(`Create a new division "${name}"? It will become available across all scorecards.`)) return
+    try {
+      const nextPos = divisions.length ? Math.max(...divisions.map(d => d.position || 0)) + 1 : 0
+      const { data, error } = await supabase.from('divisions')
+        .insert({ name, is_active: true, position: nextPos }).select().single()
+      if (error) throw error
+      setDivisions(ds => [...ds, data])
+      setShowCreate(false)
+      setNewName('')
+    } catch (e) {
+      alert('Failed to create division: ' + e.message)
+    }
+  }
+
+  const activeDivs = divisions.filter(d => d.is_active)
+  const inactiveDivs = divisions.filter(d => !d.is_active)
+
+  const DivisionCard = ({ div }) => {
+    const inactive = !div.is_active
+    return (
+      <div
+        style={{
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-lg)', padding: '28px 24px',
+          display: 'flex', flexDirection: 'column', gap: 16,
+          transition: 'all .18s ease', position: 'relative',
+          opacity: inactive ? 0.7 : 1,
+        }}>
+        <button
+          {...(inactive ? {} : lift)}
+          onClick={() => !inactive && navigate(`/dashboard/${encodeURIComponent(div.name)}`)}
+          disabled={inactive}
+          style={{
+            background: 'transparent', border: 'none', padding: 0,
+            cursor: inactive ? 'default' : 'pointer', textAlign: 'left',
+            color: 'var(--text-primary)', display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+          <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.2px' }}>{div.name}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            {inactive ? 'Inactive — hidden from evaluators' : 'View dashboards →'}
+          </div>
+        </button>
+
+        {canManage && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              {div.is_active ? 'Active' : 'Inactive'}
+            </span>
+            <button
+              onClick={() => toggleActive(div)}
+              disabled={busyId === div.id}
+              role="switch"
+              aria-checked={div.is_active}
+              style={{
+                marginLeft: 'auto', width: 40, height: 22, borderRadius: 11,
+                border: 'none', cursor: 'pointer', position: 'relative',
+                background: div.is_active ? 'var(--accent)' : 'var(--border-light)',
+                transition: 'background .15s', opacity: busyId === div.id ? 0.5 : 1,
+              }}>
+              <span style={{
+                position: 'absolute', top: 2, left: div.is_active ? 20 : 2,
+                width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                transition: 'left .15s',
+              }} />
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="page">
@@ -62,68 +139,65 @@ function DivisionPicker() {
         </div>
       </div>
 
+      {showCreate && (
+        <div className="modal-backdrop" onClick={() => { setShowCreate(false); setNewName('') }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+            <div className="modal-header">
+              <h2>New Division</h2>
+              <button className="btn-close" onClick={() => { setShowCreate(false); setNewName('') }}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ color: 'var(--text-secondary)', marginBottom: 16, fontSize: 14 }}>
+                Enter a name for the new division. It will be created as active and available across all scorecards.
+              </p>
+              <div className="form-field" style={{ marginBottom: 20 }}>
+                <label>Division name <span style={{ color: 'var(--danger)' }}>*</span></label>
+                <input className="input" placeholder="e.g. DPO" value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleCreate() }} autoFocus />
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setNewName('') }}>Cancel</button>
+                <button className="btn btn-primary" disabled={!newName.trim()} onClick={handleCreate}>Create division</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="loader-row"><div className="spinner" /></div>
-      ) : visible.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
-          No divisions yet.
-        </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 20 }}>
-          {visible.map(div => {
-            const inactive = !div.is_active
-            return (
-              <div key={div.id}
-                style={{
-                  background: 'var(--bg-surface)', border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-lg)', padding: '28px 24px',
-                  display: 'flex', flexDirection: 'column', gap: 16,
-                  transition: 'all .18s ease', position: 'relative',
-                  opacity: inactive ? 0.55 : 1,
-                }}>
-                <button
-                  {...(inactive ? {} : lift)}
-                  onClick={() => !inactive && navigate(`/dashboard/${encodeURIComponent(div.name)}`)}
-                  disabled={inactive}
-                  style={{
-                    background: 'transparent', border: 'none', padding: 0,
-                    cursor: inactive ? 'default' : 'pointer', textAlign: 'left',
-                    color: 'var(--text-primary)', display: 'flex', flexDirection: 'column', gap: 6,
-                  }}>
-                  <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.2px' }}>{div.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {inactive ? 'Inactive — hidden from evaluators' : 'View dashboards →'}
-                  </div>
-                </button>
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 20 }}>
+            {activeDivs.map(div => <DivisionCard key={div.id} div={div} />)}
 
-                {canManage && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                      {div.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                    <button
-                      onClick={() => toggleActive(div)}
-                      disabled={busyId === div.id}
-                      role="switch"
-                      aria-checked={div.is_active}
-                      style={{
-                        marginLeft: 'auto', width: 40, height: 22, borderRadius: 11,
-                        border: 'none', cursor: 'pointer', position: 'relative',
-                        background: div.is_active ? 'var(--accent)' : 'var(--border-light)',
-                        transition: 'background .15s', opacity: busyId === div.id ? 0.5 : 1,
-                      }}>
-                      <span style={{
-                        position: 'absolute', top: 2, left: div.is_active ? 20 : 2,
-                        width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                        transition: 'left .15s',
-                      }} />
-                    </button>
-                  </div>
-                )}
+            {canManage && (
+              <button {...lift}
+                onClick={() => { setNewName(''); setShowCreate(true) }}
+                style={{
+                  background: 'transparent', border: '2px dashed var(--border)',
+                  borderRadius: 'var(--radius-lg)', padding: '28px 24px', cursor: 'pointer',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                  gap: 10, color: 'var(--text-secondary)', transition: 'all .18s ease', minHeight: 140,
+                }}>
+                <div style={{ fontSize: 32, lineHeight: 1, color: 'var(--accent)' }}>+</div>
+                <div style={{ fontSize: 14, fontWeight: 500 }}>Add a new division</div>
+              </button>
+            )}
+          </div>
+
+          {canManage && inactiveDivs.length > 0 && (
+            <div style={{ marginTop: 40 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 16 }}>
+                Inactive Divisions
               </div>
-            )
-          })}
-        </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 20 }}>
+                {inactiveDivs.map(div => <DivisionCard key={div.id} div={div} />)}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

@@ -32,8 +32,6 @@ export default function ScorecardBuilder() {
   const [activeQuestion, setActiveQuestion] = useState(null)
   const [division, setDivision] = useState('')
   const [divisions, setDivisions] = useState([])
-  const [showDivisionModal, setShowDivisionModal] = useState(false)
-  const [newDivisionName, setNewDivisionName] = useState('')
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 5 }
@@ -164,31 +162,6 @@ export default function ScorecardBuilder() {
     // Show version reason modal — actual save runs in executeVersionSave
     setVersionReason('')
     setShowVersionModal(true)
-  }
-
-  const handleCreateDivision = async () => {
-    const name = newDivisionName.trim()
-    if (!name) return
-    if (divisions.some(d => d.name.toLowerCase() === name.toLowerCase())) {
-      flash('A division with that name already exists.', false)
-      return
-    }
-    if (!confirm(`Create a new division "${name}"? It will become available across all scorecards.`)) return
-    try {
-      const nextPos = divisions.length ? Math.max(...divisions.map(d => d.position || 0)) + 1 : 0
-      const { data, error } = await supabase.from('divisions')
-        .insert({ name, is_active: true, position: nextPos })
-        .select().single()
-      if (error) throw error
-      setDivisions(d => [...d, data])
-      setDivision(data.name)
-      markChanged()
-      setShowDivisionModal(false)
-      setNewDivisionName('')
-      flash(`Division "${name}" created ✓`)
-    } catch (e) {
-      flash('Failed to create division: ' + e.message, false)
-    }
   }
 
   const executeVersionSave = async (reason) => {
@@ -668,41 +641,6 @@ export default function ScorecardBuilder() {
         </div>
       )}
 
-      {showDivisionModal && (
-        <div className="modal-backdrop" onClick={() => { setShowDivisionModal(false); setNewDivisionName('') }}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
-            <div className="modal-header">
-              <h2>New Division</h2>
-              <button className="btn-close" onClick={() => { setShowDivisionModal(false); setNewDivisionName('') }}>✕</button>
-            </div>
-            <div className="modal-body">
-              <p style={{ color: 'var(--text-secondary)', marginBottom: 16, fontSize: 14 }}>
-                Enter a name for the new division. It will be created as active and available across all scorecards.
-              </p>
-              <div className="form-field" style={{ marginBottom: 20 }}>
-                <label>Division name <span style={{ color: 'var(--danger)' }}>*</span></label>
-                <input
-                  className="input"
-                  placeholder="e.g. DPO"
-                  value={newDivisionName}
-                  onChange={e => setNewDivisionName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleCreateDivision() }}
-                  autoFocus
-                />
-              </div>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                <button className="btn btn-ghost" onClick={() => { setShowDivisionModal(false); setNewDivisionName('') }}>
-                  Cancel
-                </button>
-                <button className="btn btn-primary" disabled={!newDivisionName.trim()} onClick={handleCreateDivision}>
-                  Create division
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="tabs">
         {tabs.map(t => (
           <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
@@ -747,20 +685,11 @@ export default function ScorecardBuilder() {
           <div className="form-field" style={{ marginBottom: 16 }}>
             <label>Division</label>
             <select className="select" value={division}
-              onChange={e => {
-                if (e.target.value === '__create__') {
-                  setNewDivisionName('')
-                  setShowDivisionModal(true)
-                } else {
-                  setDivision(e.target.value)
-                  markChanged()
-                }
-              }}>
+              onChange={e => { setDivision(e.target.value); markChanged() }}>
               <option value="">— Select a division —</option>
               {divisions.filter(d => d.is_active || d.name === division).map(d => (
                 <option key={d.id} value={d.name}>{d.name}</option>
               ))}
-              <option value="__create__">+ Create a new division…</option>
             </select>
             <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6, display: 'block' }}>
               Each scorecard belongs to one division. It will appear under that division on the dashboard.
