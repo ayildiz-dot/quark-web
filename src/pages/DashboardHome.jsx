@@ -149,9 +149,9 @@ function ScorecardPicker() {
   const lift = useLift()
   const [scorecards, setScorecards] = useState([])
   const [loading, setLoading] = useState(true)
+  const regionMeta = REGIONS.find(r => r.key === region)
   useEffect(() => {
     (async () => {
-      const regionMeta = REGIONS.find(r => r.key === region)
       const dbRegion = regionMeta?.dbValue
       let query = supabase
         .from('scorecards')
