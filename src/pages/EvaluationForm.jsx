@@ -308,6 +308,7 @@ export default function EvaluationForm() {
           score: 100, failed_critical: false,
           metadata_values: [...metaPayload, ...dsatPayload],
           overall_comment: null, status: 'submitted',
+          evaluation_type: selectedScorecard.type,
           scorecard_version: selectedScorecard.version || 1,
           submitted_at: new Date().toISOString()
         })
@@ -321,6 +322,7 @@ export default function EvaluationForm() {
           metadata_values: metaPayload,
           overall_comment: overallComment.trim(),
           status: 'submitted',
+          evaluation_type: selectedScorecard.type,
           scorecard_version: selectedScorecard.version || 1,
           submitted_at: new Date().toISOString()
         }).select().single()
