@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
+import DuckLoader from '../components/DuckLoader'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, BarChart
@@ -615,7 +616,7 @@ export default function ScorecardDashboard() {
     return null
   }
 
-  if (loading) return <div className="page"><div className="loader-row"><div className="spinner" /></div></div>
+  if (loading) return <div className="page"><DuckLoader /></div>
   if (error) return <div className="page"><div className="card" style={{ color:'var(--danger)' }}>Failed to load: {error}</div></div>
 
   const statCards = widgets.filter(w => w.widget_type === 'stat_card')
