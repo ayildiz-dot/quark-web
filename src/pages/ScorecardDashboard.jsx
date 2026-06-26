@@ -532,24 +532,28 @@ export default function ScorecardDashboard() {
     } catch (e) { alert('Failed to remove widget: ' + e.message) } finally { setSaving(false) }
   }
 
-  // Single DndContext handler — zone is determined by whether active+over are in the same group
-  const handleDragEnd = async (event, zoneIds) => {
+  const handleDragEnd = async (event) => {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    // If drop target is not in the same zone, show warning and bail
-    if (!zoneIds.includes(over.id)) {
+    const activeIsCard = widgets.find(w => w.id === active.id)?.widget_type === 'stat_card'
+    const overIsCard   = widgets.find(w => w.id === over.id)?.widget_type === 'stat_card'
+    // Cross-zone drop — warn and bail
+    if (activeIsCard !== overIsCard) {
       setShowZoneWarning(true)
       setTimeout(() => setShowZoneWarning(false), 2000)
       return
     }
-    const zoneWidgets = widgets.filter(w => zoneIds.includes(w.id))
+    const zoneWidgets = activeIsCard
+      ? widgets.filter(w => w.widget_type === 'stat_card')
+      : widgets.filter(w => w.widget_type !== 'stat_card')
     const oldIndex = zoneWidgets.findIndex(w => w.id === active.id)
     const newIndex = zoneWidgets.findIndex(w => w.id === over.id)
     if (oldIndex === -1 || newIndex === -1) return
     const reordered = arrayMove(zoneWidgets, oldIndex, newIndex)
-    const otherWidgets = widgets.filter(w => !zoneIds.includes(w.id))
-    const statIds = widgets.filter(w => w.widget_type === 'stat_card').map(w => w.id)
-    const allWidgets = zoneIds[0] && statIds.includes(zoneIds[0])
+    const otherWidgets = activeIsCard
+      ? widgets.filter(w => w.widget_type !== 'stat_card')
+      : widgets.filter(w => w.widget_type === 'stat_card')
+    const allWidgets = activeIsCard
       ? [...reordered, ...otherWidgets]
       : [...otherWidgets, ...reordered]
     const withPositions = allWidgets.map((w, i) => ({ ...w, position: i }))
@@ -692,13 +696,14 @@ export default function ScorecardDashboard() {
         </div>
       )}
 
-      {/* Stat cards — sortable zone */}
-      {statCards.length > 0 && (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={e => handleDragEnd(e, statIds)}
-        >
+      {/* Single DndContext wrapping both zones so cross-zone drops are detectable */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        {/* Stat cards zone */}
+        {statCards.length > 0 && (
           <SortableContext items={statIds} strategy={horizontalListSortingStrategy}>
             <div className="stats-grid">
               {statCards.map(w => (
@@ -708,16 +713,10 @@ export default function ScorecardDashboard() {
               ))}
             </div>
           </SortableContext>
-        </DndContext>
-      )}
+        )}
 
-      {/* Chart widgets — sortable zone */}
-      {charts.length > 0 && (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={e => handleDragEnd(e, chartIds)}
-        >
+        {/* Chart widgets zone */}
+        {charts.length > 0 && (
           <SortableContext items={chartIds} strategy={verticalListSortingStrategy}>
             {charts.map(w => (
               <SortableWidget key={w.id} id={w.id} editMode={editMode && canEdit}>
@@ -725,8 +724,8 @@ export default function ScorecardDashboard() {
               </SortableWidget>
             ))}
           </SortableContext>
-        </DndContext>
-      )}
+        )}
+      </DndContext>
     </div>
   )
 }
