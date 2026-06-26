@@ -5,6 +5,7 @@ import Navbar from './components/Navbar'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import DashboardHome from './pages/DashboardHome'
+import ScorecardDashboard from './pages/ScorecardDashboard'
 import Evaluations from './pages/Evaluations'
 import Admin from './pages/Admin'
 import Scorecards from './pages/Scorecards'
@@ -92,7 +93,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
             <Route path="/dashboard" element={<DashboardHome />} />
             <Route path="/dashboard/:region" element={<DashboardHome />} />
             <Route path="/dashboard/:region/:type" element={<DashboardHome />} />
-            <Route path="/dashboard/:region/:type/:scorecardId" element={<Dashboard />} />
+            <Route path="/dashboard/:region/:type/:scorecardId" element={<ScorecardDashboard />} />
             <Route path="/evaluations" element={<Evaluations />} />
             <Route path="/evaluations/new" element={<EvaluationForm />} />
             <Route path="/scorecards" element={<Scorecards />} />
