@@ -403,13 +403,53 @@ function SortableWidget({ id, editMode, children }) {
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.4 : 1,
-    cursor: editMode ? 'grab' : 'default',
+    opacity: isDragging ? 0.35 : 1,
     position: 'relative',
   }
   return (
-    <div ref={setNodeRef} style={style} {...(editMode ? { ...attributes, ...listeners } : {})}>
+    <div ref={setNodeRef} style={style}>
+      {editMode && (
+        <div
+          {...attributes}
+          {...listeners}
+          title="Drag to reorder"
+          style={{
+            position: 'absolute', top: 10, left: 10, zIndex: 20,
+            cursor: isDragging ? 'grabbing' : 'grab',
+            color: 'var(--text-tertiary)',
+            fontSize: 16, lineHeight: 1,
+            padding: '2px 4px',
+            borderRadius: 4,
+            userSelect: 'none',
+            transition: 'color .15s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = 'var(--text-secondary)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-tertiary)'}
+        >⠿</div>
+      )}
       {children}
+    </div>
+  )
+}
+
+/* ===================== zone boundary blocker ===================== */
+function ZoneBoundaryOverlay({ visible }) {
+  if (!visible) return null
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9998,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      pointerEvents: 'none',
+    }}>
+      <div style={{
+        background: 'rgba(239,68,68,0.92)', color: '#fff',
+        borderRadius: 12, padding: '10px 20px',
+        fontSize: 13, fontWeight: 600,
+        display: 'flex', alignItems: 'center', gap: 8,
+        boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+      }}>
+        <span style={{ fontSize: 18 }}>🚫</span> Widgets can only be reordered within their own section
+      </div>
     </div>
   )
 }
@@ -432,6 +472,7 @@ export default function ScorecardDashboard() {
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [saving, setSaving] = useState(false)
   const [activeId, setActiveId] = useState(null)
+  const [showZoneWarning, setShowZoneWarning] = useState(false)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   useEffect(() => { load() }, [scorecardId])
@@ -495,6 +536,15 @@ export default function ScorecardDashboard() {
     const { active, over } = event
     setActiveId(null)
     if (!over || active.id === over.id) return
+    // Check if drop target belongs to a different zone
+    const zoneCheck = zone === 'stats'
+      ? widgets.filter(w => w.widget_type === 'stat_card')
+      : widgets.filter(w => w.widget_type !== 'stat_card')
+    if (!zoneCheck.some(w => w.id === over.id)) {
+      setShowZoneWarning(true)
+      setTimeout(() => setShowZoneWarning(false), 1800)
+      return
+    }
     const zoneWidgets = zone === 'stats'
       ? widgets.filter(w => w.widget_type === 'stat_card')
       : widgets.filter(w => w.widget_type !== 'stat_card')
@@ -690,6 +740,7 @@ export default function ScorecardDashboard() {
           </SortableContext>
         </DndContext>
       )}
+      <ZoneBoundaryOverlay visible={showZoneWarning} />
     </div>
   )
 }
