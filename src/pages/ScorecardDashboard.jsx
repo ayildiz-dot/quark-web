@@ -531,16 +531,11 @@ export default function ScorecardDashboard() {
         </div>
         {canEdit && (
           <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-            {editMode && (
-              <button className="btn btn-secondary" disabled={saving}
-                onClick={() => { setShowAddPanel(v => !v) }}>
-                {showAddPanel ? 'Cancel' : '+ Add widget'}
-              </button>
-            )}
+
             <button
               className={editMode ? 'btn btn-primary' : 'btn btn-secondary'}
               disabled={saving}
-              onClick={() => { setEditMode(v => !v); setShowAddPanel(false) }}>
+              onClick={() => { setEditMode(v => { setShowAddPanel(!v); return !v }) }}>
               {editMode ? 'Done editing' : 'Edit dashboard'}
             </button>
           </div>
