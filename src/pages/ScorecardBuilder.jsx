@@ -693,6 +693,19 @@ export default function ScorecardBuilder() {
 
       {tab === 'metadata' && (
         <div>
+          {scorecard.type === 'dsat' && !metadata.some(f => f.label?.trim().toLowerCase() === 'communication date') && (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.4)',
+              borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13
+            }}>
+              <span style={{ fontSize: 16, lineHeight: 1 }}>⚠️</span>
+              <span style={{ color: 'var(--text-primary)' }}>
+                This DSAT scorecard needs a metadata field named exactly <strong>"Communication Date"</strong> (type Date).
+                The DSAT dashboard uses it as the date axis for all charts and filters. Without it, the dashboard cannot plot results over time.
+              </span>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <p style={{ color: 'var(--text-secondary)' }}>{metadata.length}/10 metadata fields</p>
             <button className="btn btn-primary btn-sm" onClick={addMetaField} disabled={metadata.length >= 10}>
