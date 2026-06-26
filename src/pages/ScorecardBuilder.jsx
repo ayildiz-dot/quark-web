@@ -165,6 +165,7 @@ export default function ScorecardBuilder() {
       await supabase.from('scorecards').update({
         name: scorecard.name,
         description: scorecard.description,
+        pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
         updated_at: new Date().toISOString()
       }).eq('id', id)
 
@@ -664,10 +665,23 @@ export default function ScorecardBuilder() {
               Scorecard type cannot be changed after creation.
             </span>
           </div>
+          {scorecard.type === 'quality' && (
+            <div className="form-field" style={{ marginBottom: 16 }}>
+              <label>Pass Threshold (%)</label>
+              <input type="number" className="input" min={0} max={100}
+                value={scorecard.pass_threshold ?? 90}
+                onChange={e => { setScorecard(s => ({ ...s, pass_threshold: e.target.value === '' ? '' : Number(e.target.value) })); markChanged() }} />
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'block' }}>
+                Evaluations scoring at or above this value count as a pass. Editable after publishing.
+              </span>
+            </div>
+          )}
           {!isPublished && (
             <button className="btn btn-primary" onClick={async () => {
               const { error } = await supabase.from('scorecards')
-                .update({ name: scorecard.name, description: scorecard.description, updated_at: new Date().toISOString() })
+                .update({ name: scorecard.name, description: scorecard.description,
+                  pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
+                  updated_at: new Date().toISOString() })
                 .eq('id', id)
               if (error) return flash(error.message, false)
               clearChanged()
@@ -1043,13 +1057,13 @@ function DsatQuestionCard({ question, options, sections, onUpdateQuestion, onDel
                       value={opt.jump_to_section_id ?? ''}
                       onChange={e => {
                         const val = e.target.value
-                        onUpdateOption(opt.id, { jump_to_section_id: (val === '' || val === 'end') ? null : val })
+                        onUpdateOption(opt.id, { jump_to_section_id: val === '' ? null : val })
                       }}>
                       <option value="">Continue to next section</option>
                       {sections.map(s => (
                         <option key={s.id} value={s.id}>Jump to: {s.title}</option>
                       ))}
-                      <option value="end">End of form (skip remaining sections)</option>
+
                     </select>
                     <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
                       onClick={() => onDeleteOption(opt.id)}>✕</button>
