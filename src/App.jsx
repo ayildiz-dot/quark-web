@@ -14,6 +14,7 @@ import EvaluationForm from './pages/EvaluationForm'
 import ScorecardHistory from './pages/ScorecardHistory'
 import ResetPassword from './pages/ResetPassword'
 import { usePresence } from './hooks/usePresence'
+import DuckLoader from './components/DuckLoader'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -91,9 +92,8 @@ function AppShell({ user, profile, logout, fetchProfile }) {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardHome />} />
-            <Route path="/dashboard/:region" element={<DashboardHome />} />
-            <Route path="/dashboard/:region/:type" element={<DashboardHome />} />
-            <Route path="/dashboard/:region/:type/:scorecardId" element={<ScorecardDashboard />} />
+            <Route path="/dashboard/:division" element={<DashboardHome />} />
+            <Route path="/dashboard/:division/:scorecardId" element={<ScorecardDashboard />} />
             <Route path="/evaluations" element={<Evaluations />} />
             <Route path="/evaluations/new" element={<EvaluationForm />} />
             <Route path="/scorecards" element={<Scorecards />} />
@@ -161,8 +161,7 @@ export default function App() {
 
   if (loading) return (
     <div className="fullpage-loader">
-      <div className="spinner" />
-      <span>Loading Quark…</span>
+      <DuckLoader />
     </div>
   )
 

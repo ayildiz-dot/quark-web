@@ -459,7 +459,7 @@ function ZoneWarningToast({ visible }) {
 
 /* ===================== main ===================== */
 export default function ScorecardDashboard() {
-  const { region, type, scorecardId } = useParams()
+  const { division, scorecardId } = useParams()
   const navigate = useNavigate()
   const { profile } = useAuth()
   const canEdit = ['admin', 'owner'].includes(profile?.role)
@@ -634,7 +634,7 @@ export default function ScorecardDashboard() {
       <div className="page-header">
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom:8 }}
-            onClick={() => navigate('/dashboard/' + region + '/' + type)}>← Scorecards</button>
+            onClick={() => navigate('/dashboard/' + division)}>← Scorecards</button>
           <h1>{scorecard.name}</h1>
           <p className="page-sub">
             {scorecard.type === 'dsat' ? 'DSAT' : 'Quality'} dashboard · {filteredEvals.length}
