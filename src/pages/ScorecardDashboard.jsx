@@ -7,8 +7,7 @@ import {
   ResponsiveContainer, BarChart
 } from 'recharts'
 import {
-  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
-  DragOverlay
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors
 } from '@dnd-kit/core'
 import {
   SortableContext, useSortable, horizontalListSortingStrategy,
@@ -107,19 +106,18 @@ function buildAgentSeries(evals, scorecard) {
 }
 
 /* ===================== widget catalog ===================== */
-// All possible widget types, keyed by scorecard type
 const WIDGET_CATALOG = {
   quality: [
-    { widget_type: 'stat_card',  title: 'Overall Quality Score',        config: { measure: 'avg_quality_score' } },
-    { widget_type: 'stat_card',  title: 'Total Evaluations',            config: { measure: 'eval_count' } },
-    { widget_type: 'line_chart', title: 'Quality — Week over Week', config: {} },
-    { widget_type: 'bar_chart',  title: 'Quality Score by Agent',       config: { measure: 'avg_quality_score' } },
+    { widget_type: 'stat_card',  title: 'Overall Quality Score',     config: { measure: 'avg_quality_score' } },
+    { widget_type: 'stat_card',  title: 'Total Evaluations',         config: { measure: 'eval_count' } },
+    { widget_type: 'line_chart', title: 'Quality \u2014 Week over Week', config: {} },
+    { widget_type: 'bar_chart',  title: 'Quality Score by Agent',    config: { measure: 'avg_quality_score' } },
   ],
   dsat: [
-    { widget_type: 'stat_card',  title: 'Controllability Rate',              config: { measure: 'controllability_rate' } },
-    { widget_type: 'stat_card',  title: 'Total DSATs Evaluated',             config: { measure: 'eval_count' } },
-    { widget_type: 'line_chart', title: 'Controllability — Week over Week', config: {} },
-    { widget_type: 'bar_chart',  title: 'Controllability by Agent',          config: { measure: 'controllability_rate' } },
+    { widget_type: 'stat_card',  title: 'Controllability Rate',          config: { measure: 'controllability_rate' } },
+    { widget_type: 'stat_card',  title: 'Total DSATs Evaluated',         config: { measure: 'eval_count' } },
+    { widget_type: 'line_chart', title: 'Controllability \u2014 Week over Week', config: {} },
+    { widget_type: 'bar_chart',  title: 'Controllability by Agent',      config: { measure: 'controllability_rate' } },
   ],
 }
 
@@ -262,7 +260,7 @@ function DateRangeFilter({ def, selected, onChange }) {
           onChange={e => onChange({ ...sel, to: e.target.value })} />
         {(sel.from || sel.to) && (
           <button className="btn btn-ghost btn-sm" style={{ color:'var(--danger)', fontSize:12 }}
-            onClick={() => onChange({ from:'', to:'' })}>✕</button>
+            onClick={() => onChange({ from:'', to:'' })}>X</button>
         )}
       </div>
     </div>
@@ -311,42 +309,22 @@ function AgentBarChart({ data, scorecard }) {
   const grid = cssVar('--border','#1e293b')
   const textSec = cssVar('--text-secondary','#94a3b8')
   const surface = cssVar('--bg-surface','#1a2235')
-
   if (!data.length) return (
     <div style={{ height:220, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-tertiary)', fontSize:13 }}>
       No agent data matches the current filters.
     </div>
   )
-
-  // Dynamic height: at least 260, more if many agents
   const chartHeight = Math.max(260, data.length * 40)
-
   return (
     <ResponsiveContainer width="100%" height={chartHeight}>
       <BarChart data={data} margin={{ top:10, right:16, bottom: data.length > 6 ? 80 : 48, left:-10 }}>
         <CartesianGrid stroke={grid} strokeDasharray="3 3" vertical={false} />
-        <XAxis
-          dataKey="agent"
-          stroke={textSec}
-          fontSize={11}
-          tickLine={false}
-          angle={-45}
-          textAnchor="end"
-          interval={0}
-        />
-        <YAxis
-          stroke={textSec}
-          fontSize={12}
-          domain={[0, 100]}
-          tickLine={false}
-          axisLine={false}
-          unit="%"
-          width={44}
-        />
+        <XAxis dataKey="agent" stroke={textSec} fontSize={11} tickLine={false} angle={-45} textAnchor="end" interval={0} />
+        <YAxis stroke={textSec} fontSize={12} domain={[0,100]} tickLine={false} axisLine={false} unit="%" width={44} />
         <Tooltip
           contentStyle={{ background:surface, border:'1px solid '+grid, borderRadius:8, fontSize:12 }}
           labelStyle={{ color:'var(--text-primary)' }}
-          formatter={(v, n) => [v + '%', metricName]}
+          formatter={(v) => [v + '%', metricName]}
           labelFormatter={l => l}
         />
         <Bar dataKey="value" name={metricName} fill={accent} radius={[3,3,0,0]} barSize={28} />
@@ -359,13 +337,12 @@ function AgentBarChart({ data, scorecard }) {
 function AddWidgetPanel({ scorecard, existingWidgets, onAdd, onClose }) {
   const catalog = WIDGET_CATALOG[scorecard.type] || []
   const isAdded = (item) => existingWidgets.some(w => w.widget_type === item.widget_type && w.title === item.title)
-
   return (
     <div className="card" style={{ marginBottom:20, border:'1px solid var(--accent)', padding:'16px 18px' }}>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
         <span style={{ fontSize:13, fontWeight:600, color:'var(--text-primary)' }}>Add widget</span>
         <button className="btn btn-ghost btn-sm" onClick={onClose}
-          style={{ color:'var(--text-secondary)', fontSize:18, lineHeight:1, padding:'0 6px' }}>✕</button>
+          style={{ color:'var(--text-secondary)', fontSize:18, lineHeight:1, padding:'0 6px' }}>X</button>
       </div>
       <div style={{ display:'flex', flexWrap:'wrap', gap:10 }}>
         {catalog.map((item, i) => {
@@ -385,7 +362,7 @@ function AddWidgetPanel({ scorecard, existingWidgets, onAdd, onClose }) {
                 transition: 'opacity .15s',
               }}>
               <span style={{ fontSize:15 }}>
-                {item.widget_type === 'stat_card' ? '🔢' : item.widget_type === 'bar_chart' ? '📊' : '📈'}
+                {item.widget_type === 'stat_card' ? '\u{1F522}' : item.widget_type === 'bar_chart' ? '\u{1F4CA}' : '\u{1F4C8}'}
               </span>
               {item.title}
               {added && <span style={{ fontSize:11, marginLeft:2 }}>✓</span>}
@@ -414,41 +391,66 @@ function SortableWidget({ id, editMode, children }) {
           {...listeners}
           title="Drag to reorder"
           style={{
-            position: 'absolute', top: 10, left: 10, zIndex: 20,
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 20,
             cursor: isDragging ? 'grabbing' : 'grab',
             color: 'var(--text-tertiary)',
-            fontSize: 16, lineHeight: 1,
-            padding: '2px 4px',
-            borderRadius: 4,
+            fontSize: 22,
+            lineHeight: 1,
+            padding: '6px 10px',
+            borderRadius: 6,
             userSelect: 'none',
-            transition: 'color .15s',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            transition: 'color .15s, border-color .15s',
+            letterSpacing: 3,
           }}
-          onMouseEnter={e => e.currentTarget.style.color = 'var(--text-secondary)'}
-          onMouseLeave={e => e.currentTarget.style.color = 'var(--text-tertiary)'}
-        >⠿</div>
+          onMouseEnter={e => {
+            e.currentTarget.style.color = 'var(--accent)'
+            e.currentTarget.style.borderColor = 'var(--accent)'
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.color = 'var(--text-tertiary)'
+            e.currentTarget.style.borderColor = 'var(--border)'
+          }}
+        >{'⠿⠿'}</div>
       )}
       {children}
     </div>
   )
 }
 
-/* ===================== zone boundary blocker ===================== */
-function ZoneBoundaryOverlay({ visible }) {
+/* ===================== zone boundary toast ===================== */
+function ZoneWarningToast({ visible }) {
   if (!visible) return null
   return (
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 9998,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      position: 'fixed',
+      top: 24,
+      left: '50%',
+      transform: 'translateX(-50%)',
+      zIndex: 99999,
       pointerEvents: 'none',
     }}>
       <div style={{
-        background: 'rgba(239,68,68,0.92)', color: '#fff',
-        borderRadius: 12, padding: '10px 20px',
-        fontSize: 13, fontWeight: 600,
-        display: 'flex', alignItems: 'center', gap: 8,
-        boxShadow: '0 4px 24px rgba(0,0,0,0.3)',
+        background: 'rgba(220,38,38,0.96)',
+        color: '#fff',
+        borderRadius: 10,
+        padding: '10px 22px',
+        fontSize: 13,
+        fontWeight: 600,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+        whiteSpace: 'nowrap',
       }}>
-        <span style={{ fontSize: 18 }}>🚫</span> Widgets can only be reordered within their own section
+        <span style={{ fontSize: 16 }}>🚫</span>
+        Widgets can only be reordered within their own section
       </div>
     </div>
   )
@@ -471,14 +473,13 @@ export default function ScorecardDashboard() {
   const [editMode, setEditMode] = useState(false)
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [activeId, setActiveId] = useState(null)
   const [showZoneWarning, setShowZoneWarning] = useState(false)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   useEffect(() => { load() }, [scorecardId])
 
   const load = async () => {
-    setLoading(true); setError(null); setFilterState({}); setEditMode(false); setShowAddPanel(true)
+    setLoading(true); setError(null); setFilterState({}); setEditMode(false); setShowAddPanel(false)
     try {
       const { data: sc, error: scErr } = await supabase
         .from('scorecards').select('id, name, type, pass_threshold').eq('id', scorecardId).single()
@@ -518,7 +519,6 @@ export default function ScorecardDashboard() {
       }).select().single()
       if (insErr) throw insErr
       setWidgets(ws => [...ws, data])
-      setShowAddPanel(true)
     } catch (e) { alert('Failed to add widget: ' + e.message) } finally { setSaving(false) }
   }
 
@@ -532,37 +532,28 @@ export default function ScorecardDashboard() {
     } catch (e) { alert('Failed to remove widget: ' + e.message) } finally { setSaving(false) }
   }
 
-  const handleDragEnd = async (event, zone) => {
+  // Single DndContext handler — zone is determined by whether active+over are in the same group
+  const handleDragEnd = async (event, zoneIds) => {
     const { active, over } = event
-    setActiveId(null)
     if (!over || active.id === over.id) return
-    // Check if drop target belongs to a different zone
-    const zoneCheck = zone === 'stats'
-      ? widgets.filter(w => w.widget_type === 'stat_card')
-      : widgets.filter(w => w.widget_type !== 'stat_card')
-    if (!zoneCheck.some(w => w.id === over.id)) {
+    // If drop target is not in the same zone, show warning and bail
+    if (!zoneIds.includes(over.id)) {
       setShowZoneWarning(true)
-      setTimeout(() => setShowZoneWarning(false), 1800)
+      setTimeout(() => setShowZoneWarning(false), 2000)
       return
     }
-    const zoneWidgets = zone === 'stats'
-      ? widgets.filter(w => w.widget_type === 'stat_card')
-      : widgets.filter(w => w.widget_type !== 'stat_card')
+    const zoneWidgets = widgets.filter(w => zoneIds.includes(w.id))
     const oldIndex = zoneWidgets.findIndex(w => w.id === active.id)
     const newIndex = zoneWidgets.findIndex(w => w.id === over.id)
     if (oldIndex === -1 || newIndex === -1) return
     const reordered = arrayMove(zoneWidgets, oldIndex, newIndex)
-    // Merge back with other zone, preserving their positions
-    const otherWidgets = zone === 'stats'
-      ? widgets.filter(w => w.widget_type !== 'stat_card')
-      : widgets.filter(w => w.widget_type === 'stat_card')
-    const allWidgets = zone === 'stats'
+    const otherWidgets = widgets.filter(w => !zoneIds.includes(w.id))
+    const statIds = widgets.filter(w => w.widget_type === 'stat_card').map(w => w.id)
+    const allWidgets = zoneIds[0] && statIds.includes(zoneIds[0])
       ? [...reordered, ...otherWidgets]
       : [...otherWidgets, ...reordered]
-    // Assign new positions across the full list
     const withPositions = allWidgets.map((w, i) => ({ ...w, position: i }))
     setWidgets(withPositions)
-    // Persist to DB
     setSaving(true)
     try {
       await Promise.all(withPositions.map(w =>
@@ -575,17 +566,17 @@ export default function ScorecardDashboard() {
     const isEditing = editMode && canEdit
     const removeBtn = isEditing ? (
       <button
-        onClick={() => handleRemoveWidget(w.id)}
+        onClick={(e) => { e.stopPropagation(); handleRemoveWidget(w.id) }}
         disabled={saving}
         style={{
           position:'absolute', top:10, right:10,
           background:'var(--danger)', color:'#fff',
           border:'none', borderRadius:6,
           width:26, height:26, display:'flex', alignItems:'center', justifyContent:'center',
-          cursor:'pointer', fontSize:14, lineHeight:1, zIndex:10,
+          cursor:'pointer', fontSize:14, lineHeight:1, zIndex:30,
           opacity: saving ? 0.5 : 1,
         }}
-        title="Remove widget">✕</button>
+        title="Remove widget">X</button>
     ) : null
 
     if (w.widget_type === 'stat_card') {
@@ -599,7 +590,6 @@ export default function ScorecardDashboard() {
         </div>
       )
     }
-
     if (w.widget_type === 'line_chart') {
       return (
         <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
@@ -609,7 +599,6 @@ export default function ScorecardDashboard() {
         </div>
       )
     }
-
     if (w.widget_type === 'bar_chart') {
       return (
         <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
@@ -619,7 +608,6 @@ export default function ScorecardDashboard() {
         </div>
       )
     }
-
     return null
   }
 
@@ -628,12 +616,16 @@ export default function ScorecardDashboard() {
 
   const statCards = widgets.filter(w => w.widget_type === 'stat_card')
   const charts    = widgets.filter(w => w.widget_type !== 'stat_card')
+  const statIds   = statCards.map(w => w.id)
+  const chartIds  = charts.map(w => w.id)
   const anyActive = Object.values(filterState).some(v =>
     Array.isArray(v) ? v.length : (v && (v.from || v.to)))
   const setFilter = (key, val) => setFilterState(s => ({ ...s, [key]: val }))
 
   return (
     <div className="page">
+      <ZoneWarningToast visible={showZoneWarning} />
+
       <div className="page-header">
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom:8 }}
@@ -645,15 +637,12 @@ export default function ScorecardDashboard() {
           </p>
         </div>
         {canEdit && (
-          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-
-            <button
-              className={editMode ? 'btn btn-primary' : 'btn btn-secondary'}
-              disabled={saving}
-              onClick={() => { setEditMode(v => { setShowAddPanel(!v); return !v }) }}>
-              {editMode ? 'Done editing' : 'Edit dashboard'}
-            </button>
-          </div>
+          <button
+            className={editMode ? 'btn btn-primary' : 'btn btn-secondary'}
+            disabled={saving}
+            onClick={() => { setEditMode(v => !v); setShowAddPanel(v => !v) }}>
+            {editMode ? 'Done editing' : 'Edit dashboard'}
+          </button>
         )}
       </div>
 
@@ -663,7 +652,7 @@ export default function ScorecardDashboard() {
           scorecard={scorecard}
           existingWidgets={widgets}
           onAdd={handleAddWidget}
-          onClose={() => setShowAddPanel(true)}
+          onClose={() => setShowAddPanel(false)}
         />
       )}
 
@@ -671,7 +660,7 @@ export default function ScorecardDashboard() {
       {editMode && (
         <div style={{ marginBottom:16, padding:'10px 16px', background:'var(--accent-muted, rgba(59,130,246,0.1))',
           border:'1px solid var(--accent)', borderRadius:8, fontSize:13, color:'var(--accent)' }}>
-          Edit mode — click <strong>✕</strong> on any widget to remove it, or use <strong>+ Add widget</strong> to add new ones.
+          Edit mode — use the <strong>grip handle</strong> on any widget to reorder, click <strong>X</strong> to remove, or add new widgets above.
         </div>
       )}
 
@@ -708,11 +697,10 @@ export default function ScorecardDashboard() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragStart={e => setActiveId(e.active.id)}
-          onDragEnd={e => handleDragEnd(e, 'stats')}
+          onDragEnd={e => handleDragEnd(e, statIds)}
         >
-          <SortableContext items={statCards.map(w => w.id)} strategy={horizontalListSortingStrategy}>
-            <div className="stats-grid" style={{ position:'relative' }}>
+          <SortableContext items={statIds} strategy={horizontalListSortingStrategy}>
+            <div className="stats-grid">
               {statCards.map(w => (
                 <SortableWidget key={w.id} id={w.id} editMode={editMode && canEdit}>
                   {renderWidget(w)}
@@ -728,10 +716,9 @@ export default function ScorecardDashboard() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragStart={e => setActiveId(e.active.id)}
-          onDragEnd={e => handleDragEnd(e, 'charts')}
+          onDragEnd={e => handleDragEnd(e, chartIds)}
         >
-          <SortableContext items={charts.map(w => w.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={chartIds} strategy={verticalListSortingStrategy}>
             {charts.map(w => (
               <SortableWidget key={w.id} id={w.id} editMode={editMode && canEdit}>
                 {renderWidget(w)}
@@ -740,7 +727,6 @@ export default function ScorecardDashboard() {
           </SortableContext>
         </DndContext>
       )}
-      <ZoneBoundaryOverlay visible={showZoneWarning} />
     </div>
   )
 }
