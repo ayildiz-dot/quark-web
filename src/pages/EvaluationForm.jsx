@@ -252,20 +252,34 @@ export default function EvaluationForm() {
   }
 
   const calculateScore = () => {
+    // Form-critical failure zeros the entire evaluation.
     for (const q of questions) {
       if (q.is_form_critical && answers[q.id]?.score === 'fail') {
         return { score: 0, failed_critical: true }
       }
     }
+
+    // Determine which groups are "failed" — a group with any failed group-critical
+    // question loses ALL of its earned weight (but its weight still counts in the denominator).
+    const failedGroupIds = new Set()
+    for (const q of questions) {
+      if (q.group_id && q.is_group_critical && answers[q.id]?.score === 'fail') {
+        failedGroupIds.add(q.group_id)
+      }
+    }
+
     let totalWeight = 0
     let earnedWeight = 0
     for (const q of questions) {
       const ans = answers[q.id]?.score
-      if (ans === 'na') continue
+      if (ans === 'na') continue        // N/A excluded from weight everywhere, even in failed groups
       if (!q.is_weighted) continue
       const weight = q.weight || 1
       totalWeight += weight
-      if (ans === 'pass') earnedWeight += weight
+      // Earn weight only if passed AND its group is not a failed group.
+      if (ans === 'pass' && !(q.group_id && failedGroupIds.has(q.group_id))) {
+        earnedWeight += weight
+      }
     }
     if (totalWeight === 0) return { score: 100, failed_critical: false }
     return { score: Math.round((earnedWeight / totalWeight) * 100), failed_critical: false }
