@@ -402,7 +402,7 @@ export default function ScorecardDashboard() {
   useEffect(() => { load() }, [scorecardId])
 
   const load = async () => {
-    setLoading(true); setError(null); setFilterState({}); setEditMode(false); setShowAddPanel(false)
+    setLoading(true); setError(null); setFilterState({}); setEditMode(false); // panel stays open
     try {
       const { data: sc, error: scErr } = await supabase
         .from('scorecards').select('id, name, type, pass_threshold').eq('id', scorecardId).single()
@@ -442,7 +442,7 @@ export default function ScorecardDashboard() {
       }).select().single()
       if (insErr) throw insErr
       setWidgets(ws => [...ws, data])
-      setShowAddPanel(false)
+      // panel stays open
     } catch (e) { alert('Failed to add widget: ' + e.message) } finally { setSaving(false) }
   }
 
@@ -548,7 +548,7 @@ export default function ScorecardDashboard() {
           scorecard={scorecard}
           existingWidgets={widgets}
           onAdd={handleAddWidget}
-          onClose={() => setShowAddPanel(false)}
+          onClose={() => // panel stays open}
         />
       )}
 
