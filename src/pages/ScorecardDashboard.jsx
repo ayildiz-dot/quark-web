@@ -1,199 +1,381 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts'
 
+/* ===================== date helpers ===================== */
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+function isoWeek(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = (date.getUTCDay() + 6) % 7
+  date.setUTCDate(date.getUTCDate() - dayNum + 3)
+  const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4))
+  const firstDayNum = (firstThursday.getUTCDay() + 6) % 7
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3)
+  return 1 + Math.round((date - firstThursday) / (7 * 24 * 3600 * 1000))
+}
+function weekStartOf(dateStr) {
+  const d = new Date(dateStr); if (isNaN(d)) return null
+  const day = (d.getDay() + 6) % 7
+  d.setDate(d.getDate() - day); d.setHours(0,0,0,0); return d
+}
+
+/* ===================== measure engine ===================== */
 function isControllable(ev) {
   const mv = ev.metadata_values
-  if (!Array.isArray(mv)) return false
-  return mv.some(entry => entry?.value === 'Controllable')
+  return Array.isArray(mv) && mv.some(e => e?.value === 'Controllable')
 }
-
-function getCommunicationDate(ev) {
+function getMetaValue(ev, label) {
   const mv = ev.metadata_values
   if (!Array.isArray(mv)) return null
-  const f = mv.find(e => e?.label === 'Communication Date')
-  return f?.value || null
+  return mv.find(e => e?.label === label)?.value ?? null
 }
-
+function dateFieldFor(scorecard) {
+  return scorecard.type === 'dsat' ? 'Communication Date' : '__submitted_at__'
+}
+function evalDate(ev, scorecard) {
+  if (scorecard.type === 'dsat') return getMetaValue(ev, 'Communication Date')
+  return ev.submitted_at
+}
 function computeMeasure(measureKey, evals, scorecard) {
   const n = evals.length
   switch (measureKey) {
-    case 'eval_count':
-      return { value: n, display: String(n) }
+    case 'eval_count': return { display: String(n) }
     case 'avg_quality_score': {
-      if (n === 0) return { value: 0, display: '—' }
-      const sum = evals.reduce((acc, e) => acc + (e.score ?? 0), 0)
-      const avg = Math.round(sum / n)
-      return { value: avg, display: avg + '%' }
+      if (!n) return { display: '—' }
+      const sum = evals.reduce((a, e) => a + (e.score ?? 0), 0)
+      return { display: Math.round(sum / n) + '%' }
     }
     case 'controllability_rate': {
-      if (n === 0) return { value: 0, display: '—' }
+      if (!n) return { display: '—' }
       const c = evals.filter(isControllable).length
-      const rate = Math.round((c / n) * 100)
-      return { value: rate, display: rate + '%', detail: c + ' of ' + n + ' controllable' }
+      return { display: Math.round((c / n) * 100) + '%', detail: c + ' of ' + n + ' controllable' }
     }
-    default:
-      return { value: null, display: '?' }
+    default: return { display: '?' }
   }
 }
-
-function weekStartOf(dateStr) {
-  const d = new Date(dateStr)
-  if (isNaN(d)) return null
-  const day = (d.getDay() + 6) % 7
-  d.setDate(d.getDate() - day)
-  d.setHours(0, 0, 0, 0)
-  return d
-}
-
 function buildWeeklySeries(evals, scorecard) {
   const isDsat = scorecard.type === 'dsat'
   const buckets = new Map()
   for (const ev of evals) {
-    const rawDate = isDsat ? getCommunicationDate(ev) : ev.submitted_at
-    if (!rawDate) continue
-    const ws = weekStartOf(rawDate)
-    if (!ws) continue
-    const key = ws.toISOString().slice(0, 10)
+    const raw = evalDate(ev, scorecard); if (!raw) continue
+    const ws = weekStartOf(raw); if (!ws) continue
+    const key = ws.toISOString().slice(0,10)
     if (!buckets.has(key)) buckets.set(key, { weekStart: ws, evals: [] })
     buckets.get(key).evals.push(ev)
   }
-  return [...buckets.values()]
-    .sort((a, b) => a.weekStart - b.weekStart)
-    .map(b => {
-      const count = b.evals.length
-      let rate
-      if (isDsat) {
-        const c = b.evals.filter(isControllable).length
-        rate = count ? Math.round((c / count) * 100) : 0
-      } else {
-        const sum = b.evals.reduce((acc, e) => acc + (e.score ?? 0), 0)
-        rate = count ? Math.round(sum / count) : 0
-      }
-      return {
-        weekLabel: b.weekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-        rate, count
-      }
-    })
+  return [...buckets.values()].sort((a,b)=>a.weekStart-b.weekStart).map(b => {
+    const count = b.evals.length
+    let rate
+    if (isDsat) { const c = b.evals.filter(isControllable).length; rate = count ? Math.round(c/count*100) : 0 }
+    else { const s = b.evals.reduce((a,e)=>a+(e.score??0),0); rate = count ? Math.round(s/count) : 0 }
+    return { weekLabel: b.weekStart.toLocaleDateString(undefined,{month:'short',day:'numeric'}), rate, count }
+  })
 }
 
-function cssVar(name, fallback) {
-  if (typeof window === 'undefined') return fallback
+/* ===================== filter definitions ===================== */
+// Returns an array of filter descriptors built from this scorecard's metadata + versions + time.
+function buildFilterDefs(metadataFields, evals, scorecard) {
+  const defs = []
+
+  // Version filter — only versions present in evals
+  const versions = [...new Set(evals.map(e => e.scorecard_version).filter(v => v != null))].sort((a,b)=>a-b)
+  if (versions.length) {
+    defs.push({ key: '__version__', label: 'Version', kind: 'multiselect',
+      options: versions.map(v => ({ value: String(v), label: 'v' + v })) })
+  }
+
+  // Time filters from the date field
+  const years = new Set(), months = new Set(), weeks = new Set()
+  for (const ev of evals) {
+    const raw = evalDate(ev, scorecard); if (!raw) continue
+    const d = new Date(raw); if (isNaN(d)) continue
+    years.add(d.getFullYear()); months.add(d.getMonth()); weeks.add(isoWeek(d))
+  }
+  if (years.size) defs.push({ key: '__year__', label: 'Year', kind: 'multiselect',
+    options: [...years].sort().map(y => ({ value: String(y), label: String(y) })) })
+  if (months.size) defs.push({ key: '__month__', label: 'Month', kind: 'multiselect',
+    options: [...months].sort((a,b)=>a-b).map(m => ({ value: String(m), label: MONTHS[m] })) })
+  if (weeks.size) defs.push({ key: '__week__', label: 'Week', kind: 'multiselect', search: true,
+    options: [...weeks].sort((a,b)=>a-b).map(w => ({ value: String(w), label: 'Week ' + w })) })
+
+  // Date range picker on the date field
+  defs.push({ key: '__daterange__', label: 'Date range', kind: 'daterange' })
+
+  // One filter per metadata field, by type
+  for (const f of metadataFields) {
+    if (f.field_type === 'date') {
+      // additional date fields get their own range picker (not the primary one already covered)
+      const isPrimary = (scorecard.type === 'dsat' && f.label === 'Communication Date')
+      if (!isPrimary) defs.push({ key: 'meta:' + f.label, label: f.label, kind: 'daterange', metaLabel: f.label })
+      continue
+    }
+    // dropdown, text, number → multiselect of distinct present values, with search
+    const present = [...new Set(evals.map(e => getMetaValue(e, f.label)).filter(v => v != null && v !== ''))].sort()
+    if (present.length) {
+      defs.push({ key: 'meta:' + f.label, label: f.label, kind: 'multiselect', search: true, metaLabel: f.label,
+        options: present.map(v => ({ value: v, label: v })) })
+    }
+  }
+  return defs
+}
+
+/* ===================== filter application ===================== */
+function applyFilters(evals, defs, state, scorecard) {
+  return evals.filter(ev => {
+    for (const def of defs) {
+      const sel = state[def.key]
+      if (def.kind === 'multiselect') {
+        if (!sel || !sel.length) continue
+        let val
+        if (def.key === '__version__') val = String(ev.scorecard_version)
+        else if (def.key === '__year__' || def.key === '__month__' || def.key === '__week__') {
+          const raw = evalDate(ev, scorecard); if (!raw) return false
+          const d = new Date(raw); if (isNaN(d)) return false
+          if (def.key === '__year__') val = String(d.getFullYear())
+          if (def.key === '__month__') val = String(d.getMonth())
+          if (def.key === '__week__') val = String(isoWeek(d))
+        } else if (def.metaLabel) val = getMetaValue(ev, def.metaLabel)
+        if (!sel.includes(val)) return false
+      } else if (def.kind === 'daterange') {
+        if (!sel || (!sel.from && !sel.to)) continue
+        const raw = def.metaLabel ? getMetaValue(ev, def.metaLabel) : evalDate(ev, scorecard)
+        if (!raw) return false
+        const d = new Date(raw); if (isNaN(d)) return false
+        if (sel.from && d < new Date(sel.from)) return false
+        if (sel.to && d > new Date(sel.to + 'T23:59:59')) return false
+      }
+    }
+    return true
+  })
+}
+
+/* ===================== filter UI components ===================== */
+function MultiSelectFilter({ def, selected, onChange }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const ref = useRef(null)
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) { setOpen(false); setSearch('') } }
+    document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h)
+  }, [])
+  const sel = selected || []
+  const opts = def.search && search
+    ? def.options.filter(o => o.label.toLowerCase().includes(search.toLowerCase()))
+    : def.options
+  const toggle = v => onChange(sel.includes(v) ? sel.filter(x => x !== v) : [...sel, v])
+  const summary = sel.length === 0 ? 'All' : sel.length === 1
+    ? (def.options.find(o => o.value === sel[0])?.label || sel[0])
+    : sel.length + ' selected'
+  return (
+    <div ref={ref} style={{ position: 'relative', minWidth: 150 }}>
+      <div className="form-field" style={{ gap: 4 }}>
+        <label>{def.label}</label>
+        <div className="select" style={{ display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer', userSelect:'none' }}
+          onClick={() => setOpen(o => !o)}>
+          <span style={{ color: sel.length ? 'var(--text-primary)' : 'var(--text-secondary)', fontSize:13, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{summary}</span>
+          <span style={{ fontSize:10, color:'var(--text-secondary)', marginLeft:6 }}>{open?'▲':'▼'}</span>
+        </div>
+      </div>
+      {open && (
+        <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, minWidth:'100%', zIndex:9999,
+          background:'var(--bg-surface)', border:'1px solid var(--border)', borderRadius:8, boxShadow:'var(--shadow)', overflow:'hidden' }}>
+          {def.search && (
+            <div style={{ padding:'8px 10px', borderBottom:'1px solid var(--border)' }}>
+              <input autoFocus className="input" placeholder="Search…" value={search}
+                onChange={e=>setSearch(e.target.value)} onClick={e=>e.stopPropagation()} style={{ fontSize:13, padding:'6px 10px', width:'100%' }} />
+            </div>
+          )}
+          <div style={{ maxHeight:240, overflowY:'auto' }}>
+            {sel.length > 0 && (
+              <div style={{ padding:'8px 12px', borderBottom:'1px solid var(--border)' }}>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize:12, color:'var(--danger)' }}
+                  onClick={() => onChange([])}>Clear selection</button>
+              </div>
+            )}
+            {opts.length === 0 ? (
+              <div style={{ padding:'12px 14px', color:'var(--text-secondary)', fontSize:13 }}>No matches</div>
+            ) : opts.map(o => (
+              <label key={o.value} style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 12px', fontSize:13, cursor:'pointer' }}
+                onMouseEnter={e=>e.currentTarget.style.background='var(--bg-hover)'}
+                onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                <input type="checkbox" checked={sel.includes(o.value)} onChange={()=>toggle(o.value)} />
+                <span>{o.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DateRangeFilter({ def, selected, onChange }) {
+  const sel = selected || { from:'', to:'' }
+  return (
+    <div className="form-field" style={{ gap:4 }}>
+      <label>{def.label}</label>
+      <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+        <input type="date" className="input" value={sel.from || ''} style={{ fontSize:13 }}
+          onChange={e => onChange({ ...sel, from: e.target.value })} />
+        <span style={{ color:'var(--text-secondary)', fontSize:12 }}>to</span>
+        <input type="date" className="input" value={sel.to || ''} style={{ fontSize:13 }}
+          onChange={e => onChange({ ...sel, to: e.target.value })} />
+        {(sel.from || sel.to) && (
+          <button className="btn btn-ghost btn-sm" style={{ color:'var(--danger)', fontSize:12 }}
+            onClick={() => onChange({ from:'', to:'' })}>✕</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ===================== chart ===================== */
+function cssVar(name, fb) {
+  if (typeof window === 'undefined') return fb
   const v = getComputedStyle(document.documentElement).getPropertyValue(name)
-  return v?.trim() || fallback
+  return v?.trim() || fb
 }
-
 function WowComboChart({ data, scorecard }) {
   const isDsat = scorecard.type === 'dsat'
   const rateName = isDsat ? 'Controllability %' : 'Quality Score %'
-  const accent = cssVar('--accent', '#3b82f6')
-  const barColor = cssVar('--border-light', '#2d3f5e')
-  const grid = cssVar('--border', '#1e293b')
-  const textSec = cssVar('--text-secondary', '#94a3b8')
-  const surface = cssVar('--bg-surface', '#1a2235')
-
-  if (!data.length) {
-    return (
-      <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
-        No dated evaluations yet. The trend appears once evaluations have dates.
-      </div>
-    )
-  }
-
+  const accent = cssVar('--accent','#3b82f6'), barColor = cssVar('--border-light','#2d3f5e')
+  const grid = cssVar('--border','#1e293b'), textSec = cssVar('--text-secondary','#94a3b8'), surface = cssVar('--bg-surface','#1a2235')
+  if (!data.length) return (
+    <div style={{ height:220, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-tertiary)', fontSize:13 }}>
+      No evaluations match the current filters.
+    </div>
+  )
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 0, left: -10 }}>
+      <ComposedChart data={data} margin={{ top:10, right:10, bottom:0, left:-10 }}>
         <CartesianGrid stroke={grid} strokeDasharray="3 3" vertical={false} />
         <XAxis dataKey="weekLabel" stroke={textSec} fontSize={12} tickLine={false} />
-        <YAxis yAxisId="left" stroke={textSec} fontSize={12} domain={[0, 100]} tickLine={false} axisLine={false} unit="%" width={44} />
+        <YAxis yAxisId="left" stroke={textSec} fontSize={12} domain={[0,100]} tickLine={false} axisLine={false} unit="%" width={44} />
         <YAxis yAxisId="right" orientation="right" stroke={textSec} fontSize={12} allowDecimals={false} tickLine={false} axisLine={false} width={32} />
-        <Tooltip
-          contentStyle={{ background: surface, border: '1px solid ' + grid, borderRadius: 8, fontSize: 12 }}
-          labelStyle={{ color: 'var(--text-primary)' }}
-          labelFormatter={l => 'Week of ' + l}
-          formatter={(value, name) => name === rateName ? [value + '%', name] : [value, name]}
-        />
-        <Legend wrapperStyle={{ fontSize: 12 }} />
-        <Bar yAxisId="right" dataKey="count" name="Evaluations" fill={barColor} radius={[3, 3, 0, 0]} barSize={28} />
-        <Line yAxisId="left" type="monotone" dataKey="rate" name={rateName} stroke={accent} strokeWidth={2.5} dot={{ r: 3, fill: accent }} activeDot={{ r: 5 }} />
+        <Tooltip contentStyle={{ background:surface, border:'1px solid '+grid, borderRadius:8, fontSize:12 }}
+          labelStyle={{ color:'var(--text-primary)' }} labelFormatter={l=>'Week of '+l}
+          formatter={(v,n)=> n===rateName ? [v+'%',n] : [v,n]} />
+        <Legend wrapperStyle={{ fontSize:12 }} />
+        <Bar yAxisId="right" dataKey="count" name="Evaluations" fill={barColor} radius={[3,3,0,0]} barSize={28} />
+        <Line yAxisId="left" type="monotone" dataKey="rate" name={rateName} stroke={accent} strokeWidth={2.5} dot={{ r:3, fill:accent }} activeDot={{ r:5 }} />
       </ComposedChart>
     </ResponsiveContainer>
   )
 }
 
+/* ===================== main ===================== */
 export default function ScorecardDashboard() {
   const { region, type, scorecardId } = useParams()
   const navigate = useNavigate()
   const [scorecard, setScorecard] = useState(null)
+  const [metadataFields, setMetadataFields] = useState([])
   const [widgets, setWidgets] = useState([])
   const [evals, setEvals] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [filterState, setFilterState] = useState({})
 
   useEffect(() => { load() }, [scorecardId])
 
   const load = async () => {
-    setLoading(true); setError(null)
+    setLoading(true); setError(null); setFilterState({})
     try {
       const { data: sc, error: scErr } = await supabase
         .from('scorecards').select('id, name, type, pass_threshold').eq('id', scorecardId).single()
       if (scErr) throw scErr
-      const { data: w } = await supabase
-        .from('dashboard_widgets').select('*').eq('scorecard_id', scorecardId).order('position')
-      const { data: ev } = await supabase
-        .from('evaluations')
-        .select('id, score, metadata_values, submitted_at, evaluation_type, status')
-        .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type)
-      setScorecard(sc); setWidgets(w || []); setEvals(ev || [])
+      const [{ data: mf }, { data: w }, { data: ev }] = await Promise.all([
+        supabase.from('scorecard_metadata_fields').select('*').eq('scorecard_id', scorecardId).order('position'),
+        supabase.from('dashboard_widgets').select('*').eq('scorecard_id', scorecardId).order('position'),
+        supabase.from('evaluations')
+          .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version')
+          .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type),
+      ])
+      setScorecard(sc); setMetadataFields(mf || []); setWidgets(w || []); setEvals(ev || [])
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
+  const filterDefs = useMemo(
+    () => scorecard ? buildFilterDefs(metadataFields, evals, scorecard) : [],
+    [metadataFields, evals, scorecard]
+  )
+  const filteredEvals = useMemo(
+    () => scorecard ? applyFilters(evals, filterDefs, filterState, scorecard) : [],
+    [evals, filterDefs, filterState, scorecard]
+  )
+
   if (loading) return <div className="page"><div className="loader-row"><div className="spinner" /></div></div>
-  if (error) return <div className="page"><div className="card" style={{ color: 'var(--danger)' }}>Failed to load: {error}</div></div>
+  if (error) return <div className="page"><div className="card" style={{ color:'var(--danger)' }}>Failed to load: {error}</div></div>
 
   const statCards = widgets.filter(w => w.widget_type === 'stat_card')
   const charts = widgets.filter(w => w.widget_type === 'line_chart')
-  const weeklyData = buildWeeklySeries(evals, scorecard)
+  const weeklyData = buildWeeklySeries(filteredEvals, scorecard)
+  const anyActive = Object.values(filterState).some(v =>
+    Array.isArray(v) ? v.length : (v && (v.from || v.to)))
+
+  const setFilter = (key, val) => setFilterState(s => ({ ...s, [key]: val }))
 
   return (
     <div className="page">
       <div className="page-header">
         <div>
-          <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
-            onClick={() => navigate(`/dashboard/${region}/${type}`)}>← Scorecards</button>
+          <button className="btn btn-ghost btn-sm" style={{ marginBottom:8 }}
+            onClick={() => navigate('/dashboard/' + region + '/' + type)}>← Scorecards</button>
           <h1>{scorecard.name}</h1>
           <p className="page-sub">
-            {scorecard.type === 'dsat' ? 'DSAT' : 'Quality'} dashboard · {evals.length} submitted evaluation{evals.length === 1 ? '' : 's'}
+            {scorecard.type === 'dsat' ? 'DSAT' : 'Quality'} dashboard · {filteredEvals.length}
+            {anyActive ? ' of ' + evals.length : ''} evaluation{filteredEvals.length === 1 ? '' : 's'}
           </p>
         </div>
       </div>
 
-      {evals.length === 0 && (
-        <div className="card" style={{ marginBottom: 20, color: 'var(--text-secondary)', textAlign: 'center', padding: 32 }}>
-          No submitted evaluations for this scorecard yet. Numbers will populate once evaluations are submitted.
+      {/* Filter bar */}
+      {filterDefs.length > 0 && (
+        <div className="card" style={{ marginBottom:20, padding:'16px 18px' }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+            <span style={{ fontSize:12, fontWeight:600, color:'var(--text-secondary)', textTransform:'uppercase', letterSpacing:'.5px' }}>Filters</span>
+            {anyActive && (
+              <button className="btn btn-ghost btn-sm" style={{ fontSize:12, color:'var(--danger)' }}
+                onClick={() => setFilterState({})}>Clear all filters</button>
+            )}
+          </div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:12, alignItems:'flex-end' }}>
+            {filterDefs.map(def =>
+              def.kind === 'daterange'
+                ? <DateRangeFilter key={def.key} def={def} selected={filterState[def.key]} onChange={v => setFilter(def.key, v)} />
+                : <MultiSelectFilter key={def.key} def={def} selected={filterState[def.key]} onChange={v => setFilter(def.key, v)} />
+            )}
+          </div>
+        </div>
+      )}
+
+      {filteredEvals.length === 0 && (
+        <div className="card" style={{ marginBottom:20, color:'var(--text-secondary)', textAlign:'center', padding:32 }}>
+          {evals.length === 0
+            ? 'No submitted evaluations for this scorecard yet.'
+            : 'No evaluations match the current filters. Adjust or clear the filters above.'}
         </div>
       )}
 
       <div className="stats-grid">
         {statCards.map(w => {
-          const result = computeMeasure(w.config?.measure, evals, scorecard)
+          const r = computeMeasure(w.config?.measure, filteredEvals, scorecard)
           return (
             <div key={w.id} className="stat-card">
               <div className="stat-label">{w.title}</div>
-              <div className="stat-value">{result.display}</div>
-              {result.detail && <div className="stat-sub">{result.detail}</div>}
+              <div className="stat-value">{r.display}</div>
+              {r.detail && <div className="stat-sub">{r.detail}</div>}
             </div>
           )
         })}
       </div>
 
       {charts.map(w => (
-        <div key={w.id} className="card" style={{ marginBottom: 16 }}>
-          <div className="card-title" style={{ marginBottom: 16 }}>{w.title}</div>
+        <div key={w.id} className="card" style={{ marginBottom:16 }}>
+          <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
           <WowComboChart data={weeklyData} scorecard={scorecard} />
         </div>
       ))}
