@@ -349,10 +349,7 @@ function AgentBarChart({ data, scorecard }) {
 /* ===================== add widget panel ===================== */
 function AddWidgetPanel({ scorecard, existingWidgets, onAdd, onClose }) {
   const catalog = WIDGET_CATALOG[scorecard.type] || []
-  // Filter out widgets already on the dashboard (match by widget_type + title)
-  const available = catalog.filter(c =>
-    !existingWidgets.some(w => w.widget_type === c.widget_type && w.title === c.title)
-  )
+  const isAdded = (item) => existingWidgets.some(w => w.widget_type === item.widget_type && w.title === item.title)
 
   return (
     <div className="card" style={{ marginBottom:20, border:'1px solid var(--accent)', padding:'16px 18px' }}>
@@ -361,22 +358,32 @@ function AddWidgetPanel({ scorecard, existingWidgets, onAdd, onClose }) {
         <button className="btn btn-ghost btn-sm" onClick={onClose}
           style={{ color:'var(--text-secondary)', fontSize:18, lineHeight:1, padding:'0 6px' }}>✕</button>
       </div>
-      {available.length === 0 ? (
-        <p style={{ fontSize:13, color:'var(--text-secondary)', margin:0 }}>All available widgets are already on this dashboard.</p>
-      ) : (
-        <div style={{ display:'flex', flexWrap:'wrap', gap:10 }}>
-          {available.map((item, i) => (
-            <button key={i} className="btn btn-secondary"
-              style={{ fontSize:13, display:'flex', alignItems:'center', gap:8 }}
-              onClick={() => onAdd(item)}>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:10 }}>
+        {catalog.map((item, i) => {
+          const added = isAdded(item)
+          return (
+            <button key={i}
+              disabled={added}
+              onClick={() => !added && onAdd(item)}
+              style={{
+                fontSize:13, display:'flex', alignItems:'center', gap:8,
+                padding:'8px 14px', borderRadius:8, border:'1px solid',
+                cursor: added ? 'not-allowed' : 'pointer',
+                borderColor: added ? 'var(--border)' : 'var(--accent)',
+                background: added ? 'var(--bg-hover)' : 'transparent',
+                color: added ? 'var(--text-tertiary)' : 'var(--accent)',
+                opacity: added ? 0.5 : 1,
+                transition: 'opacity .15s',
+              }}>
               <span style={{ fontSize:15 }}>
                 {item.widget_type === 'stat_card' ? '🔢' : item.widget_type === 'bar_chart' ? '📊' : '📈'}
               </span>
               {item.title}
+              {added && <span style={{ fontSize:11, marginLeft:2 }}>✓</span>}
             </button>
-          ))}
-        </div>
-      )}
+          )
+        })}
+      </div>
     </div>
   )
 }
