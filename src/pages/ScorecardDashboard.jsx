@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/useAuth'
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, BarChart
 } from 'recharts'
 
 /* ===================== date helpers ===================== */
@@ -32,9 +34,6 @@ function getMetaValue(ev, label) {
   const mv = ev.metadata_values
   if (!Array.isArray(mv)) return null
   return mv.find(e => e?.label === label)?.value ?? null
-}
-function dateFieldFor(scorecard) {
-  return scorecard.type === 'dsat' ? 'Communication Date' : '__submitted_at__'
 }
 function evalDate(ev, scorecard) {
   if (scorecard.type === 'dsat') return getMetaValue(ev, 'Communication Date')
@@ -75,20 +74,54 @@ function buildWeeklySeries(evals, scorecard) {
     return { weekLabel: b.weekStart.toLocaleDateString(undefined,{month:'short',day:'numeric'}), rate, count }
   })
 }
+function buildAgentSeries(evals, scorecard) {
+  const isDsat = scorecard.type === 'dsat'
+  const buckets = new Map()
+  for (const ev of evals) {
+    const agent = getMetaValue(ev, "Agent's Email")
+    if (!agent) continue
+    if (!buckets.has(agent)) buckets.set(agent, [])
+    buckets.get(agent).push(ev)
+  }
+  return [...buckets.entries()].map(([agent, agentEvals]) => {
+    const count = agentEvals.length
+    let value
+    if (isDsat) {
+      const c = agentEvals.filter(isControllable).length
+      value = count ? Math.round((c / count) * 100) : 0
+    } else {
+      const s = agentEvals.reduce((a, e) => a + (e.score ?? 0), 0)
+      value = count ? Math.round(s / count) : 0
+    }
+    return { agent, value, count }
+  }).sort((a, b) => b.value - a.value)
+}
+
+/* ===================== widget catalog ===================== */
+// All possible widget types, keyed by scorecard type
+const WIDGET_CATALOG = {
+  quality: [
+    { widget_type: 'stat_card', title: 'Avg Quality Score', config: { measure: 'avg_quality_score' } },
+    { widget_type: 'stat_card', title: 'Evaluations',       config: { measure: 'eval_count' } },
+    { widget_type: 'line_chart', title: 'Quality Score over Time', config: {} },
+    { widget_type: 'bar_chart',  title: 'Quality Score by Agent',  config: { measure: 'avg_quality_score' } },
+  ],
+  dsat: [
+    { widget_type: 'stat_card', title: 'Controllability Rate', config: { measure: 'controllability_rate' } },
+    { widget_type: 'stat_card', title: 'Evaluations',          config: { measure: 'eval_count' } },
+    { widget_type: 'line_chart', title: 'Controllability over Time', config: {} },
+    { widget_type: 'bar_chart',  title: 'Controllability by Agent',  config: { measure: 'controllability_rate' } },
+  ],
+}
 
 /* ===================== filter definitions ===================== */
-// Returns an array of filter descriptors built from this scorecard's metadata + versions + time.
 function buildFilterDefs(metadataFields, evals, scorecard) {
   const defs = []
-
-  // Version filter — only versions present in evals
   const versions = [...new Set(evals.map(e => e.scorecard_version).filter(v => v != null))].sort((a,b)=>a-b)
   if (versions.length) {
     defs.push({ key: '__version__', label: 'Version', kind: 'multiselect',
       options: versions.map(v => ({ value: String(v), label: 'v' + v })) })
   }
-
-  // Time filters from the date field
   const years = new Set(), months = new Set(), weeks = new Set()
   for (const ev of evals) {
     const raw = evalDate(ev, scorecard); if (!raw) continue
@@ -101,19 +134,13 @@ function buildFilterDefs(metadataFields, evals, scorecard) {
     options: [...months].sort((a,b)=>a-b).map(m => ({ value: String(m), label: MONTHS[m] })) })
   if (weeks.size) defs.push({ key: '__week__', label: 'Week', kind: 'multiselect', search: true,
     options: [...weeks].sort((a,b)=>a-b).map(w => ({ value: String(w), label: 'Week ' + w })) })
-
-  // Date range picker on the date field
   defs.push({ key: '__daterange__', label: 'Date range', kind: 'daterange' })
-
-  // One filter per metadata field, by type
   for (const f of metadataFields) {
     if (f.field_type === 'date') {
-      // additional date fields get their own range picker (not the primary one already covered)
       const isPrimary = (scorecard.type === 'dsat' && f.label === 'Communication Date')
       if (!isPrimary) defs.push({ key: 'meta:' + f.label, label: f.label, kind: 'daterange', metaLabel: f.label })
       continue
     }
-    // dropdown, text, number → multiselect of distinct present values, with search
     const present = [...new Set(evals.map(e => getMetaValue(e, f.label)).filter(v => v != null && v !== ''))].sort()
     if (present.length) {
       defs.push({ key: 'meta:' + f.label, label: f.label, kind: 'multiselect', search: true, metaLabel: f.label,
@@ -233,12 +260,13 @@ function DateRangeFilter({ def, selected, onChange }) {
   )
 }
 
-/* ===================== chart ===================== */
+/* ===================== charts ===================== */
 function cssVar(name, fb) {
   if (typeof window === 'undefined') return fb
   const v = getComputedStyle(document.documentElement).getPropertyValue(name)
   return v?.trim() || fb
 }
+
 function WowComboChart({ data, scorecard }) {
   const isDsat = scorecard.type === 'dsat'
   const rateName = isDsat ? 'Controllability %' : 'Quality Score %'
@@ -267,10 +295,99 @@ function WowComboChart({ data, scorecard }) {
   )
 }
 
+function AgentBarChart({ data, scorecard }) {
+  const isDsat = scorecard.type === 'dsat'
+  const metricName = isDsat ? 'Controllability %' : 'Quality Score %'
+  const accent = cssVar('--accent','#3b82f6')
+  const grid = cssVar('--border','#1e293b')
+  const textSec = cssVar('--text-secondary','#94a3b8')
+  const surface = cssVar('--bg-surface','#1a2235')
+
+  if (!data.length) return (
+    <div style={{ height:220, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--text-tertiary)', fontSize:13 }}>
+      No agent data matches the current filters.
+    </div>
+  )
+
+  // Dynamic height: at least 260, more if many agents
+  const chartHeight = Math.max(260, data.length * 40)
+
+  return (
+    <ResponsiveContainer width="100%" height={chartHeight}>
+      <BarChart data={data} margin={{ top:10, right:16, bottom: data.length > 6 ? 80 : 48, left:-10 }}>
+        <CartesianGrid stroke={grid} strokeDasharray="3 3" vertical={false} />
+        <XAxis
+          dataKey="agent"
+          stroke={textSec}
+          fontSize={11}
+          tickLine={false}
+          angle={-45}
+          textAnchor="end"
+          interval={0}
+        />
+        <YAxis
+          stroke={textSec}
+          fontSize={12}
+          domain={[0, 100]}
+          tickLine={false}
+          axisLine={false}
+          unit="%"
+          width={44}
+        />
+        <Tooltip
+          contentStyle={{ background:surface, border:'1px solid '+grid, borderRadius:8, fontSize:12 }}
+          labelStyle={{ color:'var(--text-primary)' }}
+          formatter={(v, n) => [v + '%', metricName]}
+          labelFormatter={l => l}
+        />
+        <Bar dataKey="value" name={metricName} fill={accent} radius={[3,3,0,0]} barSize={28} />
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+/* ===================== add widget panel ===================== */
+function AddWidgetPanel({ scorecard, existingWidgets, onAdd, onClose }) {
+  const catalog = WIDGET_CATALOG[scorecard.type] || []
+  // Filter out widgets already on the dashboard (match by widget_type + title)
+  const available = catalog.filter(c =>
+    !existingWidgets.some(w => w.widget_type === c.widget_type && w.title === c.title)
+  )
+
+  return (
+    <div className="card" style={{ marginBottom:20, border:'1px solid var(--accent)', padding:'16px 18px' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+        <span style={{ fontSize:13, fontWeight:600, color:'var(--text-primary)' }}>Add widget</span>
+        <button className="btn btn-ghost btn-sm" onClick={onClose}
+          style={{ color:'var(--text-secondary)', fontSize:18, lineHeight:1, padding:'0 6px' }}>✕</button>
+      </div>
+      {available.length === 0 ? (
+        <p style={{ fontSize:13, color:'var(--text-secondary)', margin:0 }}>All available widgets are already on this dashboard.</p>
+      ) : (
+        <div style={{ display:'flex', flexWrap:'wrap', gap:10 }}>
+          {available.map((item, i) => (
+            <button key={i} className="btn btn-secondary"
+              style={{ fontSize:13, display:'flex', alignItems:'center', gap:8 }}
+              onClick={() => onAdd(item)}>
+              <span style={{ fontSize:15 }}>
+                {item.widget_type === 'stat_card' ? '🔢' : item.widget_type === 'bar_chart' ? '📊' : '📈'}
+              </span>
+              {item.title}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ===================== main ===================== */
 export default function ScorecardDashboard() {
   const { region, type, scorecardId } = useParams()
   const navigate = useNavigate()
+  const { profile } = useAuth()
+  const canEdit = ['admin', 'owner'].includes(profile?.role)
+
   const [scorecard, setScorecard] = useState(null)
   const [metadataFields, setMetadataFields] = useState([])
   const [widgets, setWidgets] = useState([])
@@ -278,11 +395,14 @@ export default function ScorecardDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filterState, setFilterState] = useState({})
+  const [editMode, setEditMode] = useState(false)
+  const [showAddPanel, setShowAddPanel] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => { load() }, [scorecardId])
 
   const load = async () => {
-    setLoading(true); setError(null); setFilterState({})
+    setLoading(true); setError(null); setFilterState({}); setEditMode(false); setShowAddPanel(false)
     try {
       const { data: sc, error: scErr } = await supabase
         .from('scorecards').select('id, name, type, pass_threshold').eq('id', scorecardId).single()
@@ -306,16 +426,95 @@ export default function ScorecardDashboard() {
     () => scorecard ? applyFilters(evals, filterDefs, filterState, scorecard) : [],
     [evals, filterDefs, filterState, scorecard]
   )
+  const weeklyData = useMemo(() => scorecard ? buildWeeklySeries(filteredEvals, scorecard) : [], [filteredEvals, scorecard])
+  const agentData  = useMemo(() => scorecard ? buildAgentSeries(filteredEvals, scorecard) : [],  [filteredEvals, scorecard])
+
+  const handleAddWidget = async (catalogItem) => {
+    setSaving(true)
+    try {
+      const nextPos = widgets.length ? Math.max(...widgets.map(w => w.position)) + 1 : 0
+      const { data, error: insErr } = await supabase.from('dashboard_widgets').insert({
+        scorecard_id: scorecardId,
+        widget_type: catalogItem.widget_type,
+        title: catalogItem.title,
+        config: catalogItem.config,
+        position: nextPos,
+      }).select().single()
+      if (insErr) throw insErr
+      setWidgets(ws => [...ws, data])
+      setShowAddPanel(false)
+    } catch (e) { alert('Failed to add widget: ' + e.message) } finally { setSaving(false) }
+  }
+
+  const handleRemoveWidget = async (widgetId) => {
+    if (!confirm('Remove this widget from the dashboard?')) return
+    setSaving(true)
+    try {
+      const { error: delErr } = await supabase.from('dashboard_widgets').delete().eq('id', widgetId)
+      if (delErr) throw delErr
+      setWidgets(ws => ws.filter(w => w.id !== widgetId))
+    } catch (e) { alert('Failed to remove widget: ' + e.message) } finally { setSaving(false) }
+  }
+
+  const renderWidget = (w) => {
+    const isEditing = editMode && canEdit
+    const removeBtn = isEditing ? (
+      <button
+        onClick={() => handleRemoveWidget(w.id)}
+        disabled={saving}
+        style={{
+          position:'absolute', top:10, right:10,
+          background:'var(--danger)', color:'#fff',
+          border:'none', borderRadius:6,
+          width:26, height:26, display:'flex', alignItems:'center', justifyContent:'center',
+          cursor:'pointer', fontSize:14, lineHeight:1, zIndex:10,
+          opacity: saving ? 0.5 : 1,
+        }}
+        title="Remove widget">✕</button>
+    ) : null
+
+    if (w.widget_type === 'stat_card') {
+      const r = computeMeasure(w.config?.measure, filteredEvals, scorecard)
+      return (
+        <div key={w.id} className="stat-card" style={{ position:'relative' }}>
+          {removeBtn}
+          <div className="stat-label">{w.title}</div>
+          <div className="stat-value">{r.display}</div>
+          {r.detail && <div className="stat-sub">{r.detail}</div>}
+        </div>
+      )
+    }
+
+    if (w.widget_type === 'line_chart') {
+      return (
+        <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
+          {removeBtn}
+          <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
+          <WowComboChart data={weeklyData} scorecard={scorecard} />
+        </div>
+      )
+    }
+
+    if (w.widget_type === 'bar_chart') {
+      return (
+        <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
+          {removeBtn}
+          <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
+          <AgentBarChart data={agentData} scorecard={scorecard} />
+        </div>
+      )
+    }
+
+    return null
+  }
 
   if (loading) return <div className="page"><div className="loader-row"><div className="spinner" /></div></div>
   if (error) return <div className="page"><div className="card" style={{ color:'var(--danger)' }}>Failed to load: {error}</div></div>
 
   const statCards = widgets.filter(w => w.widget_type === 'stat_card')
-  const charts = widgets.filter(w => w.widget_type === 'line_chart')
-  const weeklyData = buildWeeklySeries(filteredEvals, scorecard)
+  const charts    = widgets.filter(w => w.widget_type !== 'stat_card')
   const anyActive = Object.values(filterState).some(v =>
     Array.isArray(v) ? v.length : (v && (v.from || v.to)))
-
   const setFilter = (key, val) => setFilterState(s => ({ ...s, [key]: val }))
 
   return (
@@ -330,7 +529,41 @@ export default function ScorecardDashboard() {
             {anyActive ? ' of ' + evals.length : ''} evaluation{filteredEvals.length === 1 ? '' : 's'}
           </p>
         </div>
+        {canEdit && (
+          <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+            {editMode && (
+              <button className="btn btn-secondary" disabled={saving}
+                onClick={() => { setShowAddPanel(v => !v) }}>
+                {showAddPanel ? 'Cancel' : '+ Add widget'}
+              </button>
+            )}
+            <button
+              className={editMode ? 'btn btn-primary' : 'btn btn-secondary'}
+              disabled={saving}
+              onClick={() => { setEditMode(v => !v); setShowAddPanel(false) }}>
+              {editMode ? 'Done editing' : 'Edit dashboard'}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Add widget panel */}
+      {editMode && showAddPanel && (
+        <AddWidgetPanel
+          scorecard={scorecard}
+          existingWidgets={widgets}
+          onAdd={handleAddWidget}
+          onClose={() => setShowAddPanel(false)}
+        />
+      )}
+
+      {/* Edit mode banner */}
+      {editMode && (
+        <div style={{ marginBottom:16, padding:'10px 16px', background:'var(--accent-muted, rgba(59,130,246,0.1))',
+          border:'1px solid var(--accent)', borderRadius:8, fontSize:13, color:'var(--accent)' }}>
+          Edit mode — click <strong>✕</strong> on any widget to remove it, or use <strong>+ Add widget</strong> to add new ones.
+        </div>
+      )}
 
       {/* Filter bar */}
       {filterDefs.length > 0 && (
@@ -360,25 +593,15 @@ export default function ScorecardDashboard() {
         </div>
       )}
 
-      <div className="stats-grid">
-        {statCards.map(w => {
-          const r = computeMeasure(w.config?.measure, filteredEvals, scorecard)
-          return (
-            <div key={w.id} className="stat-card">
-              <div className="stat-label">{w.title}</div>
-              <div className="stat-value">{r.display}</div>
-              {r.detail && <div className="stat-sub">{r.detail}</div>}
-            </div>
-          )
-        })}
-      </div>
-
-      {charts.map(w => (
-        <div key={w.id} className="card" style={{ marginBottom:16 }}>
-          <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
-          <WowComboChart data={weeklyData} scorecard={scorecard} />
+      {/* Stat cards */}
+      {statCards.length > 0 && (
+        <div className="stats-grid" style={{ position:'relative' }}>
+          {statCards.map(w => renderWidget(w))}
         </div>
-      ))}
+      )}
+
+      {/* Chart widgets */}
+      {charts.map(w => renderWidget(w))}
     </div>
   )
 }
