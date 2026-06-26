@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase'
 import Navbar from './components/Navbar'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import DashboardHome from './pages/DashboardHome'
 import Evaluations from './pages/Evaluations'
 import Admin from './pages/Admin'
 import Scorecards from './pages/Scorecards'
@@ -88,7 +89,10 @@ function AppShell({ user, profile, logout, fetchProfile }) {
         <main className="main-content">
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/dashboard" element={<DashboardHome />} />
+            <Route path="/dashboard/:region" element={<DashboardHome />} />
+            <Route path="/dashboard/:region/:type" element={<DashboardHome />} />
+            <Route path="/dashboard/:region/:type/:scorecardId" element={<Dashboard />} />
             <Route path="/evaluations" element={<Evaluations />} />
             <Route path="/evaluations/new" element={<EvaluationForm />} />
             <Route path="/scorecards" element={<Scorecards />} />
