@@ -59,6 +59,7 @@ export default function Evaluations() {
       .from('scorecards')
       .select('id, name')
       .eq('is_published', true)
+      .eq('type', 'quality')
       .order('name')
     setScorecards(data || [])
   }
@@ -68,8 +69,9 @@ export default function Evaluations() {
     try {
       let q = supabase
         .from('evaluations')
-        .select('*, scorecards(name), users(name, email)', { count: 'exact' })
+        .select('*, scorecards!evaluations_scorecard_id_fkey(name, pass_threshold), users(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
+        .eq('evaluation_type', 'quality')
         .order('submitted_at', { ascending: false })
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
 
@@ -89,7 +91,7 @@ export default function Evaluations() {
   const openDetail = async (id) => {
     const { data: ev } = await supabase
       .from('evaluations')
-      .select('*, scorecards(name), users(name, email)')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, pass_threshold), users(name, email)')
       .eq('id', id)
       .single()
     const { data: scores } = await supabase
@@ -112,6 +114,8 @@ export default function Evaluations() {
     const { data: rows } = await supabase
       .from('evaluations')
       .select('*, scorecards(name), users(name, email)')
+      .eq('status', 'submitted')
+      .eq('evaluation_type', 'quality')
       .order('submitted_at', { ascending: false })
       .limit(10000)
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
@@ -137,6 +141,8 @@ export default function Evaluations() {
     const { data: rows } = await supabase
       .from('evaluations')
       .select('*, scorecards(name), users(name, email)')
+      .eq('status', 'submitted')
+      .eq('evaluation_type', 'quality')
       .order('submitted_at', { ascending: false })
       .limit(10000)
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
@@ -256,13 +262,13 @@ export default function Evaluations() {
                     )}
                   </td>
                   <td>
-                    <span style={{ fontWeight: 600, color: scoreColor(ev.score, ev.failed_critical) }}>
-                      {ev.failed_critical ? '0%' : `${ev.score}%`}
+                    <span style={{ fontWeight: 600, color: (ev.score >= (ev.scorecards?.pass_threshold ?? 90) ? 'var(--success)' : 'var(--danger)') }}>
+                      {`${ev.score}%`}
                     </span>
                   </td>
                   <td>
-                    <span className={`badge ${ev.failed_critical || ev.score < 80 ? 'badge-fail' : 'badge-pass'}`}>
-                      {ev.failed_critical || ev.score < 80 ? 'FAIL' : 'PASS'}
+                    <span className={`badge ${ev.score >= (ev.scorecards?.pass_threshold ?? 90) ? 'badge-pass' : 'badge-fail'}`}>
+                      {ev.score >= (ev.scorecards?.pass_threshold ?? 90) ? 'PASS' : 'FAIL'}
                     </span>
                   </td>
                   <td>
@@ -421,6 +427,22 @@ export default function Evaluations() {
 
               <hr />
 
+              {/* Overall comment */}
+              {detail.overall_comment && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Overall Comment
+                  </div>
+                  <div style={{
+                    fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)',
+                    background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                    borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap'
+                  }}>
+                    {detail.overall_comment}
+                  </div>
+                </div>
+              )}
+
               {/* Final score */}
               <div className="detail-total">
                 <span style={{ fontSize: 16 }}>
@@ -429,8 +451,8 @@ export default function Evaluations() {
                     {detail.failed_critical ? '0%' : `${detail.score}%`}
                   </b>
                 </span>
-                <span className={`badge ${detail.failed_critical || detail.score < 80 ? 'badge-fail' : 'badge-pass'}`}>
-                  {detail.failed_critical || detail.score < 80 ? 'FAIL' : 'PASS'}
+                <span className={`badge ${detail.score >= (detail.scorecards?.pass_threshold ?? 90) ? 'badge-pass' : 'badge-fail'}`}>
+                  {detail.score >= (detail.scorecards?.pass_threshold ?? 90) ? 'PASS' : 'FAIL'}
                 </span>
               </div>
               {detail.failed_critical && (

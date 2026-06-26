@@ -946,8 +946,9 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
               <div className="form-field" style={{ flex: 1 }}>
                 <label>Weight</label>
                 <input type="number" className="input" min={0} step={0.5}
-                  value={question.weight} disabled={!question.is_weighted}
-                  onChange={e => onUpdate(question.id, { weight: parseFloat(e.target.value) || 0 })} />
+                  value={question.weight ?? ''} disabled={!question.is_weighted}
+                  onChange={e => onUpdate(question.id, { weight: e.target.value === '' ? '' : parseFloat(e.target.value) })}
+                  onBlur={e => onUpdate(question.id, { weight: e.target.value === '' ? 0 : parseFloat(e.target.value) || 0 })} />
               </div>
             </div>
             <div className="form-row" style={{ marginTop: 12 }}>
