@@ -11,6 +11,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
+const REGIONS = ['Brazil', 'LATAM', 'EMEA']
+
 export default function ScorecardBuilder() {
   const { id } = useParams()
   const { profile, unsavedChanges, setUnsavedChanges, setShowNavModal, setPendingNavPath, safeNavigate } = useAuth()
@@ -30,6 +32,7 @@ export default function ScorecardBuilder() {
   const [pendingSave, setPendingSave] = useState(false)
   const [loading, setLoading] = useState(true)
   const [activeQuestion, setActiveQuestion] = useState(null)
+  const [regions, setRegions] = useState([])
 
   const sensors = useSensors(useSensor(PointerSensor, {
     activationConstraint: { distance: 5 }
@@ -110,6 +113,7 @@ export default function ScorecardBuilder() {
       supabase.from('scorecard_questions').select('*').eq('scorecard_id', id).order('position'),
     ])
     setScorecard(sc.data)
+    setRegions(sc.data?.regions || [])
     setMetadata(meta.data || [])
     setGroups(grp.data || [])
     setQuestions(qs.data || [])
@@ -166,6 +170,7 @@ export default function ScorecardBuilder() {
         name: scorecard.name,
         description: scorecard.description,
         pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
+        regions: regions,
         updated_at: new Date().toISOString()
       }).eq('id', id)
 
@@ -676,11 +681,44 @@ export default function ScorecardBuilder() {
               </span>
             </div>
           )}
+          <div className="form-field" style={{ marginBottom: 16 }}>
+            <label>Regions</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {REGIONS.map(r => {
+                const active = regions.includes(r)
+                return (
+                  <button
+                    key={r}
+                    onClick={() => {
+                      const next = active ? regions.filter(x => x !== r) : [...regions, r]
+                      setRegions(next)
+                      markChanged()
+                    }}
+                    style={{
+                      padding: '6px 16px', borderRadius: 20, fontSize: 13,
+                      border: '1px solid', cursor: 'pointer',
+                      borderColor: active ? 'var(--accent)' : 'var(--border)',
+                      background: active ? 'var(--accent)' : 'transparent',
+                      color: active ? '#fff' : 'var(--text-secondary)',
+                      fontWeight: active ? 600 : 400,
+                      transition: 'all .15s',
+                    }}>
+                    {r}
+                  </button>
+                )
+              })}
+            </div>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6, display: 'block' }}>
+              Select which regions this scorecard appears in on the dashboard.
+            </span>
+          </div>
+
           {!isPublished && (
             <button className="btn btn-primary" onClick={async () => {
               const { error } = await supabase.from('scorecards')
                 .update({ name: scorecard.name, description: scorecard.description,
                   pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
+                  regions: regions,
                   updated_at: new Date().toISOString() })
                 .eq('id', id)
               if (error) return flash(error.message, false)

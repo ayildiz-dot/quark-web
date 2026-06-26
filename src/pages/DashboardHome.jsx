@@ -22,9 +22,9 @@ const RegionMap = ({ which }) => {
 }
 
 const REGIONS = [
-  { key: 'brazil', label: 'Brazil', sub: 'BR operations', map: 'brazil' },
-  { key: 'latam-on', label: 'LATAM + ON', sub: 'Latin America & Ontario', map: 'latam_on' },
-  { key: 'emea', label: 'EMEA', sub: 'Europe, Middle East & Africa', map: 'eur_afr' },
+  { key: 'brazil', label: 'Brazil', sub: 'BR operations', map: 'brazil', dbValue: 'Brazil' },
+  { key: 'latam-on', label: 'LATAM + ON', sub: 'Latin America & Ontario', map: 'latam_on', dbValue: 'LATAM' },
+  { key: 'emea', label: 'EMEA', sub: 'Europe, Middle East & Africa', map: 'eur_afr', dbValue: 'EMEA' },
 ]
 
 function useLift() {
@@ -149,16 +149,18 @@ function ScorecardPicker() {
   const lift = useLift()
   const [scorecards, setScorecards] = useState([])
   const [loading, setLoading] = useState(true)
-  const regionMeta = REGIONS.find(r => r.key === region)
-
   useEffect(() => {
     (async () => {
-      const { data } = await supabase
+      const regionMeta = REGIONS.find(r => r.key === region)
+      const dbRegion = regionMeta?.dbValue
+      let query = supabase
         .from('scorecards')
-        .select('id, name, description, is_published')
+        .select('id, name, description, is_published, regions')
         .eq('type', type)
         .eq('is_published', true)
         .order('name')
+      if (dbRegion) query = query.contains('regions', [dbRegion])
+      const { data } = await query
       setScorecards(data || [])
       setLoading(false)
     })()
