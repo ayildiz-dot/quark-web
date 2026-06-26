@@ -101,16 +101,16 @@ function buildAgentSeries(evals, scorecard) {
 // All possible widget types, keyed by scorecard type
 const WIDGET_CATALOG = {
   quality: [
-    { widget_type: 'stat_card', title: 'Avg Quality Score', config: { measure: 'avg_quality_score' } },
-    { widget_type: 'stat_card', title: 'Evaluations',       config: { measure: 'eval_count' } },
-    { widget_type: 'line_chart', title: 'Quality Score over Time', config: {} },
-    { widget_type: 'bar_chart',  title: 'Quality Score by Agent',  config: { measure: 'avg_quality_score' } },
+    { widget_type: 'stat_card',  title: 'Overall Quality Score',        config: { measure: 'avg_quality_score' } },
+    { widget_type: 'stat_card',  title: 'Total Evaluations',            config: { measure: 'eval_count' } },
+    { widget_type: 'line_chart', title: 'Quality — Week over Week', config: {} },
+    { widget_type: 'bar_chart',  title: 'Quality Score by Agent',       config: { measure: 'avg_quality_score' } },
   ],
   dsat: [
-    { widget_type: 'stat_card', title: 'Controllability Rate', config: { measure: 'controllability_rate' } },
-    { widget_type: 'stat_card', title: 'Evaluations',          config: { measure: 'eval_count' } },
-    { widget_type: 'line_chart', title: 'Controllability over Time', config: {} },
-    { widget_type: 'bar_chart',  title: 'Controllability by Agent',  config: { measure: 'controllability_rate' } },
+    { widget_type: 'stat_card',  title: 'Controllability Rate',              config: { measure: 'controllability_rate' } },
+    { widget_type: 'stat_card',  title: 'Total DSATs Evaluated',             config: { measure: 'eval_count' } },
+    { widget_type: 'line_chart', title: 'Controllability — Week over Week', config: {} },
+    { widget_type: 'bar_chart',  title: 'Controllability by Agent',          config: { measure: 'controllability_rate' } },
   ],
 }
 
