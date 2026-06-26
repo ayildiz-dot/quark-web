@@ -6,6 +6,15 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, BarChart
 } from 'recharts'
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  DragOverlay
+} from '@dnd-kit/core'
+import {
+  SortableContext, useSortable, horizontalListSortingStrategy,
+  verticalListSortingStrategy, arrayMove
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 /* ===================== date helpers ===================== */
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -388,6 +397,23 @@ function AddWidgetPanel({ scorecard, existingWidgets, onAdd, onClose }) {
   )
 }
 
+/* ===================== sortable widget wrapper ===================== */
+function SortableWidget({ id, editMode, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    cursor: editMode ? 'grab' : 'default',
+    position: 'relative',
+  }
+  return (
+    <div ref={setNodeRef} style={style} {...(editMode ? { ...attributes, ...listeners } : {})}>
+      {children}
+    </div>
+  )
+}
+
 /* ===================== main ===================== */
 export default function ScorecardDashboard() {
   const { region, type, scorecardId } = useParams()
@@ -405,6 +431,8 @@ export default function ScorecardDashboard() {
   const [editMode, setEditMode] = useState(false)
   const [showAddPanel, setShowAddPanel] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [activeId, setActiveId] = useState(null)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
 
   useEffect(() => { load() }, [scorecardId])
 
@@ -461,6 +489,36 @@ export default function ScorecardDashboard() {
       if (delErr) throw delErr
       setWidgets(ws => ws.filter(w => w.id !== widgetId))
     } catch (e) { alert('Failed to remove widget: ' + e.message) } finally { setSaving(false) }
+  }
+
+  const handleDragEnd = async (event, zone) => {
+    const { active, over } = event
+    setActiveId(null)
+    if (!over || active.id === over.id) return
+    const zoneWidgets = zone === 'stats'
+      ? widgets.filter(w => w.widget_type === 'stat_card')
+      : widgets.filter(w => w.widget_type !== 'stat_card')
+    const oldIndex = zoneWidgets.findIndex(w => w.id === active.id)
+    const newIndex = zoneWidgets.findIndex(w => w.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+    const reordered = arrayMove(zoneWidgets, oldIndex, newIndex)
+    // Merge back with other zone, preserving their positions
+    const otherWidgets = zone === 'stats'
+      ? widgets.filter(w => w.widget_type !== 'stat_card')
+      : widgets.filter(w => w.widget_type === 'stat_card')
+    const allWidgets = zone === 'stats'
+      ? [...reordered, ...otherWidgets]
+      : [...otherWidgets, ...reordered]
+    // Assign new positions across the full list
+    const withPositions = allWidgets.map((w, i) => ({ ...w, position: i }))
+    setWidgets(withPositions)
+    // Persist to DB
+    setSaving(true)
+    try {
+      await Promise.all(withPositions.map(w =>
+        supabase.from('dashboard_widgets').update({ position: w.position }).eq('id', w.id)
+      ))
+    } catch (e) { alert('Failed to save widget order: ' + e.message) } finally { setSaving(false) }
   }
 
   const renderWidget = (w) => {
@@ -595,15 +653,43 @@ export default function ScorecardDashboard() {
         </div>
       )}
 
-      {/* Stat cards */}
+      {/* Stat cards — sortable zone */}
       {statCards.length > 0 && (
-        <div className="stats-grid" style={{ position:'relative' }}>
-          {statCards.map(w => renderWidget(w))}
-        </div>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={e => setActiveId(e.active.id)}
+          onDragEnd={e => handleDragEnd(e, 'stats')}
+        >
+          <SortableContext items={statCards.map(w => w.id)} strategy={horizontalListSortingStrategy}>
+            <div className="stats-grid" style={{ position:'relative' }}>
+              {statCards.map(w => (
+                <SortableWidget key={w.id} id={w.id} editMode={editMode && canEdit}>
+                  {renderWidget(w)}
+                </SortableWidget>
+              ))}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
 
-      {/* Chart widgets */}
-      {charts.map(w => renderWidget(w))}
+      {/* Chart widgets — sortable zone */}
+      {charts.length > 0 && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={e => setActiveId(e.active.id)}
+          onDragEnd={e => handleDragEnd(e, 'charts')}
+        >
+          <SortableContext items={charts.map(w => w.id)} strategy={verticalListSortingStrategy}>
+            {charts.map(w => (
+              <SortableWidget key={w.id} id={w.id} editMode={editMode && canEdit}>
+                {renderWidget(w)}
+              </SortableWidget>
+            ))}
+          </SortableContext>
+        </DndContext>
+      )}
     </div>
   )
 }
