@@ -682,11 +682,13 @@ export default function EvaluationForm() {
   if (step === 'done') {
     const isDsat = selectedScorecard?.type === 'dsat'
     const { score, failed_critical } = isDsat ? { score: null, failed_critical: false } : calculateScore()
+    const passThreshold = selectedScorecard?.pass_threshold ?? 90
+    const passed = !failed_critical && score >= passThreshold
     return (
       <div className="page">
         <div style={{ maxWidth: 520, margin: '60px auto', textAlign: 'center' }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>
-            {isDsat ? '✅' : failed_critical ? '❌' : score >= 80 ? '✅' : score >= 60 ? '⚠️' : '❌'}
+            {isDsat ? '✅' : (failed_critical || !passed) ? '❌' : '✅'}
           </div>
           <h1 style={{ marginBottom: 8 }}>Evaluation Submitted</h1>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>{selectedScorecard.name}</p>
@@ -695,9 +697,17 @@ export default function EvaluationForm() {
               <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Final Score</div>
               <div style={{
                 fontSize: 48, fontWeight: 700,
-                color: failed_critical ? 'var(--danger)' : score >= 80 ? 'var(--success)' : score >= 60 ? '#f59e0b' : 'var(--danger)'
+                color: failed_critical ? 'var(--danger)' : passed ? 'var(--success)' : 'var(--danger)'
               }}>
                 {failed_critical ? '0%' : `${score}%`}
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <span className={`badge ${passed ? 'badge-pass' : 'badge-fail'}`} style={{ fontSize: 14, padding: '4px 14px' }}>
+                  {passed ? 'PASS' : 'FAIL'}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
+                Passing score: {passThreshold}%
               </div>
               {failed_critical && (
                 <div style={{ fontSize: 13, color: 'var(--danger)', marginTop: 8 }}>
