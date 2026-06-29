@@ -84,13 +84,20 @@ export default function Evaluations() {
     if (!profile?.id) return
     setLoading(true)
     try {
+      const isAgent = profile?.role === 'viewer'
+
       let q = supabase
         .from('evaluations')
         .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
-        .eq('evaluator_id', profile.id)
         .order('submitted_at', { ascending: false })
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
+
+      if (isAgent) {
+        q = q.contains('metadata_values', [{ label: "Agent's Email", value: profile.email }])
+      } else {
+        q = q.eq('evaluator_id', profile.id)
+      }
 
       const types = activeTypes()
       if (types) q = q.in('evaluation_type', types)
@@ -139,13 +146,18 @@ export default function Evaluations() {
   // Shared: fetch evaluations + their per-question scores, then build pivoted rows.
   // Column order: metadata | all question results | all question comments | overall comment
   const buildExportData = async () => {
+    const isAgent = profile?.role === 'viewer'
     let q = supabase
       .from('evaluations')
       .select('*, scorecards(name, type), users(name, email)')
       .eq('status', 'submitted')
-      .eq('evaluator_id', profile.id)
       .order('submitted_at', { ascending: false })
       .limit(10000)
+    if (isAgent) {
+      q = q.contains('metadata_values', [{ label: "Agent's Email", value: profile.email }])
+    } else {
+      q = q.eq('evaluator_id', profile.id)
+    }
     const types = activeTypes()
     if (types) q = q.in('evaluation_type', types)
     const { data: rows } = await q
@@ -298,12 +310,13 @@ export default function Evaluations() {
       <div className="page-header">
         <div>
           <h1>Evaluations</h1>
-          <p className="page-sub">{total.toLocaleString()} of your evaluations</p>
+          <p className="page-sub">{total.toLocaleString()} {profile?.role === 'viewer' ? 'evaluations on your interactions' : 'of your evaluations'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
           <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>
-          <button
+          {profile?.role !== 'viewer' && (
+            <button
               className="btn btn-ghost"
               style={{
                 opacity: drafts.length === 0 ? 0.4 : 1,
@@ -315,6 +328,7 @@ export default function Evaluations() {
             >
               {drafts.length > 0 ? `Drafts (${drafts.length})` : 'Drafts'}
             </button>
+          )}
           {profile?.role !== 'viewer' && (
               <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
                 + New Evaluation
