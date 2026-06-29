@@ -293,7 +293,7 @@ function UsersTab({ profile, flash }) {
                   <div style={{ fontWeight: 500, fontSize: 13 }}>{u.name}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>{u.email}</div>
                 </div>
-                <div><span className={`badge badge-${u.role}`}>{u.role}</span></div>
+                <div><span className={`badge badge-${u.role}`}>{u.role === 'viewer' ? 'Agent' : u.role}</span></div>
                 <div>
                   <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
                     backgroundColor: u.active ? '#22c55e22' : '#ef444422',
