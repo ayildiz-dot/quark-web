@@ -85,15 +85,37 @@ function UsersTab({ profile, flash }) {
     return users.filter(u => u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q))
   }, [users, search])
 
-  const toggleSelect = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const toggleAll    = () => { if (selected.size === filtered.length) setSelected(new Set()); else setSelected(new Set(filtered.map(u => u.id))) }
+  const toggleSelect  = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleAll     = () => { if (selected.size === filtered.length) setSelected(new Set()); else setSelected(new Set(filtered.map(u => u.id))) }
   const clearSelected = () => setSelected(new Set())
 
   const applyBulkRole = async () => {
     const ids = [...selected].filter(id => { const u = users.find(x => x.id === id); return u && u.id !== profile.id && !(profile.role === 'admin' && u.role === 'owner') })
     if (!ids.length) return flash('No eligible users selected.', false)
     await Promise.all(ids.map(id => supabase.from('users').update({ role: bulkRole }).eq('id', id)))
-    await loadUsers(); clearSelected(); flash(`Role updated to ${bulkRole} for ${ids.length} user(s)`)
+    await loadUsers(); flash(`Role updated to ${bulkRole} for ${ids.length} user(s)`)
+  }
+
+  // bulk governance state
+  const [bulkWs,    setBulkWs]    = useState('')
+  const [bulkHub,   setBulkHub]   = useState('')
+  const [bulkQueue, setBulkQueue] = useState('')
+  const bulkHubs   = allHubs.filter(h => h.workspace_id === bulkWs)
+  const bulkQueues = allQueues.filter(q => q.hub_id === bulkHub)
+
+  const applyBulkQueue = async () => {
+    if (!bulkQueue) return flash('Please select a queue to assign.', false)
+    const ids = [...selected]
+    let count = 0
+    for (const userId of ids) {
+      const existing = (userQueues[userId] || []).map(x => x.queue_id)
+      if (!existing.includes(bulkQueue)) {
+        await supabase.from('user_queues').insert({ user_id: userId, queue_id: bulkQueue })
+        count++
+      }
+    }
+    await loadGovernance()
+    flash(`Queue assigned to ${count} user(s)`)
   }
 
   const ask = (message, onYes) => setConfirm({ message, onYes })
@@ -157,7 +179,7 @@ function UsersTab({ profile, flash }) {
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
         <input className="input" style={{ maxWidth: 280, height: 36 }}
           placeholder="Search by name or email…" value={search}
-          onChange={e => { setSearch(e.target.value); clearSelected() }} />
+          onChange={e => setSearch(e.target.value)} />
         {selected.size > 0 && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center',
             backgroundColor: 'var(--surface)', border: '1px solid var(--border)',
@@ -172,6 +194,33 @@ function UsersTab({ profile, flash }) {
               {profile.role === 'owner' && <option value="owner">Owner</option>}
             </select>
             <button className="btn btn-primary btn-sm" onClick={applyBulkRole}>Apply</button>
+            <span style={{ color: 'var(--border)' }}>|</span>
+            <span style={{ color: 'var(--text-secondary)' }}>Governance</span>
+            <select className="select select-sm" value={bulkWs}
+              onChange={e => { setBulkWs(e.target.value); setBulkHub(''); setBulkQueue('') }}
+              style={{ height: 28, fontSize: 12 }}>
+              <option value="">Workspace…</option>
+              {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+            </select>
+            {bulkWs && (
+              <select className="select select-sm" value={bulkHub}
+                onChange={e => { setBulkHub(e.target.value); setBulkQueue('') }}
+                style={{ height: 28, fontSize: 12 }}>
+                <option value="">Hub…</option>
+                {bulkHubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+              </select>
+            )}
+            {bulkHub && (
+              <select className="select select-sm" value={bulkQueue}
+                onChange={e => setBulkQueue(e.target.value)}
+                style={{ height: 28, fontSize: 12 }}>
+                <option value="">Queue…</option>
+                {bulkQueues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+              </select>
+            )}
+            {bulkQueue && (
+              <button className="btn btn-primary btn-sm" onClick={applyBulkQueue}>Assign</button>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={clearSelected}>Clear</button>
           </div>
         )}
@@ -188,7 +237,7 @@ function UsersTab({ profile, flash }) {
           <div>Name / Email</div>
           <div>Role</div>
           <div>Status</div>
-          <div>Queues</div>
+          <div>Governance</div>
           <div />
         </div>
 
@@ -234,7 +283,7 @@ function UsersTab({ profile, flash }) {
                     : queues.map(q => (
                       <span key={q.queue_id} style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
                         backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44', whiteSpace: 'nowrap' }}>
-                        {q.queue_name}
+                        {q.workspace_name} › {q.hub_name} › {q.queue_name}
                       </span>
                     ))
                   }
@@ -284,7 +333,7 @@ function UsersTab({ profile, flash }) {
 
                   <div style={{ padding: '20px 24px' }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)',
-                      textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Queue Assignments</div>
+                      textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14 }}>Governance</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
                       {queues.length === 0
                         ? <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not assigned to any queue</span>
