@@ -488,9 +488,16 @@ export default function ScorecardDashboard() {
       const [{ data: mf }, { data: w }, { data: ev }] = await Promise.all([
         supabase.from('scorecard_metadata_fields').select('*').eq('scorecard_id', scorecardId).order('position'),
         supabase.from('dashboard_widgets').select('*').eq('scorecard_id', scorecardId).order('position'),
-        supabase.from('evaluations')
-          .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version')
-          .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type),
+        (() => {
+          const isAgent = ['viewer'].includes(profile?.role)
+          let evQ = supabase.from('evaluations')
+            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version')
+            .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type)
+          if (isAgent) {
+            evQ = evQ.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
+          }
+          return evQ
+        })(),
       ])
       setScorecard(sc); setMetadataFields(mf || []); setWidgets(w || []); setEvals(ev || [])
     } catch (e) { setError(e.message) } finally { setLoading(false) }

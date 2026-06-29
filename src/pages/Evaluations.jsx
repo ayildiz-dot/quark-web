@@ -94,7 +94,7 @@ export default function Evaluations() {
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
 
       if (isAgent) {
-        q = q.contains('metadata_values', [{ label: "Agent's Email", value: profile.email }])
+        q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
       } else {
         q = q.eq('evaluator_id', profile.id)
       }
@@ -154,7 +154,7 @@ export default function Evaluations() {
       .order('submitted_at', { ascending: false })
       .limit(10000)
     if (isAgent) {
-      q = q.contains('metadata_values', [{ label: "Agent's Email", value: profile.email }])
+      q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
     } else {
       q = q.eq('evaluator_id', profile.id)
     }
