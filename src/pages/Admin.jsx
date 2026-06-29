@@ -2,6 +2,326 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
+// ─── Governance helpers ───────────────────────────────────────────────────────
+
+function GovernanceTab({ flash }) {
+  const [workspaces, setWorkspaces] = useState([])
+  const [expanded,   setExpanded]   = useState({})
+  const [expandedH,  setExpandedH]  = useState({})
+  const [adding, setAdding] = useState(null)
+  const [addName, setAddName] = useState('')
+  const [editing, setEditing] = useState(null)
+  const [editName, setEditName] = useState('')
+
+  useEffect(() => { loadAll() }, [])
+
+  const loadAll = async () => {
+    const { data: ws } = await supabase
+      .from('workspaces')
+      .select('*, hubs(*, queues(*))')
+      .order('position')
+    setWorkspaces(ws || [])
+  }
+
+  const toggleWs = async (ws) => {
+    await supabase.from('workspaces').update({ is_active: !ws.is_active }).eq('id', ws.id)
+    await loadAll()
+    flash(`Workspace ${ws.is_active ? 'deactivated' : 'activated'}`)
+  }
+  const toggleHub = async (hub) => {
+    await supabase.from('hubs').update({ is_active: !hub.is_active }).eq('id', hub.id)
+    await loadAll()
+    flash(`Hub ${hub.is_active ? 'deactivated' : 'activated'}`)
+  }
+  const toggleQueue = async (q) => {
+    await supabase.from('queues').update({ is_active: !q.is_active }).eq('id', q.id)
+    await loadAll()
+    flash(`Queue ${q.is_active ? 'deactivated' : 'activated'}`)
+  }
+
+  const startAdd = (type, parentId = null) => { setAdding({ type, parentId }); setAddName('') }
+  const cancelAdd = () => { setAdding(null); setAddName('') }
+
+  const confirmAdd = async () => {
+    const name = addName.trim()
+    if (!name) return flash('Name is required.', false)
+    if (adding.type === 'workspace') {
+      const { error } = await supabase.from('workspaces').insert({ name, is_active: true, position: workspaces.length })
+      if (error) return flash(error.message, false)
+    } else if (adding.type === 'hub') {
+      const ws = workspaces.find(w => w.id === adding.parentId)
+      const { error } = await supabase.from('hubs').insert({ name, workspace_id: adding.parentId, is_active: true, position: (ws?.hubs?.length || 0) })
+      if (error) return flash(error.message, false)
+    } else if (adding.type === 'queue') {
+      let hubLen = 0
+      for (const ws of workspaces) {
+        const hub = ws.hubs?.find(h => h.id === adding.parentId)
+        if (hub) { hubLen = hub.queues?.length || 0; break }
+      }
+      const { error } = await supabase.from('queues').insert({ name, hub_id: adding.parentId, is_active: true, position: hubLen })
+      if (error) return flash(error.message, false)
+    }
+    cancelAdd()
+    await loadAll()
+    flash('Created successfully')
+  }
+
+  const startEdit = (id, level, name) => { setEditing({ id, level }); setEditName(name) }
+  const cancelEdit = () => { setEditing(null); setEditName('') }
+
+  const confirmEdit = async () => {
+    const name = editName.trim()
+    if (!name) return flash('Name is required.', false)
+    const table = editing.level === 'workspace' ? 'workspaces' : editing.level === 'hub' ? 'hubs' : 'queues'
+    const { error } = await supabase.from(table).update({ name }).eq('id', editing.id)
+    if (error) return flash(error.message, false)
+    cancelEdit()
+    await loadAll()
+    flash('Renamed successfully')
+  }
+
+  const isAdding = (type, parentId) => adding?.type === type && adding?.parentId === parentId
+  const isEditing = (id) => editing?.id === id
+
+  const AddInput = ({ placeholder }) => (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+      <input
+        autoFocus
+        className="input"
+        style={{ maxWidth: 260, height: 34, fontSize: 13 }}
+        placeholder={placeholder}
+        value={addName}
+        onChange={e => setAddName(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') confirmAdd(); if (e.key === 'Escape') cancelAdd() }}
+      />
+      <button className="btn btn-primary btn-sm" onClick={confirmAdd}>Save</button>
+      <button className="btn btn-ghost btn-sm" onClick={cancelAdd}>Cancel</button>
+    </div>
+  )
+
+  const EditInput = ({ placeholder }) => (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <input
+        autoFocus
+        className="input"
+        style={{ maxWidth: 260, height: 34, fontSize: 13 }}
+        placeholder={placeholder}
+        value={editName}
+        onChange={e => setEditName(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') confirmEdit(); if (e.key === 'Escape') cancelEdit() }}
+      />
+      <button className="btn btn-primary btn-sm" onClick={confirmEdit}>Save</button>
+      <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>Cancel</button>
+    </div>
+  )
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
+            Manage workspaces, hubs, and queues
+          </div>
+        </div>
+        <button className="btn btn-primary btn-sm" onClick={() => startAdd('workspace')}>
+          + Add Workspace
+        </button>
+      </div>
+
+      {isAdding('workspace', null) && (
+        <div className="card" style={{ marginBottom: 12, padding: '12px 16px' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>New Workspace</div>
+          <AddInput placeholder="e.g. Concentrix" />
+        </div>
+      )}
+
+      {workspaces.length === 0 && !adding && (
+        <div style={{ color: 'var(--text-secondary)', fontSize: 13, padding: '20px 0' }}>
+          No workspaces yet. Add one above.
+        </div>
+      )}
+
+      {workspaces.map(ws => {
+        const wsExpanded = expanded[ws.id] ?? true
+        const hubs = ws.hubs || []
+
+        return (
+          <div key={ws.id} className="card" style={{ marginBottom: 12, padding: 0, overflow: 'hidden' }}>
+
+            {/* Workspace row */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '12px 16px',
+              borderBottom: wsExpanded && (hubs.length > 0 || isAdding('hub', ws.id)) ? '1px solid var(--border)' : 'none',
+              backgroundColor: 'var(--surface)'
+            }}>
+              <button
+                onClick={() => setExpanded(e => ({ ...e, [ws.id]: !wsExpanded }))}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  color: 'var(--text-secondary)', fontSize: 13, width: 20, flexShrink: 0 }}>
+                {wsExpanded ? '▾' : '▸'}
+              </button>
+
+              {isEditing(ws.id) ? (
+                <div style={{ flex: 1 }}><EditInput placeholder="Workspace name" /></div>
+              ) : (
+                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{ws.name}</span>
+                  <span style={{
+                    fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+                    backgroundColor: ws.is_active ? '#22c55e22' : '#64748b22',
+                    color: ws.is_active ? '#22c55e' : '#94a3b8'
+                  }}>
+                    {ws.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+              )}
+
+              {!isEditing(ws.id) && (
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ws.id, 'workspace', ws.name)}>Rename</button>
+                  <button
+                    className={`btn btn-sm ${ws.is_active ? 'btn-danger' : 'btn-success'}`}
+                    style={{ fontSize: 12 }}
+                    onClick={() => toggleWs(ws)}>
+                    {ws.is_active ? 'Deactivate' : 'Activate'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Hubs */}
+            {wsExpanded && (
+              <div style={{ backgroundColor: 'var(--bg)' }}>
+
+                {isAdding('hub', ws.id) && (
+                  <div style={{ padding: '10px 16px 10px 40px', borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Hub</div>
+                    <AddInput placeholder="e.g. Concentrix Romania" />
+                  </div>
+                )}
+
+                {hubs.map((hub, hi) => {
+                  const hubExpanded = expandedH[hub.id] ?? true
+                  const queues = hub.queues || []
+                  const isLast = hi === hubs.length - 1
+
+                  return (
+                    <div key={hub.id}>
+                      {/* Hub row */}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '10px 16px 10px 40px',
+                        borderBottom: (hubExpanded && queues.length > 0) || !isLast || isAdding('queue', hub.id)
+                          ? '1px solid var(--border)' : 'none',
+                      }}>
+                        <button
+                          onClick={() => setExpandedH(e => ({ ...e, [hub.id]: !hubExpanded }))}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                            color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
+                          {hubExpanded ? '▾' : '▸'}
+                        </button>
+
+                        {isEditing(hub.id) ? (
+                          <div style={{ flex: 1 }}><EditInput placeholder="Hub name" /></div>
+                        ) : (
+                          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 500 }}>{hub.name}</span>
+                            <span style={{
+                              fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+                              backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22',
+                              color: hub.is_active ? '#22c55e' : '#94a3b8'
+                            }}>
+                              {hub.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        )}
+
+                        {!isEditing(hub.id) && (
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
+                            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
+                            <button
+                              className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`}
+                              style={{ fontSize: 12 }}
+                              onClick={() => toggleHub(hub)}>
+                              {hub.is_active ? 'Deactivate' : 'Activate'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Queues */}
+                      {hubExpanded && (
+                        <div>
+                          {isAdding('queue', hub.id) && (
+                            <div style={{ padding: '8px 16px 8px 64px', borderBottom: '1px solid var(--border)' }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Queue</div>
+                              <AddInput placeholder="e.g. Colombia Market" />
+                            </div>
+                          )}
+
+                          {queues.map((q, qi) => (
+                            <div key={q.id} style={{
+                              display: 'flex', alignItems: 'center', gap: 10,
+                              padding: '8px 16px 8px 64px',
+                              borderBottom: qi < queues.length - 1 ? '1px solid var(--border)' : 'none',
+                              backgroundColor: 'var(--surface)'
+                            }}>
+                              <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                                backgroundColor: q.is_active ? '#22c55e' : '#64748b' }} />
+
+                              {isEditing(q.id) ? (
+                                <div style={{ flex: 1 }}><EditInput placeholder="Queue name" /></div>
+                              ) : (
+                                <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
+                              )}
+
+                              {!isEditing(q.id) && (
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
+                                  <button
+                                    className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`}
+                                    style={{ fontSize: 12 }}
+                                    onClick={() => toggleQueue(q)}>
+                                    {q.is_active ? 'Deactivate' : 'Activate'}
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+
+                          {queues.length === 0 && !isAdding('queue', hub.id) && (
+                            <div style={{ padding: '8px 16px 8px 64px', fontSize: 12,
+                              color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                              No queues yet
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+
+                {hubs.length === 0 && !isAdding('hub', ws.id) && (
+                  <div style={{ padding: '10px 16px 10px 40px', fontSize: 12,
+                    color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                    No hubs yet
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ─── Main Admin page ──────────────────────────────────────────────────────────
+
 export default function Admin() {
   const { profile } = useAuth()
   const [tab,       setTab]       = useState('users')
@@ -118,7 +438,7 @@ export default function Admin() {
       <div className="page-header">
         <div>
           <h1>Admin Panel</h1>
-          <p className="page-sub">Manage users, roles and sampling requirements</p>
+          <p className="page-sub">Manage users, roles, sampling requirements and governance</p>
         </div>
       </div>
 
@@ -134,6 +454,10 @@ export default function Admin() {
         <button className={`tab ${tab === 'sampling' ? 'active' : ''}`}
           onClick={() => setTab('sampling')}>
           Sampling Requirements
+        </button>
+        <button className={`tab ${tab === 'governance' ? 'active' : ''}`}
+          onClick={() => setTab('governance')}>
+          Governance
         </button>
       </div>
 
@@ -300,6 +624,10 @@ export default function Admin() {
             </table>
           </div>
         </div>
+      )}
+
+      {tab === 'governance' && (
+        <GovernanceTab flash={flash} />
       )}
     </div>
   )
