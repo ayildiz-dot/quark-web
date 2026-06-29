@@ -80,10 +80,20 @@ function UsersTab({ profile, flash }) {
     setUserQueues(map)
   }
 
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [govFilter,  setGovFilter]  = useState('all')
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    return users.filter(u => u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q))
-  }, [users, search])
+    return users.filter(u => {
+      if (!u.name?.toLowerCase().includes(q) && !u.email?.toLowerCase().includes(q)) return false
+      if (roleFilter !== 'all' && u.role !== roleFilter) return false
+      const hasQueue = (userQueues[u.id] || []).length > 0
+      if (govFilter === 'assigned'   && !hasQueue) return false
+      if (govFilter === 'unassigned' &&  hasQueue) return false
+      return true
+    })
+  }, [users, search, roleFilter, govFilter, userQueues])
 
   const toggleSelect  = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleAll     = () => { if (selected.size === filtered.length) setSelected(new Set()); else setSelected(new Set(filtered.map(u => u.id))) }
@@ -180,6 +190,20 @@ function UsersTab({ profile, flash }) {
         <input className="input" style={{ maxWidth: 280, height: 36 }}
           placeholder="Search by name or email…" value={search}
           onChange={e => setSearch(e.target.value)} />
+        <select className="select" style={{ height: 36, fontSize: 13, minWidth: 130 }}
+          value={roleFilter} onChange={e => setRoleFilter(e.target.value)}>
+          <option value="all">All roles</option>
+          <option value="owner">Owner</option>
+          <option value="admin">Admin</option>
+          <option value="evaluator">Evaluator</option>
+          <option value="viewer">Agent</option>
+        </select>
+        <select className="select" style={{ height: 36, fontSize: 13, minWidth: 160 }}
+          value={govFilter} onChange={e => setGovFilter(e.target.value)}>
+          <option value="all">All governance</option>
+          <option value="assigned">Assigned to queue</option>
+          <option value="unassigned">Not assigned</option>
+        </select>
         {selected.size > 0 && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center',
             backgroundColor: 'var(--surface)', border: '1px solid var(--border)',
@@ -188,7 +212,7 @@ function UsersTab({ profile, flash }) {
             <span style={{ color: 'var(--border)' }}>|</span>
             <span style={{ color: 'var(--text-secondary)' }}>Change role to</span>
             <select className="select select-sm" value={bulkRole} onChange={e => setBulkRole(e.target.value)} style={{ height: 28, fontSize: 12 }}>
-              <option value="viewer">Viewer</option>
+              <option value="viewer">Agent</option>
               <option value="evaluator">Evaluator</option>
               <option value="admin">Admin</option>
               {profile.role === 'owner' && <option value="owner">Owner</option>}
@@ -309,7 +333,7 @@ function UsersTab({ profile, flash }) {
                           {profile.role === 'owner' && <option value="owner">Owner</option>}
                         </select>
                       ) : (
-                        <span className={`badge badge-${u.role}`}>{u.role}</span>
+                        <span className={`badge badge-${u.role}`}>{u.role === 'viewer' ? 'Agent' : u.role}</span>
                       )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
