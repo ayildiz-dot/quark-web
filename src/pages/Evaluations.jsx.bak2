@@ -136,9 +136,7 @@ export default function Evaluations() {
     return found?.value || '—'
   }
 
-  // Shared: fetch evaluations + their per-question scores, then build pivoted rows.
-  // Column order: metadata | all question results | all question comments | overall comment
-  const buildExportData = async () => {
+  const exportRows = async () => {
     let q = supabase
       .from('evaluations')
       .select('*, scorecards(name, type), users(name, email)')
@@ -149,100 +147,25 @@ export default function Evaluations() {
     const types = activeTypes()
     if (types) q = q.in('evaluation_type', types)
     const { data: rows } = await q
-    const evals = rows || []
-
-    // Fetch all question scores for these evaluations in one query.
-    const evalIds = evals.map(e => e.id)
-    let scoresByEval = {}
-    if (evalIds.length > 0) {
-      const { data: scoreRows } = await supabase
-        .from('evaluation_scores')
-        .select('evaluation_id, score, comment, scorecard_questions(title, position)')
-        .in('evaluation_id', evalIds)
-      for (const s of (scoreRows || [])) {
-        if (!scoresByEval[s.evaluation_id]) scoresByEval[s.evaluation_id] = []
-        scoresByEval[s.evaluation_id].push(s)
-      }
-    }
-
-    // Collect every unique question title, ordered by lowest position then alphabetically.
-    const titleOrder = {}
-    for (const evId of Object.keys(scoresByEval)) {
-      for (const s of scoresByEval[evId]) {
-        const title = s.scorecard_questions?.title
-        if (!title) continue
-        const pos = s.scorecard_questions?.position ?? 999
-        if (!(title in titleOrder) || pos < titleOrder[title]) titleOrder[title] = pos
-      }
-    }
-    const questionTitles = Object.keys(titleOrder).sort((a, b) => {
-      if (titleOrder[a] !== titleOrder[b]) return titleOrder[a] - titleOrder[b]
-      return a.localeCompare(b)
-    })
-
-    // pass -> 100%, fail -> 0%, na/other -> blank
-    const scoreToPct = (val) => {
-      if (val === 'pass') return '100%'
-      if (val === 'fail') return '0%'
-      return ''
-    }
-
-    const exportRows = evals.map(r => {
-      const isDsat = r.evaluation_type === 'dsat'
-      const myScores = scoresByEval[r.id] || []
-      const byTitle = {}
-      for (const s of myScores) {
-        const t = s.scorecard_questions?.title
-        if (t) byTitle[t] = { score: s.score, comment: s.comment }
-      }
-
-      const base = {
-        'Date':            new Date(r.submitted_at).toLocaleDateString(),
-        'Time':            new Date(r.submitted_at).toLocaleTimeString(),
-        'Evaluator':       r.users?.name || '\u2014',
-        'Scorecard':       r.scorecards?.name || '\u2014',
-        'Type':            isDsat ? 'DSAT' : 'Quality',
-        'Score':           isDsat ? '\u2014' : `${r.score}%`,
-        'Failed Critical': isDsat ? '\u2014' : (r.failed_critical ? 'Yes' : 'No'),
-        'Status':          r.status || '\u2014',
-        ...(r.metadata_values || []).reduce((acc, m) => {
-          acc[m.label] = m.value
-          return acc
-        }, {})
-      }
-
-      const resultCols = {}
-      for (const title of questionTitles) {
-        resultCols[title] = isDsat ? '' : (byTitle[title] ? scoreToPct(byTitle[title].score) : '')
-      }
-
-      const commentCols = {}
-      for (const title of questionTitles) {
-        commentCols[`${title} \u2014 Comment`] = isDsat ? '' : (byTitle[title]?.comment || '')
-      }
-
-      return {
-        ...base,
-        ...resultCols,
-        ...commentCols,
-        'Overall Comment': isDsat ? '' : (r.overall_comment || '')
-      }
-    })
-
-    // Build full header set so every column appears even if row 1 lacks some questions.
-    const headerSet = []
-    const seen = new Set()
-    for (const row of exportRows) {
-      for (const k of Object.keys(row)) {
-        if (!seen.has(k)) { seen.add(k); headerSet.push(k) }
-      }
-    }
-    return { exportRows, headerSet }
+    return rows || []
   }
 
   const exportCSV = async () => {
-    const { exportRows, headerSet } = await buildExportData()
-    const ws = XLSX.utils.json_to_sheet(exportRows, { header: headerSet })
+    const rows = await exportRows()
+    const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
+      'Date':          new Date(r.submitted_at).toLocaleDateString(),
+      'Time':          new Date(r.submitted_at).toLocaleTimeString(),
+      'Evaluator':     r.users?.name || '—',
+      'Scorecard':     r.scorecards?.name || '—',
+      'Type':          r.evaluation_type === 'dsat' ? 'DSAT' : 'Quality',
+      'Score':         r.evaluation_type === 'dsat' ? '—' : `${r.score}%`,
+      'Failed Critical': r.evaluation_type === 'dsat' ? '—' : (r.failed_critical ? 'Yes' : 'No'),
+      'Status':        r.status || '—',
+      ...(r.metadata_values || []).reduce((acc, m) => {
+        acc[m.label] = m.value
+        return acc
+      }, {})
+    })))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Evaluations')
     const buf = XLSX.write(wb, { type: 'array', bookType: 'csv' })
@@ -250,8 +173,21 @@ export default function Evaluations() {
   }
 
   const exportXLSX = async () => {
-    const { exportRows, headerSet } = await buildExportData()
-    const ws = XLSX.utils.json_to_sheet(exportRows, { header: headerSet })
+    const rows = await exportRows()
+    const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
+      'Date':          new Date(r.submitted_at).toLocaleDateString(),
+      'Time':          new Date(r.submitted_at).toLocaleTimeString(),
+      'Evaluator':     r.users?.name || '—',
+      'Scorecard':     r.scorecards?.name || '—',
+      'Type':          r.evaluation_type === 'dsat' ? 'DSAT' : 'Quality',
+      'Score':         r.evaluation_type === 'dsat' ? '—' : `${r.score}%`,
+      'Failed Critical': r.evaluation_type === 'dsat' ? '—' : (r.failed_critical ? 'Yes' : 'No'),
+      'Status':        r.status || '—',
+      ...(r.metadata_values || []).reduce((acc, m) => {
+        acc[m.label] = m.value
+        return acc
+      }, {})
+    })))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Evaluations')
     const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
