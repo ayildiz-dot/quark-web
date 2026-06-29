@@ -715,7 +715,8 @@ function GovernanceTab({ flash }) {
 
       {govPanel === 'scorecards' && <ScorecardAssignmentPanel flash={flash} />}
 
-      {govPanel === 'structure' && <div>
+      {govPanel === 'structure' && (
+      <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
@@ -844,7 +845,8 @@ function GovernanceTab({ flash }) {
         )
       })}
     </div>
-    </div>}
+    </div>
+      )}
   )
 }
 
