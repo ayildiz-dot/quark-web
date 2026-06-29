@@ -2,16 +2,37 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
-// ─── Governance helpers ───────────────────────────────────────────────────────
+// ─── Confirm Modal ────────────────────────────────────────────────────────────
+
+function ConfirmModal({ message, onYes, onNo }) {
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, backgroundColor: '#00000066',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }}>
+      <div className="card" style={{ width: 380, padding: '28px 28px 24px', textAlign: 'center' }}>
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Are you sure?</div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24 }}>{message}</div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+          <button className="btn btn-danger" style={{ minWidth: 80 }} onClick={onYes}>Yes</button>
+          <button className="btn btn-ghost" style={{ minWidth: 80 }} onClick={onNo}>No</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Governance Tab ───────────────────────────────────────────────────────────
 
 function GovernanceTab({ flash }) {
   const [workspaces, setWorkspaces] = useState([])
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
-  const [adding, setAdding] = useState(null)
-  const [addName, setAddName] = useState('')
-  const [editing, setEditing] = useState(null)
-  const [editName, setEditName] = useState('')
+  const [adding,     setAdding]     = useState(null)
+  const [addName,    setAddName]    = useState('')
+  const [editing,    setEditing]    = useState(null)
+  const [editName,   setEditName]   = useState('')
+  const [confirm,    setConfirm]    = useState(null) // { message, onYes }
 
   useEffect(() => { loadAll() }, [])
 
@@ -23,22 +44,94 @@ function GovernanceTab({ flash }) {
     setWorkspaces(ws || [])
   }
 
-  const toggleWs = async (ws) => {
-    await supabase.from('workspaces').update({ is_active: !ws.is_active }).eq('id', ws.id)
-    await loadAll()
-    flash(`Workspace ${ws.is_active ? 'deactivated' : 'activated'}`)
-  }
-  const toggleHub = async (hub) => {
-    await supabase.from('hubs').update({ is_active: !hub.is_active }).eq('id', hub.id)
-    await loadAll()
-    flash(`Hub ${hub.is_active ? 'deactivated' : 'activated'}`)
-  }
-  const toggleQueue = async (q) => {
-    await supabase.from('queues').update({ is_active: !q.is_active }).eq('id', q.id)
-    await loadAll()
-    flash(`Queue ${q.is_active ? 'deactivated' : 'activated'}`)
+  // ── Confirm helper ───────────────────────────────────────────────────────────
+  const ask = (message, onYes) => setConfirm({ message, onYes })
+  const closeConfirm = () => setConfirm(null)
+
+  // ── Toggle active ────────────────────────────────────────────────────────────
+  const toggleWs = (ws) => {
+    const action = ws.is_active ? 'deactivate' : 'activate'
+    ask(
+      ws.is_active
+        ? `This will deactivate the "${ws.name}" workspace and hide it from users.`
+        : `This will activate the "${ws.name}" workspace.`,
+      async () => {
+        closeConfirm()
+        await supabase.from('workspaces').update({ is_active: !ws.is_active }).eq('id', ws.id)
+        await loadAll()
+        flash(`Workspace ${action}d`)
+      }
+    )
   }
 
+  const toggleHub = (hub) => {
+    const action = hub.is_active ? 'deactivate' : 'activate'
+    ask(
+      hub.is_active
+        ? `This will deactivate the "${hub.name}" hub and hide it from users.`
+        : `This will activate the "${hub.name}" hub.`,
+      async () => {
+        closeConfirm()
+        await supabase.from('hubs').update({ is_active: !hub.is_active }).eq('id', hub.id)
+        await loadAll()
+        flash(`Hub ${action}d`)
+      }
+    )
+  }
+
+  const toggleQueue = (q) => {
+    const action = q.is_active ? 'deactivate' : 'activate'
+    ask(
+      q.is_active
+        ? `This will deactivate the "${q.name}" queue and hide it from users.`
+        : `This will activate the "${q.name}" queue.`,
+      async () => {
+        closeConfirm()
+        await supabase.from('queues').update({ is_active: !q.is_active }).eq('id', q.id)
+        await loadAll()
+        flash(`Queue ${action}d`)
+      }
+    )
+  }
+
+  // ── Delete ───────────────────────────────────────────────────────────────────
+  const deleteWs = (ws) => {
+    ask(
+      `Permanently delete "${ws.name}"? This will also delete all its hubs and queues. This cannot be undone.`,
+      async () => {
+        closeConfirm()
+        await supabase.from('workspaces').delete().eq('id', ws.id)
+        await loadAll()
+        flash('Workspace deleted')
+      }
+    )
+  }
+
+  const deleteHub = (hub) => {
+    ask(
+      `Permanently delete "${hub.name}"? This will also delete all its queues. This cannot be undone.`,
+      async () => {
+        closeConfirm()
+        await supabase.from('hubs').delete().eq('id', hub.id)
+        await loadAll()
+        flash('Hub deleted')
+      }
+    )
+  }
+
+  const deleteQueue = (q) => {
+    ask(
+      `Permanently delete "${q.name}"? This cannot be undone.`,
+      async () => {
+        closeConfirm()
+        await supabase.from('queues').delete().eq('id', q.id)
+        await loadAll()
+        flash('Queue deleted')
+      }
+    )
+  }
+
+  // ── Add ──────────────────────────────────────────────────────────────────────
   const startAdd = (type, parentId = null) => { setAdding({ type, parentId }); setAddName('') }
   const cancelAdd = () => { setAdding(null); setAddName('') }
 
@@ -66,6 +159,7 @@ function GovernanceTab({ flash }) {
     flash('Created successfully')
   }
 
+  // ── Edit ─────────────────────────────────────────────────────────────────────
   const startEdit = (id, level, name) => { setEditing({ id, level }); setEditName(name) }
   const cancelEdit = () => { setEditing(null); setEditName('') }
 
@@ -83,11 +177,11 @@ function GovernanceTab({ flash }) {
   const isAdding = (type, parentId) => adding?.type === type && adding?.parentId === parentId
   const isEditing = (id) => editing?.id === id
 
+  // ── Inline inputs ─────────────────────────────────────────────────────────────
   const AddInput = ({ placeholder }) => (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
       <input
-        autoFocus
-        className="input"
+        autoFocus className="input"
         style={{ maxWidth: 260, height: 34, fontSize: 13 }}
         placeholder={placeholder}
         value={addName}
@@ -102,8 +196,7 @@ function GovernanceTab({ flash }) {
   const EditInput = ({ placeholder }) => (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <input
-        autoFocus
-        className="input"
+        autoFocus className="input"
         style={{ maxWidth: 260, height: 34, fontSize: 13 }}
         placeholder={placeholder}
         value={editName}
@@ -117,6 +210,15 @@ function GovernanceTab({ flash }) {
 
   return (
     <div>
+      {confirm && (
+        <ConfirmModal
+          message={confirm.message}
+          onYes={confirm.onYes}
+          onNo={closeConfirm}
+        />
+      )}
+
+      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
@@ -188,6 +290,14 @@ function GovernanceTab({ flash }) {
                     onClick={() => toggleWs(ws)}>
                     {ws.is_active ? 'Deactivate' : 'Activate'}
                   </button>
+                  {!ws.is_active && (
+                    <button
+                      className="btn btn-sm btn-danger"
+                      style={{ fontSize: 12 }}
+                      onClick={() => deleteWs(ws)}>
+                      Delete
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -249,6 +359,14 @@ function GovernanceTab({ flash }) {
                               onClick={() => toggleHub(hub)}>
                               {hub.is_active ? 'Deactivate' : 'Activate'}
                             </button>
+                            {!hub.is_active && (
+                              <button
+                                className="btn btn-sm btn-danger"
+                                style={{ fontSize: 12 }}
+                                onClick={() => deleteHub(hub)}>
+                                Delete
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -288,6 +406,14 @@ function GovernanceTab({ flash }) {
                                     onClick={() => toggleQueue(q)}>
                                     {q.is_active ? 'Deactivate' : 'Activate'}
                                   </button>
+                                  {!q.is_active && (
+                                    <button
+                                      className="btn btn-sm btn-danger"
+                                      style={{ fontSize: 12 }}
+                                      onClick={() => deleteQueue(q)}>
+                                      Delete
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
