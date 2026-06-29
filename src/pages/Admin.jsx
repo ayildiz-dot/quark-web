@@ -844,9 +844,9 @@ function GovernanceTab({ flash }) {
           </div>
         )
       })}
-    </div>
-    </div>
+      </div>
       )}
+    </div>
   )
 }
 
