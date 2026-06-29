@@ -419,6 +419,191 @@ function UsersTab({ profile, flash }) {
   )
 }
 
+
+// ─── Scorecard Assignment Panel ────────────────────────────────────────────────
+function ScorecardAssignmentPanel({ flash }) {
+  const [scorecards,  setScorecards]  = useState([])
+  const [workspaces,  setWorkspaces]  = useState([])
+  const [allHubs,     setAllHubs]     = useState([])
+  const [allQueues,   setAllQueues]   = useState([])
+  const [saving,      setSaving]      = useState(null) // scorecard id being saved
+
+  // per-row cascade state: { [scorecardId]: { ws, hub, queue } }
+  const [selections,  setSelections]  = useState({})
+
+  useEffect(() => { loadAll() }, [])
+
+  const loadAll = async () => {
+    const [{ data: sc }, { data: ws }, { data: hubs }, { data: queues }] = await Promise.all([
+      supabase.from('scorecards').select('id, name, type, queue_id').eq('is_published', true).order('name'),
+      supabase.from('workspaces').select('id, name').order('name'),
+      supabase.from('hubs').select('id, name, workspace_id').order('name'),
+      supabase.from('queues').select('id, name, hub_id').order('name'),
+    ])
+    setScorecards(sc || [])
+    setWorkspaces(ws || [])
+    setAllHubs(hubs || [])
+    setAllQueues(queues || [])
+
+    // Pre-populate selections for already-assigned scorecards
+    const init = {}
+    for (const s of (sc || [])) {
+      if (!s.queue_id) continue
+      const q = (queues || []).find(x => x.id === s.queue_id)
+      const h = q ? (hubs || []).find(x => x.id === q.hub_id) : null
+      const w = h ? (ws || []).find(x => x.id === h.workspace_id) : null
+      init[s.id] = { ws: w?.id || '', hub: h?.id || '', queue: q?.id || '' }
+    }
+    setSelections(init)
+  }
+
+  const getSel = (scId) => selections[scId] || { ws: '', hub: '', queue: '' }
+
+  const setSel = (scId, key, val) => {
+    setSelections(prev => {
+      const cur = prev[scId] || { ws: '', hub: '', queue: '' }
+      const next = { ...cur, [key]: val }
+      if (key === 'ws')  { next.hub = ''; next.queue = '' }
+      if (key === 'hub') { next.queue = '' }
+      return { ...prev, [scId]: next }
+    })
+  }
+
+  const saveAssignment = async (scId) => {
+    const sel = getSel(scId)
+    if (!sel.queue) return flash('Please select a queue before saving.', false)
+    setSaving(scId)
+    const { error } = await supabase.from('scorecards').update({ queue_id: sel.queue }).eq('id', scId)
+    if (error) { flash(error.message, false); setSaving(null); return }
+    await loadAll()
+    setSaving(null)
+    flash('Scorecard assigned to queue')
+  }
+
+  const clearAssignment = async (scId) => {
+    setSaving(scId)
+    const { error } = await supabase.from('scorecards').update({ queue_id: null }).eq('id', scId)
+    if (error) { flash(error.message, false); setSaving(null); return }
+    setSelections(prev => { const n = { ...prev }; delete n[scId]; return n })
+    await loadAll()
+    setSaving(null)
+    flash('Assignment removed')
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontWeight: 600, fontSize: 15 }}>Scorecard Assignment</div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
+          Assign each published scorecard to a workspace queue to control evaluator visibility
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {scorecards.length === 0 && (
+          <div className="card" style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)', fontSize: 13 }}>
+            No published scorecards found.
+          </div>
+        )}
+
+        {scorecards.map(sc => {
+          const sel      = getSel(sc.id)
+          const hubs     = allHubs.filter(h => h.workspace_id === sel.ws)
+          const queues   = allQueues.filter(q => q.hub_id === sel.hub)
+          const isSaving = saving === sc.id
+
+          // Find current assignment path for display
+          const assignedQueue = sc.queue_id ? allQueues.find(q => q.id === sc.queue_id) : null
+          const assignedHub   = assignedQueue ? allHubs.find(h => h.id === assignedQueue.hub_id) : null
+          const assignedWs    = assignedHub   ? workspaces.find(w => w.id === assignedHub.workspace_id) : null
+          const assignedPath  = assignedWs
+            ? `${assignedWs.name} › ${assignedHub.name} › ${assignedQueue.name}`
+            : null
+
+          return (
+            <div key={sc.id} className="card" style={{ padding: '16px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
+
+                {/* Scorecard info */}
+                <div style={{ minWidth: 180, flex: '0 0 180px' }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{sc.name}</div>
+                  <div style={{ marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <span style={{
+                      fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 600,
+                      background: sc.type === 'dsat' ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
+                      color: sc.type === 'dsat' ? 'var(--danger)' : 'var(--accent)',
+                      border: `1px solid ${sc.type === 'dsat' ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'}`,
+                      textTransform: 'uppercase'
+                    }}>{sc.type}</span>
+                  </div>
+                  {assignedPath && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-secondary)',
+                      background: 'var(--bg)', borderRadius: 6, padding: '4px 8px',
+                      border: '1px solid var(--border)' }}>
+                      ✓ {assignedPath}
+                    </div>
+                  )}
+                  {!assignedPath && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#f59e0b',
+                      background: 'rgba(245,158,11,0.08)', borderRadius: 6, padding: '4px 8px',
+                      border: '1px solid rgba(245,158,11,0.3)' }}>
+                      ⚠ Not assigned
+                    </div>
+                  )}
+                </div>
+
+                {/* Cascade selectors */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1, flexWrap: 'wrap' }}>
+                  <select className="select select-sm" value={sel.ws}
+                    onChange={e => setSel(sc.id, 'ws', e.target.value)}
+                    style={{ minWidth: 150, fontSize: 13 }}>
+                    <option value="">Workspace…</option>
+                    {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+
+                  <select className="select select-sm" value={sel.hub}
+                    onChange={e => setSel(sc.id, 'hub', e.target.value)}
+                    disabled={!sel.ws}
+                    style={{ minWidth: 150, fontSize: 13, opacity: sel.ws ? 1 : 0.5 }}>
+                    <option value="">Hub…</option>
+                    {hubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                  </select>
+
+                  <select className="select select-sm" value={sel.queue}
+                    onChange={e => setSel(sc.id, 'queue', e.target.value)}
+                    disabled={!sel.hub}
+                    style={{ minWidth: 150, fontSize: 13, opacity: sel.hub ? 1 : 0.5 }}>
+                    <option value="">Queue…</option>
+                    {queues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
+                  </select>
+
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={!sel.queue || isSaving}
+                    onClick={() => saveAssignment(sc.id)}
+                    style={{ opacity: sel.queue ? 1 : 0.4 }}>
+                    {isSaving ? 'Saving…' : 'Assign'}
+                  </button>
+
+                  {assignedPath && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ color: 'var(--danger)', fontSize: 12 }}
+                      disabled={isSaving}
+                      onClick={() => clearAssignment(sc.id)}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Governance Tab ────────────────────────────────────────────────────────────
 function GovernanceTab({ flash }) {
   const [workspaces, setWorkspaces] = useState([])
@@ -503,9 +688,34 @@ function GovernanceTab({ flash }) {
     </div>
   )
 
+  const [govPanel, setGovPanel] = useState('structure')
+
   return (
     <div>
       {confirm && <ConfirmModal message={confirm.message} onYes={confirm.onYes} onNo={closeConfirm} />}
+
+      {/* Sub-panel switcher */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 24, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+        {[
+          { key: 'structure', label: 'Structure' },
+          { key: 'scorecards', label: 'Scorecard Assignment' },
+        ].map(p => (
+          <button key={p.key} onClick={() => setGovPanel(p.key)}
+            style={{
+              padding: '8px 16px', fontSize: 13, fontWeight: 500,
+              background: 'none', border: 'none', cursor: 'pointer',
+              borderBottom: govPanel === p.key ? '2px solid var(--accent)' : '2px solid transparent',
+              color: govPanel === p.key ? 'var(--accent)' : 'var(--text-secondary)',
+              marginBottom: -1, transition: 'color .15s'
+            }}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {govPanel === 'scorecards' && <ScorecardAssignmentPanel flash={flash} />}
+
+      {govPanel === 'structure' && <>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
@@ -634,6 +844,7 @@ function GovernanceTab({ flash }) {
         )
       })}
     </div>
+    </>}
   )
 }
 
