@@ -20,33 +20,16 @@ export default function Evaluations() {
   const [drafts, setDrafts] = useState([])
   const [showDrafts, setShowDrafts] = useState(false)
 
-  // Type toggles — both on by default. Both off = show everything.
-  const [showQuality, setShowQuality] = useState(true)
-  const [showDsat,    setShowDsat]    = useState(true)
-
   const LIMIT = 50
 
   useEffect(() => {
     loadScorecards()
+    fetchEvals(1)
   }, [])
-
-  // Refetch whenever the type toggles change (and on first mount once profile is ready)
-  useEffect(() => {
-    if (profile?.id) fetchEvals(1)
-  }, [profile, showQuality, showDsat])
 
   useEffect(() => {
     if (profile?.id) loadDrafts()
   }, [profile])
-
-  // Returns the evaluation_type values to include, or null to include all.
-  const activeTypes = () => {
-    if (showQuality && showDsat) return null      // both on → all
-    if (!showQuality && !showDsat) return null     // both off → all
-    if (showQuality) return ['quality']
-    if (showDsat) return ['dsat']
-    return null
-  }
 
   const loadDrafts = async () => {
     if (!profile?.id) return
@@ -74,26 +57,23 @@ export default function Evaluations() {
   const loadScorecards = async () => {
     const { data } = await supabase
       .from('scorecards')
-      .select('id, name, type')
+      .select('id, name')
       .eq('is_published', true)
+      .eq('type', 'quality')
       .order('name')
     setScorecards(data || [])
   }
 
   const fetchEvals = useCallback(async (pg = 1) => {
-    if (!profile?.id) return
     setLoading(true)
     try {
       let q = supabase
         .from('evaluations')
-        .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)', { count: 'exact' })
+        .select('*, scorecards!evaluations_scorecard_id_fkey(name, pass_threshold), users(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
-        .eq('evaluator_id', profile.id)
+        .eq('evaluation_type', 'quality')
         .order('submitted_at', { ascending: false })
         .range((pg - 1) * LIMIT, pg * LIMIT - 1)
-
-      const types = activeTypes()
-      if (types) q = q.in('evaluation_type', types)
 
       if (filters.scorecard) q = q.eq('scorecard_id', filters.scorecard)
       if (filters.dateFrom)  q = q.gte('submitted_at', filters.dateFrom)
@@ -106,25 +86,19 @@ export default function Evaluations() {
     } finally {
       setLoading(false)
     }
-  }, [filters, profile, showQuality, showDsat])
+  }, [filters])
 
   const openDetail = async (id) => {
     const { data: ev } = await supabase
       .from('evaluations')
-      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, pass_threshold), users(name, email)')
       .eq('id', id)
       .single()
-    // Quality evaluations store per-question scores in evaluation_scores.
-    // DSAT evaluations store their answers inside metadata_values, so no extra query needed.
-    let scores = []
-    if (ev?.evaluation_type !== 'dsat') {
-      const { data: scoreRows } = await supabase
-        .from('evaluation_scores')
-        .select('*, scorecard_questions(title, weight, is_weighted, is_form_critical)')
-        .eq('evaluation_id', id)
-      scores = scoreRows || []
-    }
-    setDetail({ ...ev, scores })
+    const { data: scores } = await supabase
+      .from('evaluation_scores')
+      .select('*, scorecard_questions(title, weight, is_weighted, is_form_critical)')
+      .eq('evaluation_id', id)
+    setDetail({ ...ev, scores: scores || [] })
   }
 
   // Helper: get a metadata value by label from the metadata_values array
@@ -136,30 +110,21 @@ export default function Evaluations() {
     return found?.value || '—'
   }
 
-  const exportRows = async () => {
-    let q = supabase
+  const exportCSV = async () => {
+    const { data: rows } = await supabase
       .from('evaluations')
-      .select('*, scorecards(name, type), users(name, email)')
+      .select('*, scorecards(name), users(name, email)')
       .eq('status', 'submitted')
-      .eq('evaluator_id', profile.id)
+      .eq('evaluation_type', 'quality')
       .order('submitted_at', { ascending: false })
       .limit(10000)
-    const types = activeTypes()
-    if (types) q = q.in('evaluation_type', types)
-    const { data: rows } = await q
-    return rows || []
-  }
-
-  const exportCSV = async () => {
-    const rows = await exportRows()
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
       'Date':          new Date(r.submitted_at).toLocaleDateString(),
       'Time':          new Date(r.submitted_at).toLocaleTimeString(),
       'Evaluator':     r.users?.name || '—',
       'Scorecard':     r.scorecards?.name || '—',
-      'Type':          r.evaluation_type === 'dsat' ? 'DSAT' : 'Quality',
-      'Score':         r.evaluation_type === 'dsat' ? '—' : `${r.score}%`,
-      'Failed Critical': r.evaluation_type === 'dsat' ? '—' : (r.failed_critical ? 'Yes' : 'No'),
+      'Score':         `${r.score}%`,
+      'Failed Critical': r.failed_critical ? 'Yes' : 'No',
       'Status':        r.status || '—',
       ...(r.metadata_values || []).reduce((acc, m) => {
         acc[m.label] = m.value
@@ -173,15 +138,20 @@ export default function Evaluations() {
   }
 
   const exportXLSX = async () => {
-    const rows = await exportRows()
+    const { data: rows } = await supabase
+      .from('evaluations')
+      .select('*, scorecards(name), users(name, email)')
+      .eq('status', 'submitted')
+      .eq('evaluation_type', 'quality')
+      .order('submitted_at', { ascending: false })
+      .limit(10000)
     const ws = XLSX.utils.json_to_sheet(rows.map(r => ({
       'Date':          new Date(r.submitted_at).toLocaleDateString(),
       'Time':          new Date(r.submitted_at).toLocaleTimeString(),
       'Evaluator':     r.users?.name || '—',
       'Scorecard':     r.scorecards?.name || '—',
-      'Type':          r.evaluation_type === 'dsat' ? 'DSAT' : 'Quality',
-      'Score':         r.evaluation_type === 'dsat' ? '—' : `${r.score}%`,
-      'Failed Critical': r.evaluation_type === 'dsat' ? '—' : (r.failed_critical ? 'Yes' : 'No'),
+      'Score':         `${r.score}%`,
+      'Failed Critical': r.failed_critical ? 'Yes' : 'No',
       'Status':        r.status || '—',
       ...(r.metadata_values || []).reduce((acc, m) => {
         acc[m.label] = m.value
@@ -201,40 +171,12 @@ export default function Evaluations() {
     return 'var(--danger)'
   }
 
-  // Toggle pill button — ticked + grayed when active
-  const TypeToggle = ({ label, active, onClick }) => (
-    <button
-      onClick={onClick}
-      style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6,
-        padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 500,
-        cursor: 'pointer', border: '1.5px solid',
-        borderColor: active ? 'var(--accent)' : 'var(--border)',
-        background: active ? 'var(--bg-secondary)' : 'transparent',
-        color: active ? 'var(--text-secondary)' : 'var(--text-primary)',
-        transition: 'all 0.15s'
-      }}
-    >
-      <span style={{
-        width: 16, height: 16, borderRadius: 4,
-        border: '1.5px solid',
-        borderColor: active ? 'var(--accent)' : 'var(--border)',
-        background: active ? 'var(--accent)' : 'transparent',
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 11, color: '#fff', lineHeight: 1
-      }}>
-        {active ? '✓' : ''}
-      </span>
-      {label}
-    </button>
-  )
-
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1>Evaluations</h1>
-          <p className="page-sub">{total.toLocaleString()} of your evaluations</p>
+          <p className="page-sub">{total.toLocaleString()} total records</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
@@ -276,11 +218,6 @@ export default function Evaluations() {
           setFilters({ search: '', dateFrom: '', dateTo: '', scorecard: '' })
           setTimeout(() => fetchEvals(1), 0)
         }}>Clear</button>
-
-        <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-          <TypeToggle label="Quality" active={showQuality} onClick={() => setShowQuality(v => !v)} />
-          <TypeToggle label="DSAT"    active={showDsat}    onClick={() => setShowDsat(v => !v)} />
-        </div>
       </div>
 
       {loading ? (
@@ -301,69 +238,46 @@ export default function Evaluations() {
             </thead>
             <tbody>
               {data.length === 0 && (
-                <tr><td colSpan="7" className="empty-row">No evaluations yet. Start one with + New Evaluation.</td></tr>
+                <tr><td colSpan="6" className="empty-row">No evaluations yet. Start one with + New Evaluation.</td></tr>
               )}
-              {data.map(ev => {
-                const isDsat = ev.evaluation_type === 'dsat'
-                const passThreshold = ev.scorecards?.pass_threshold ?? 90
-                const passed = ev.score >= passThreshold
-                return (
-                  <tr key={ev.id}>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: 12, fontFamily: 'monospace' }}>
-                      #{ev.eval_id || '—'}
-                    </td>
-                    <td style={{ color: 'var(--text-secondary)' }}>
-                      {new Date(ev.submitted_at).toLocaleDateString()}
-                    </td>
-                    <td>{ev.users?.name || '—'}</td>
-                    <td>
-                      <span>{ev.scorecards?.name || '—'}</span>
-                      {isDsat && (
-                        <span style={{
-                          marginLeft: 6, fontSize: 11, fontWeight: 600,
-                          padding: '2px 6px', borderRadius: 4,
-                          background: 'rgba(239,68,68,0.12)',
-                          color: 'var(--danger)',
-                          border: '1px solid rgba(239,68,68,0.3)',
-                          textTransform: 'uppercase'
-                        }}>DSAT</span>
-                      )}
-                      {ev.scorecard_version && (
-                        <span style={{
-                          marginLeft: 6, fontSize: 11, fontWeight: 600,
-                          padding: '2px 6px', borderRadius: 4,
-                          background: 'rgba(99,102,241,0.12)',
-                          color: 'var(--accent)',
-                          border: '1px solid rgba(99,102,241,0.3)'
-                        }}>v{ev.scorecard_version}</span>
-                      )}
-                    </td>
-                    <td>
-                      {isDsat ? (
-                        <span style={{ color: 'var(--text-secondary)' }}>—</span>
-                      ) : (
-                        <span style={{ fontWeight: 600, color: (passed ? 'var(--success)' : 'var(--danger)') }}>
-                          {`${ev.score}%`}
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      {isDsat ? (
-                        <span style={{ color: 'var(--text-secondary)' }}>—</span>
-                      ) : (
-                        <span className={`badge ${passed ? 'badge-pass' : 'badge-fail'}`}>
-                          {passed ? 'PASS' : 'FAIL'}
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <button className="btn btn-ghost btn-sm" onClick={() => openDetail(ev.id)}>
-                        View
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
+              {data.map(ev => (
+                <tr key={ev.id}>
+                  <td style={{ color: 'var(--text-secondary)', fontSize: 12, fontFamily: 'monospace' }}>
+                    #{ev.eval_id || '—'}
+                  </td>
+                  <td style={{ color: 'var(--text-secondary)' }}>
+                    {new Date(ev.submitted_at).toLocaleDateString()}
+                  </td>
+                  <td>{ev.users?.name || '—'}</td>
+                  <td>
+                    <span>{ev.scorecards?.name || '—'}</span>
+                    {ev.scorecard_version && (
+                      <span style={{
+                        marginLeft: 6, fontSize: 11, fontWeight: 600,
+                        padding: '2px 6px', borderRadius: 4,
+                        background: 'rgba(99,102,241,0.12)',
+                        color: 'var(--accent)',
+                        border: '1px solid rgba(99,102,241,0.3)'
+                      }}>v{ev.scorecard_version}</span>
+                    )}
+                  </td>
+                  <td>
+                    <span style={{ fontWeight: 600, color: (ev.score >= (ev.scorecards?.pass_threshold ?? 90) ? 'var(--success)' : 'var(--danger)') }}>
+                      {`${ev.score}%`}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`badge ${ev.score >= (ev.scorecards?.pass_threshold ?? 90) ? 'badge-pass' : 'badge-fail'}`}>
+                      {ev.score >= (ev.scorecards?.pass_threshold ?? 90) ? 'PASS' : 'FAIL'}
+                    </span>
+                  </td>
+                  <td>
+                    <button className="btn btn-ghost btn-sm" onClick={() => openDetail(ev.id)}>
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -465,16 +379,6 @@ export default function Evaluations() {
                 <span><b>ID:</b> #{detail.eval_id || '—'}</span>
                 <span>
                   <b>Scorecard:</b> {detail.scorecards?.name}
-                  {detail.evaluation_type === 'dsat' && (
-                    <span style={{
-                      marginLeft: 6, fontSize: 11, fontWeight: 600,
-                      padding: '2px 6px', borderRadius: 4,
-                      background: 'rgba(239,68,68,0.12)',
-                      color: 'var(--danger)',
-                      border: '1px solid rgba(239,68,68,0.3)',
-                      textTransform: 'uppercase'
-                    }}>DSAT</span>
-                  )}
                   {detail.scorecard_version && (
                     <span style={{
                       marginLeft: 6, fontSize: 11, fontWeight: 600,
@@ -487,106 +391,74 @@ export default function Evaluations() {
                 </span>
                 <span><b>Evaluator:</b> {detail.users?.name}</span>
                 <span><b>Date:</b> {new Date(detail.submitted_at).toLocaleString()}</span>
+                {(detail.metadata_values || []).map((m, i) => (
+                  <span key={i}><b>{m.label}:</b> {m.value || '—'}</span>
+                ))}
               </div>
 
               <hr />
 
-              {detail.evaluation_type === 'dsat' ? (
-                /* DSAT detail — answers live in metadata_values */
-                <div className="detail-scores">
-                  {(detail.metadata_values || []).length === 0 ? (
-                    <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                      No recorded answers for this DSAT evaluation.
-                    </p>
-                  ) : (
-                    (detail.metadata_values || []).map((m, i) => (
-                      <div key={i} className="score-row-detail" style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
-                          {m.label}
-                        </div>
-                        <div style={{
-                          fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)',
-                          background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                          borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap'
-                        }}>
-                          {m.value || '—'}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              ) : (
-                /* Quality detail — per-question scores + overall comment + final score */
-                <>
-                  {/* Metadata values (quality) */}
-                  <div className="detail-meta" style={{ marginBottom: 16 }}>
-                    {(detail.metadata_values || []).map((m, i) => (
-                      <span key={i}><b>{m.label}:</b> {m.value || '—'}</span>
-                    ))}
-                  </div>
-
-                  <div className="detail-scores">
-                    {detail.scores.map((s, i) => (
-                      <div key={i} className="score-row-detail">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div className="score-criterion">
-                            {s.scorecard_questions?.title || '—'}
-                            {s.scorecard_questions?.is_form_critical && (
-                              <span className="badge badge-fail" style={{ marginLeft: 8, fontSize: 11 }}>
-                                Form Critical
-                              </span>
-                            )}
-                          </div>
-                          <span className={`badge ${
-                            s.score === 'pass' ? 'badge-pass' :
-                            s.score === 'fail' ? 'badge-fail' : 'badge-channel'
-                          }`}>
-                            {s.score?.toUpperCase() || 'N/A'}
+              {/* Question scores */}
+              <div className="detail-scores">
+                {detail.scores.map((s, i) => (
+                  <div key={i} className="score-row-detail">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div className="score-criterion">
+                        {s.scorecard_questions?.title || '—'}
+                        {s.scorecard_questions?.is_form_critical && (
+                          <span className="badge badge-fail" style={{ marginLeft: 8, fontSize: 11 }}>
+                            Form Critical
                           </span>
-                        </div>
-                        {s.comment && (
-                          <div className="score-comment" style={{ marginTop: 4 }}>"{s.comment}"</div>
                         )}
                       </div>
-                    ))}
-                  </div>
-
-                  <hr />
-
-                  {/* Overall comment */}
-                  {detail.overall_comment && (
-                    <div style={{ marginBottom: 16 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
-                        Overall Comment
-                      </div>
-                      <div style={{
-                        fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)',
-                        background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-                        borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap'
-                      }}>
-                        {detail.overall_comment}
-                      </div>
+                      <span className={`badge ${
+                        s.score === 'pass' ? 'badge-pass' :
+                        s.score === 'fail' ? 'badge-fail' : 'badge-channel'
+                      }`}>
+                        {s.score?.toUpperCase() || 'N/A'}
+                      </span>
                     </div>
-                  )}
-
-                  {/* Final score */}
-                  <div className="detail-total">
-                    <span style={{ fontSize: 16 }}>
-                      Final Score:{' '}
-                      <b style={{ color: scoreColor(detail.score, detail.failed_critical) }}>
-                        {detail.failed_critical ? '0%' : `${detail.score}%`}
-                      </b>
-                    </span>
-                    <span className={`badge ${detail.score >= (detail.scorecards?.pass_threshold ?? 90) ? 'badge-pass' : 'badge-fail'}`}>
-                      {detail.score >= (detail.scorecards?.pass_threshold ?? 90) ? 'PASS' : 'FAIL'}
-                    </span>
+                    {s.comment && (
+                      <div className="score-comment" style={{ marginTop: 4 }}>"{s.comment}"</div>
+                    )}
                   </div>
-                  {detail.failed_critical && (
-                    <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>
-                      A form-critical question was failed — score overridden to 0%.
-                    </p>
-                  )}
-                </>
+                ))}
+              </div>
+
+              <hr />
+
+              {/* Overall comment */}
+              {detail.overall_comment && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    Overall Comment
+                  </div>
+                  <div style={{
+                    fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)',
+                    background: 'var(--bg-secondary)', border: '1px solid var(--border)',
+                    borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap'
+                  }}>
+                    {detail.overall_comment}
+                  </div>
+                </div>
+              )}
+
+              {/* Final score */}
+              <div className="detail-total">
+                <span style={{ fontSize: 16 }}>
+                  Final Score:{' '}
+                  <b style={{ color: scoreColor(detail.score, detail.failed_critical) }}>
+                    {detail.failed_critical ? '0%' : `${detail.score}%`}
+                  </b>
+                </span>
+                <span className={`badge ${detail.score >= (detail.scorecards?.pass_threshold ?? 90) ? 'badge-pass' : 'badge-fail'}`}>
+                  {detail.score >= (detail.scorecards?.pass_threshold ?? 90) ? 'PASS' : 'FAIL'}
+                </span>
+              </div>
+              {detail.failed_critical && (
+                <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>
+                  A form-critical question was failed — score overridden to 0%.
+                </p>
               )}
             </div>
           </div>
