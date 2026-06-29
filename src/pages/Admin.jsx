@@ -421,190 +421,6 @@ function UsersTab({ profile, flash }) {
 }
 
 
-// ─── Scorecard Assignment Panel ────────────────────────────────────────────────
-function ScorecardAssignmentPanel({ flash }) {
-  const [scorecards,  setScorecards]  = useState([])
-  const [workspaces,  setWorkspaces]  = useState([])
-  const [allHubs,     setAllHubs]     = useState([])
-  const [allQueues,   setAllQueues]   = useState([])
-  const [saving,      setSaving]      = useState(null) // scorecard id being saved
-
-  // per-row cascade state: { [scorecardId]: { ws, hub, queue } }
-  const [selections,  setSelections]  = useState({})
-
-  useEffect(() => { loadAll() }, [])
-
-  const loadAll = async () => {
-    const [{ data: sc }, { data: ws }, { data: hubs }, { data: queues }] = await Promise.all([
-      supabase.from('scorecards').select('id, name, type, queue_id').eq('is_published', true).order('name'),
-      supabase.from('workspaces').select('id, name').order('name'),
-      supabase.from('hubs').select('id, name, workspace_id').order('name'),
-      supabase.from('queues').select('id, name, hub_id').order('name'),
-    ])
-    setScorecards(sc || [])
-    setWorkspaces(ws || [])
-    setAllHubs(hubs || [])
-    setAllQueues(queues || [])
-
-    // Pre-populate selections for already-assigned scorecards
-    const init = {}
-    for (const s of (sc || [])) {
-      if (!s.queue_id) continue
-      const q = (queues || []).find(x => x.id === s.queue_id)
-      const h = q ? (hubs || []).find(x => x.id === q.hub_id) : null
-      const w = h ? (ws || []).find(x => x.id === h.workspace_id) : null
-      init[s.id] = { ws: w?.id || '', hub: h?.id || '', queue: q?.id || '' }
-    }
-    setSelections(init)
-  }
-
-  const getSel = (scId) => selections[scId] || { ws: '', hub: '', queue: '' }
-
-  const setSel = (scId, key, val) => {
-    setSelections(prev => {
-      const cur = prev[scId] || { ws: '', hub: '', queue: '' }
-      const next = { ...cur, [key]: val }
-      if (key === 'ws')  { next.hub = ''; next.queue = '' }
-      if (key === 'hub') { next.queue = '' }
-      return { ...prev, [scId]: next }
-    })
-  }
-
-  const saveAssignment = async (scId) => {
-    const sel = getSel(scId)
-    if (!sel.queue) return flash('Please select a queue before saving.', false)
-    setSaving(scId)
-    const { error } = await supabase.from('scorecards').update({ queue_id: sel.queue }).eq('id', scId)
-    if (error) { flash(error.message, false); setSaving(null); return }
-    await loadAll()
-    setSaving(null)
-    flash('Scorecard assigned to queue')
-  }
-
-  const clearAssignment = async (scId) => {
-    setSaving(scId)
-    const { error } = await supabase.from('scorecards').update({ queue_id: null }).eq('id', scId)
-    if (error) { flash(error.message, false); setSaving(null); return }
-    setSelections(prev => { const n = { ...prev }; delete n[scId]; return n })
-    await loadAll()
-    setSaving(null)
-    flash('Assignment removed')
-  }
-
-  return (
-    <div>
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontWeight: 600, fontSize: 15 }}>Scorecard Assignment</div>
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
-          Assign each published scorecard to a workspace queue to control evaluator visibility
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {scorecards.length === 0 && (
-          <div className="card" style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)', fontSize: 13 }}>
-            No published scorecards found.
-          </div>
-        )}
-
-        {scorecards.map(sc => {
-          const sel      = getSel(sc.id)
-          const hubs     = allHubs.filter(h => h.workspace_id === sel.ws)
-          const queues   = allQueues.filter(q => q.hub_id === sel.hub)
-          const isSaving = saving === sc.id
-
-          // Find current assignment path for display
-          const assignedQueue = sc.queue_id ? allQueues.find(q => q.id === sc.queue_id) : null
-          const assignedHub   = assignedQueue ? allHubs.find(h => h.id === assignedQueue.hub_id) : null
-          const assignedWs    = assignedHub   ? workspaces.find(w => w.id === assignedHub.workspace_id) : null
-          const assignedPath  = assignedWs
-            ? `${assignedWs.name} › ${assignedHub.name} › ${assignedQueue.name}`
-            : null
-
-          return (
-            <div key={sc.id} className="card" style={{ padding: '16px 20px' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-
-                {/* Scorecard info */}
-                <div style={{ minWidth: 180, flex: '0 0 180px' }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{sc.name}</div>
-                  <div style={{ marginTop: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <span style={{
-                      fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 600,
-                      background: sc.type === 'dsat' ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
-                      color: sc.type === 'dsat' ? 'var(--danger)' : 'var(--accent)',
-                      border: `1px solid ${sc.type === 'dsat' ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'}`,
-                      textTransform: 'uppercase'
-                    }}>{sc.type}</span>
-                  </div>
-                  {assignedPath && (
-                    <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-secondary)',
-                      background: 'var(--bg)', borderRadius: 6, padding: '4px 8px',
-                      border: '1px solid var(--border)' }}>
-                      ✓ {assignedPath}
-                    </div>
-                  )}
-                  {!assignedPath && (
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#f59e0b',
-                      background: 'rgba(245,158,11,0.08)', borderRadius: 6, padding: '4px 8px',
-                      border: '1px solid rgba(245,158,11,0.3)' }}>
-                      ⚠ Not assigned
-                    </div>
-                  )}
-                </div>
-
-                {/* Cascade selectors */}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1, flexWrap: 'wrap' }}>
-                  <select className="select select-sm" value={sel.ws}
-                    onChange={e => setSel(sc.id, 'ws', e.target.value)}
-                    style={{ minWidth: 150, fontSize: 13 }}>
-                    <option value="">Workspace…</option>
-                    {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                  </select>
-
-                  <select className="select select-sm" value={sel.hub}
-                    onChange={e => setSel(sc.id, 'hub', e.target.value)}
-                    disabled={!sel.ws}
-                    style={{ minWidth: 150, fontSize: 13, opacity: sel.ws ? 1 : 0.5 }}>
-                    <option value="">Hub…</option>
-                    {hubs.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
-                  </select>
-
-                  <select className="select select-sm" value={sel.queue}
-                    onChange={e => setSel(sc.id, 'queue', e.target.value)}
-                    disabled={!sel.hub}
-                    style={{ minWidth: 150, fontSize: 13, opacity: sel.hub ? 1 : 0.5 }}>
-                    <option value="">Queue…</option>
-                    {queues.map(q => <option key={q.id} value={q.id}>{q.name}</option>)}
-                  </select>
-
-                  <button
-                    className="btn btn-primary btn-sm"
-                    disabled={!sel.queue || isSaving}
-                    onClick={() => saveAssignment(sc.id)}
-                    style={{ opacity: sel.queue ? 1 : 0.4 }}>
-                    {isSaving ? 'Saving…' : 'Assign'}
-                  </button>
-
-                  {assignedPath && (
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={{ color: 'var(--danger)', fontSize: 12 }}
-                      disabled={isSaving}
-                      onClick={() => clearAssignment(sc.id)}>
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ─── Governance Tab ────────────────────────────────────────────────────────────
 function GovernanceTab({ flash }) {
   const [workspaces, setWorkspaces] = useState([])
@@ -689,35 +505,10 @@ function GovernanceTab({ flash }) {
     </div>
   )
 
-  const [govPanel, setGovPanel] = useState('structure')
-
   return (
     <div>
       {confirm && <ConfirmModal message={confirm.message} onYes={confirm.onYes} onNo={closeConfirm} />}
 
-      {/* Sub-panel switcher */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
-        {[
-          { key: 'structure', label: 'Structure' },
-          { key: 'scorecards', label: 'Scorecard Assignment' },
-        ].map(p => (
-          <button key={p.key} onClick={() => setGovPanel(p.key)}
-            style={{
-              padding: '8px 16px', fontSize: 13, fontWeight: 500,
-              background: 'none', border: 'none', cursor: 'pointer',
-              borderBottom: govPanel === p.key ? '2px solid var(--accent)' : '2px solid transparent',
-              color: govPanel === p.key ? 'var(--accent)' : 'var(--text-secondary)',
-              marginBottom: -1, transition: 'color .15s'
-            }}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {govPanel === 'scorecards' && <ScorecardAssignmentPanel flash={flash} />}
-
-      {govPanel === 'structure' && (
-      <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
@@ -845,8 +636,6 @@ function GovernanceTab({ flash }) {
           </div>
         )
       })}
-      </div>
-      )}
     </div>
   )
 }
@@ -966,15 +755,17 @@ const seededFieldsForType = (type) => type === 'dsat' ? [...CORE_META_FIELDS, ..
 function ScorecardsTab({ profile, flash }) {
   const navigate = useNavigate()
   const [scorecards, setScorecards] = useState([])
-  const [workspaces, setWorkspaces] = useState([])
-  const [scWorkspaces, setScWorkspaces] = useState({}) // scorecardId -> Set(workspaceId)
+  const [workspaces, setWorkspaces] = useState([]) // [{id,name, hubs:[{id,name, queues:[{id,name}]}]}]
+  const [scHubs, setScHubs] = useState({})          // scorecardId -> Set(hubId)  (the real assignment)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [newType, setNewType] = useState('quality')
   const [newThreshold, setNewThreshold] = useState(90)
-  const [expanded, setExpanded] = useState(null)
+  const [expandedRow, setExpandedRow] = useState(null)      // scorecard id row expanded
+  const [openWs, setOpenWs] = useState({})                  // `${scId}:${wsId}` -> bool
+  const [openHub, setOpenHub] = useState({})                // `${scId}:${hubId}` -> bool
   const [confirm, setConfirm] = useState(null)
 
   const canEdit = ['admin', 'owner'].includes(profile?.role)
@@ -984,17 +775,17 @@ function ScorecardsTab({ profile, flash }) {
   const loadAll = async () => {
     const [{ data: sc }, { data: ws }, { data: links }] = await Promise.all([
       supabase.from('scorecards').select('*, users(name)').order('created_at', { ascending: false }),
-      supabase.from('workspaces').select('id, name, is_active').eq('is_active', true).order('name'),
-      supabase.from('scorecard_workspaces').select('scorecard_id, workspace_id'),
+      supabase.from('workspaces').select('id, name, is_active, hubs(id, name, is_active, queues(id, name, is_active))').eq('is_active', true).order('name'),
+      supabase.from('scorecard_hubs').select('scorecard_id, hub_id'),
     ])
     setScorecards(sc || [])
     setWorkspaces(ws || [])
     const map = {}
-    ;(links || []).forEach(({ scorecard_id, workspace_id }) => {
+    ;(links || []).forEach(({ scorecard_id, hub_id }) => {
       if (!map[scorecard_id]) map[scorecard_id] = new Set()
-      map[scorecard_id].add(workspace_id)
+      map[scorecard_id].add(hub_id)
     })
-    setScWorkspaces(map)
+    setScHubs(map)
     setLoading(false)
   }
 
@@ -1026,27 +817,75 @@ function ScorecardsTab({ profile, flash }) {
 
   const deleteScorecard = (sc) => ask(
     `Delete "${sc.name}"? This cannot be undone.`,
-    async () => {
-      closeConfirm()
-      await supabase.from('scorecards').delete().eq('id', sc.id)
-      await loadAll()
-      flash('Scorecard deleted')
-    }
+    async () => { closeConfirm(); await supabase.from('scorecards').delete().eq('id', sc.id); await loadAll(); flash('Scorecard deleted') }
   )
 
-  const toggleWorkspace = async (scId, wsId, currentlyOn) => {
+  // ── Hub-level assignment (the real link) ────────────────────────────────────
+  const toggleHub = async (scId, hubId, currentlyOn) => {
     if (currentlyOn) {
-      await supabase.from('scorecard_workspaces').delete().eq('scorecard_id', scId).eq('workspace_id', wsId)
+      await supabase.from('scorecard_hubs').delete().eq('scorecard_id', scId).eq('hub_id', hubId)
     } else {
-      await supabase.from('scorecard_workspaces').insert({ scorecard_id: scId, workspace_id: wsId })
+      await supabase.from('scorecard_hubs').insert({ scorecard_id: scId, hub_id: hubId })
+      // auto-expand the hub to reveal queues
+      setOpenHub(o => ({ ...o, [`${scId}:${hubId}`]: true }))
     }
-    // optimistic local update
-    setScWorkspaces(prev => {
+    setScHubs(prev => {
       const next = { ...prev }
       const set = new Set(next[scId] || [])
-      currentlyOn ? set.delete(wsId) : set.add(wsId)
+      currentlyOn ? set.delete(hubId) : set.add(hubId)
       next[scId] = set
       return next
+    })
+  }
+
+  // ── Workspace toggle: organizational. ON reveals hubs; OFF unassigns all child hubs ──
+  const toggleWorkspace = async (scId, ws, currentlyOn) => {
+    const childHubIds = (ws.hubs || []).map(h => h.id)
+    if (currentlyOn) {
+      // turning workspace off → remove all its hub assignments
+      if (childHubIds.length) {
+        await supabase.from('scorecard_hubs').delete().eq('scorecard_id', scId).in('hub_id', childHubIds)
+      }
+      setScHubs(prev => {
+        const next = { ...prev }
+        const set = new Set(next[scId] || [])
+        childHubIds.forEach(id => set.delete(id))
+        next[scId] = set
+        return next
+      })
+      setOpenWs(o => ({ ...o, [`${scId}:${ws.id}`]: false }))
+    } else {
+      // turning workspace on → just reveal hubs (no assignment yet)
+      setOpenWs(o => ({ ...o, [`${scId}:${ws.id}`]: true }))
+    }
+  }
+
+  // A workspace is "on" if any of its hubs are assigned
+  const wsIsOn = (scId, ws) => {
+    const assigned = scHubs[scId] || new Set()
+    return (ws.hubs || []).some(h => assigned.has(h.id))
+  }
+
+  // ── Expand all / Collapse all (within one scorecard's tree) ─────────────────
+  const expandAll = (scId) => {
+    const wsOpen = {}, hubOpen = {}
+    for (const ws of workspaces) {
+      wsOpen[`${scId}:${ws.id}`] = true
+      for (const hub of (ws.hubs || [])) hubOpen[`${scId}:${hub.id}`] = true
+    }
+    setOpenWs(o => ({ ...o, ...wsOpen }))
+    setOpenHub(o => ({ ...o, ...hubOpen }))
+  }
+  const collapseAll = (scId) => {
+    setOpenWs(o => {
+      const n = { ...o }
+      for (const ws of workspaces) n[`${scId}:${ws.id}`] = false
+      return n
+    })
+    setOpenHub(o => {
+      const n = { ...o }
+      for (const ws of workspaces) for (const hub of (ws.hubs || [])) n[`${scId}:${hub.id}`] = false
+      return n
     })
   }
 
@@ -1054,31 +893,182 @@ function ScorecardsTab({ profile, flash }) {
   const drafts    = scorecards.filter(s => !s.is_published)
 
   const TypeBadge = ({ type }) => (
-    <span style={{
-      fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 600,
-      background: type === 'dsat' ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
-      color: type === 'dsat' ? 'var(--danger)' : 'var(--accent)',
-      border: `1px solid ${type === 'dsat' ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'}`,
-      textTransform: 'uppercase'
-    }}>{type === 'dsat' ? 'DSAT' : 'Quality'}</span>
+    <span className={`badge ${type === 'quality' ? 'badge-admin' : 'badge-channel'}`}>
+      {type === 'quality' ? 'Quality' : 'DSAT'}
+    </span>
   )
 
-  // Toggle switch — matches dashboard active/inactive style
-  const Toggle = ({ on, onClick }) => (
-    <button onClick={onClick} style={{
-      width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
-      background: on ? 'var(--accent)' : 'var(--border)', position: 'relative',
-      transition: 'background .15s', flexShrink: 0,
-    }}>
-      <span style={{
-        position: 'absolute', top: 2, left: on ? 20 : 2,
-        width: 18, height: 18, borderRadius: '50%', background: '#fff',
-        transition: 'left .15s',
-      }} />
-    </button>
-  )
+  const Toggle = ({ on, onClick, size = 'md' }) => {
+    const w = size === 'sm' ? 34 : 40, h = size === 'sm' ? 19 : 22, k = h - 4
+    return (
+      <button onClick={onClick} style={{
+        width: w, height: h, borderRadius: h / 2, border: 'none', cursor: 'pointer',
+        background: on ? 'var(--accent)' : 'var(--border)', position: 'relative',
+        transition: 'background .15s', flexShrink: 0,
+      }}>
+        <span style={{ position: 'absolute', top: 2, left: on ? w - k - 2 : 2, width: k, height: k,
+          borderRadius: '50%', background: '#fff', transition: 'left .15s' }} />
+      </button>
+    )
+  }
+
+  // ── Workspace → Hub → Queue cascade for one scorecard ───────────────────────
+  const AssignmentTree = ({ scId }) => {
+    const assigned = scHubs[scId] || new Set()
+    return (
+      <div style={{ padding: '16px 18px 18px 24px', backgroundColor: 'var(--bg)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Assign to Hubs
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => expandAll(scId)}>Expand all</button>
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => collapseAll(scId)}>Collapse all</button>
+          </div>
+        </div>
+
+        {workspaces.length === 0 ? (
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            No active workspaces. Create one in the Governance tab.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {workspaces.map(ws => {
+              const wsOn = wsIsOn(scId, ws)
+              const wsOpen = openWs[`${scId}:${ws.id}`] ?? false
+              const hubs = ws.hubs || []
+              return (
+                <div key={ws.id} style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                  {/* Workspace row */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface)' }}>
+                    <button onClick={() => setOpenWs(o => ({ ...o, [`${scId}:${ws.id}`]: !wsOpen }))}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 14, flexShrink: 0 }}>
+                      {wsOpen ? '▾' : '▸'}
+                    </button>
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{ws.name}</span>
+                    <Toggle on={wsOn} onClick={() => toggleWorkspace(scId, ws, wsOn)} />
+                  </div>
+
+                  {/* Hubs */}
+                  {wsOpen && (
+                    <div style={{ background: 'var(--bg)' }}>
+                      {hubs.length === 0 ? (
+                        <div style={{ padding: '8px 14px 8px 38px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                          No hubs in this workspace
+                        </div>
+                      ) : hubs.map(hub => {
+                        const hubOn = assigned.has(hub.id)
+                        const hubOpen = openHub[`${scId}:${hub.id}`] ?? false
+                        const queues = hub.queues || []
+                        return (
+                          <div key={hub.id}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px 9px 38px', borderTop: '1px solid var(--border)' }}>
+                              <button onClick={() => setOpenHub(o => ({ ...o, [`${scId}:${hub.id}`]: !hubOpen }))}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 11, width: 14, flexShrink: 0 }}>
+                                {hubOpen ? '▾' : '▸'}
+                              </button>
+                              <span style={{ flex: 1, fontSize: 13 }}>{hub.name}</span>
+                              <Toggle on={hubOn} size="sm" onClick={() => toggleHub(scId, hub.id, hubOn)} />
+                            </div>
+
+                            {/* Queues (visual only) */}
+                            {hubOpen && (
+                              <div style={{ background: 'var(--surface)' }}>
+                                {queues.length === 0 ? (
+                                  <div style={{ padding: '7px 14px 7px 62px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                                    No queues in this hub
+                                  </div>
+                                ) : queues.map(q => (
+                                  <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 14px 7px 62px', borderTop: '1px solid var(--border)' }}>
+                                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--text-tertiary)', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{q.name}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
+
+  const renderTable = (rows, expandable) => (
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            {expandable && <th style={{ width: 32 }}></th>}
+            <th>Name</th>
+            <th>Type</th>
+            <th>Description</th>
+            <th>Created By</th>
+            <th>Created At</th>
+            <th>Last Modified</th>
+            {canEdit && <th>Actions</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && (
+            <tr><td colSpan={(expandable ? 1 : 0) + (canEdit ? 7 : 6)} className="empty-row">
+              {expandable ? 'No published scorecards.' : 'No draft scorecards.'}
+            </td></tr>
+          )}
+          {rows.map(sc => {
+            const isExpanded = expandedRow === sc.id
+            const assignedCount = (scHubs[sc.id] || new Set()).size
+            return (
+              <>
+                <tr key={sc.id} style={{ cursor: expandable ? 'pointer' : 'default' }}
+                  onClick={expandable ? () => setExpandedRow(isExpanded ? null : sc.id) : undefined}>
+                  {expandable && (
+                    <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{isExpanded ? '▾' : '▸'}</td>
+                  )}
+                  <td style={{ fontWeight: 500 }}>
+                    {sc.name}
+                    {expandable && assignedCount > 0 && (
+                      <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-secondary)' }}>
+                        · {assignedCount} hub{assignedCount === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </td>
+                  <td><TypeBadge type={sc.type} /></td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '-'}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{sc.users?.name || '-'}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{new Date(sc.created_at).toLocaleDateString()}</td>
+                  <td style={{ color: 'var(--text-secondary)' }}>{sc.updated_at ? new Date(sc.updated_at).toLocaleDateString() : '-'}</td>
+                  {canEdit && (
+                    <td onClick={e => e.stopPropagation()}>
+                      <div className="action-group">
+                        <button className="btn btn-sm btn-ghost" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
+                        <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+                {expandable && isExpanded && (
+                  <tr key={sc.id + '-exp'}>
+                    <td colSpan={(canEdit ? 8 : 7)} style={{ padding: 0 }}>
+                      <AssignmentTree scId={sc.id} />
+                    </td>
+                  </tr>
+                )}
+              </>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
 
   return (
     <div>
@@ -1088,7 +1078,7 @@ function ScorecardsTab({ profile, flash }) {
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Scorecards</div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
-            Build, manage, and assign scorecards to workspaces
+            Build and manage your evaluation scorecards
           </div>
         </div>
         {canEdit && !creating && (
@@ -1096,7 +1086,6 @@ function ScorecardsTab({ profile, flash }) {
         )}
       </div>
 
-      {/* Create form */}
       {creating && (
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="card-title" style={{ marginBottom: 16 }}>New Scorecard</div>
@@ -1133,101 +1122,18 @@ function ScorecardsTab({ profile, flash }) {
         </div>
       )}
 
-      {/* PUBLISHED SECTION */}
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
         Published ({published.length})
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 28 }}>
-        {published.length === 0 && (
-          <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--text-secondary)', fontSize: 13 }}>
-            No published scorecards.
-          </div>
-        )}
-        {published.map(sc => {
-          const isExpanded = expanded === sc.id
-          const assigned = scWorkspaces[sc.id] || new Set()
-          return (
-            <div key={sc.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              {/* Row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', cursor: 'pointer',
-                borderBottom: isExpanded ? '1px solid var(--border)' : 'none' }}
-                onClick={() => setExpanded(isExpanded ? null : sc.id)}>
-                <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 13, width: 16, flexShrink: 0 }}>
-                  {isExpanded ? '▾' : '▸'}
-                </button>
-                <span style={{ fontWeight: 600, fontSize: 14 }}>{sc.name}</span>
-                <TypeBadge type={sc.type} />
-                {assigned.size > 0 && (
-                  <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                    {assigned.size} workspace{assigned.size === 1 ? '' : 's'}
-                  </span>
-                )}
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
-                  {canEdit && (
-                    <>
-                      <button className="btn btn-ghost btn-sm" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
-                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Expanded: workspace toggles */}
-              {isExpanded && (
-                <div style={{ padding: '16px 18px 18px 46px', backgroundColor: 'var(--bg)' }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
-                    Assign to Workspaces
-                  </div>
-                  {workspaces.length === 0 ? (
-                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                      No active workspaces. Create one in the Governance tab.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 420 }}>
-                      {workspaces.map(ws => {
-                        const on = assigned.has(ws.id)
-                        return (
-                          <div key={ws.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
-                            <span style={{ fontSize: 13, fontWeight: 500 }}>{ws.name}</span>
-                            <Toggle on={on} onClick={() => toggleWorkspace(sc.id, ws.id, on)} />
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
+      <div style={{ marginBottom: 28 }}>
+        {renderTable(published, true)}
       </div>
 
-      {/* DRAFTS SECTION */}
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
         Drafts ({drafts.length})
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {drafts.length === 0 && (
-          <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--text-secondary)', fontSize: 13 }}>
-            No draft scorecards.
-          </div>
-        )}
-        {drafts.map(sc => (
-          <div key={sc.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>{sc.name}</span>
-            <TypeBadge type={sc.type} />
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{sc.description || ''}</span>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-              {canEdit && (
-                <>
-                  <button className="btn btn-ghost btn-sm" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
-                  <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
+      <div>
+        {renderTable(drafts, false)}
       </div>
     </div>
   )
