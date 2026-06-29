@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
@@ -934,6 +935,304 @@ function SamplingTab({ profile, flash }) {
   )
 }
 
+// ─── Scorecards Tab ────────────────────────────────────────────────────────────
+const CORE_META_FIELDS = [
+  { label: 'Ticket ID',          field_type: 'number',   is_required: true },
+  { label: 'Communication Date', field_type: 'date',     is_required: true },
+  { label: 'Market',             field_type: 'dropdown', is_required: true, options: [] },
+  { label: 'BPO',                field_type: 'dropdown', is_required: true, options: [] },
+  { label: "Agent's Email",      field_type: 'text',     is_required: true },
+  { label: 'Channel',            field_type: 'dropdown', is_required: true, options: [] },
+]
+const DSAT_EXTRA_META_FIELDS = [
+  { label: 'Category Level 1', field_type: 'dropdown', is_required: true, options: [] },
+  { label: 'Category Level 2', field_type: 'dropdown', is_required: true, options: [] },
+]
+const STARTER_WIDGETS = {
+  quality: [
+    { widget_type: 'stat_card', title: 'Overall Quality Score', position: 0, config: { measure: 'avg_quality_score', date_field: 'submitted_at' } },
+    { widget_type: 'stat_card', title: 'Total Evaluations', position: 1, config: { measure: 'eval_count', date_field: 'submitted_at' } },
+    { widget_type: 'line_chart', title: 'Quality — Week over Week', position: 2, config: { date_field: 'submitted_at', bucket: 'week', series: ['avg_quality_score', 'eval_count'] } },
+  ],
+  dsat: [
+    { widget_type: 'stat_card', title: 'Controllability Rate', position: 0, config: { measure: 'controllability_rate', date_field: 'communication_date' } },
+    { widget_type: 'stat_card', title: 'Total DSATs Evaluated', position: 1, config: { measure: 'eval_count', date_field: 'communication_date' } },
+    { widget_type: 'line_chart', title: 'Controllability — Week over Week', position: 2, config: { date_field: 'communication_date', bucket: 'week', series: ['controllability_rate', 'eval_count'] } },
+  ],
+}
+const starterWidgetsForType = (type) => STARTER_WIDGETS[type] || STARTER_WIDGETS.quality
+const seededFieldsForType = (type) => type === 'dsat' ? [...CORE_META_FIELDS, ...DSAT_EXTRA_META_FIELDS] : [...CORE_META_FIELDS]
+
+function ScorecardsTab({ profile, flash }) {
+  const navigate = useNavigate()
+  const [scorecards, setScorecards] = useState([])
+  const [workspaces, setWorkspaces] = useState([])
+  const [scWorkspaces, setScWorkspaces] = useState({}) // scorecardId -> Set(workspaceId)
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newDesc, setNewDesc] = useState('')
+  const [newType, setNewType] = useState('quality')
+  const [newThreshold, setNewThreshold] = useState(90)
+  const [expanded, setExpanded] = useState(null)
+  const [confirm, setConfirm] = useState(null)
+
+  const canEdit = ['admin', 'owner'].includes(profile?.role)
+
+  useEffect(() => { loadAll() }, [])
+
+  const loadAll = async () => {
+    const [{ data: sc }, { data: ws }, { data: links }] = await Promise.all([
+      supabase.from('scorecards').select('*, users(name)').order('created_at', { ascending: false }),
+      supabase.from('workspaces').select('id, name, is_active').eq('is_active', true).order('name'),
+      supabase.from('scorecard_workspaces').select('scorecard_id, workspace_id'),
+    ])
+    setScorecards(sc || [])
+    setWorkspaces(ws || [])
+    const map = {}
+    ;(links || []).forEach(({ scorecard_id, workspace_id }) => {
+      if (!map[scorecard_id]) map[scorecard_id] = new Set()
+      map[scorecard_id].add(workspace_id)
+    })
+    setScWorkspaces(map)
+    setLoading(false)
+  }
+
+  const ask = (message, onYes) => setConfirm({ message, onYes })
+  const closeConfirm = () => setConfirm(null)
+
+  const createScorecard = async () => {
+    if (!newName.trim()) return flash('Scorecard name is required.', false)
+    const { data, error } = await supabase
+      .from('scorecards')
+      .insert({ name: newName.trim(), description: newDesc.trim(), type: newType, created_by: profile.id, pass_threshold: newType === 'quality' ? Number(newThreshold) || 90 : null })
+      .select().single()
+    if (error) return flash(error.message, false)
+
+    const seedFields = seededFieldsForType(newType).map((f, i) => ({
+      scorecard_id: data.id, label: f.label, field_type: f.field_type,
+      is_required: f.is_required, options: f.options ?? null, position: i + 1,
+    }))
+    await supabase.from('scorecard_metadata_fields').insert(seedFields)
+
+    const starterWidgets = starterWidgetsForType(newType).map(w => ({
+      scorecard_id: data.id, widget_type: w.widget_type, title: w.title, config: w.config, position: w.position,
+    }))
+    await supabase.from('dashboard_widgets').insert(starterWidgets)
+
+    setCreating(false); setNewName(''); setNewDesc(''); setNewType('quality'); setNewThreshold(90)
+    navigate(`/scorecards/${data.id}/edit`)
+  }
+
+  const deleteScorecard = (sc) => ask(
+    `Delete "${sc.name}"? This cannot be undone.`,
+    async () => {
+      closeConfirm()
+      await supabase.from('scorecards').delete().eq('id', sc.id)
+      await loadAll()
+      flash('Scorecard deleted')
+    }
+  )
+
+  const toggleWorkspace = async (scId, wsId, currentlyOn) => {
+    if (currentlyOn) {
+      await supabase.from('scorecard_workspaces').delete().eq('scorecard_id', scId).eq('workspace_id', wsId)
+    } else {
+      await supabase.from('scorecard_workspaces').insert({ scorecard_id: scId, workspace_id: wsId })
+    }
+    // optimistic local update
+    setScWorkspaces(prev => {
+      const next = { ...prev }
+      const set = new Set(next[scId] || [])
+      currentlyOn ? set.delete(wsId) : set.add(wsId)
+      next[scId] = set
+      return next
+    })
+  }
+
+  const published = scorecards.filter(s => s.is_published)
+  const drafts    = scorecards.filter(s => !s.is_published)
+
+  const TypeBadge = ({ type }) => (
+    <span style={{
+      fontSize: 11, padding: '2px 7px', borderRadius: 4, fontWeight: 600,
+      background: type === 'dsat' ? 'rgba(239,68,68,0.12)' : 'rgba(99,102,241,0.12)',
+      color: type === 'dsat' ? 'var(--danger)' : 'var(--accent)',
+      border: `1px solid ${type === 'dsat' ? 'rgba(239,68,68,0.3)' : 'rgba(99,102,241,0.3)'}`,
+      textTransform: 'uppercase'
+    }}>{type === 'dsat' ? 'DSAT' : 'Quality'}</span>
+  )
+
+  // Toggle switch — matches dashboard active/inactive style
+  const Toggle = ({ on, onClick }) => (
+    <button onClick={onClick} style={{
+      width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
+      background: on ? 'var(--accent)' : 'var(--border)', position: 'relative',
+      transition: 'background .15s', flexShrink: 0,
+    }}>
+      <span style={{
+        position: 'absolute', top: 2, left: on ? 20 : 2,
+        width: 18, height: 18, borderRadius: '50%', background: '#fff',
+        transition: 'left .15s',
+      }} />
+    </button>
+  )
+
+  if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
+
+  return (
+    <div>
+      {confirm && <ConfirmModal message={confirm.message} onYes={confirm.onYes} onNo={closeConfirm} />}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>Scorecards</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
+            Build, manage, and assign scorecards to workspaces
+          </div>
+        </div>
+        {canEdit && !creating && (
+          <button className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>+ New Scorecard</button>
+        )}
+      </div>
+
+      {/* Create form */}
+      {creating && (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div className="card-title" style={{ marginBottom: 16 }}>New Scorecard</div>
+          <div className="form-row">
+            <div className="form-field">
+              <label>Name</label>
+              <input className="input" placeholder="e.g. Chat Quality Scorecard" value={newName} onChange={e => setNewName(e.target.value)} />
+            </div>
+            <div className="form-field">
+              <label>Description (optional)</label>
+              <input className="input" placeholder="What is this scorecard for?" value={newDesc} onChange={e => setNewDesc(e.target.value)} />
+            </div>
+            <div className="form-field">
+              <label>Type</label>
+              <select className="select" value={newType} onChange={e => setNewType(e.target.value)}>
+                <option value="quality">Quality Evaluation</option>
+                <option value="dsat">DSAT</option>
+              </select>
+            </div>
+            {newType === 'quality' && (
+              <div className="form-field">
+                <label>Pass Threshold (%)</label>
+                <input type="number" className="input" min={0} max={100} value={newThreshold} onChange={e => setNewThreshold(e.target.value)} />
+              </div>
+            )}
+            <div className="form-field form-field-btn">
+              <label>&nbsp;</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary" onClick={createScorecard}>Create & Edit</button>
+                <button className="btn btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PUBLISHED SECTION */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
+        Published ({published.length})
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 28 }}>
+        {published.length === 0 && (
+          <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--text-secondary)', fontSize: 13 }}>
+            No published scorecards.
+          </div>
+        )}
+        {published.map(sc => {
+          const isExpanded = expanded === sc.id
+          const assigned = scWorkspaces[sc.id] || new Set()
+          return (
+            <div key={sc.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              {/* Row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', cursor: 'pointer',
+                borderBottom: isExpanded ? '1px solid var(--border)' : 'none' }}
+                onClick={() => setExpanded(isExpanded ? null : sc.id)}>
+                <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 13, width: 16, flexShrink: 0 }}>
+                  {isExpanded ? '▾' : '▸'}
+                </button>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{sc.name}</span>
+                <TypeBadge type={sc.type} />
+                {assigned.size > 0 && (
+                  <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                    {assigned.size} workspace{assigned.size === 1 ? '' : 's'}
+                  </span>
+                )}
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }} onClick={e => e.stopPropagation()}>
+                  {canEdit && (
+                    <>
+                      <button className="btn btn-ghost btn-sm" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
+                      <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded: workspace toggles */}
+              {isExpanded && (
+                <div style={{ padding: '16px 18px 18px 46px', backgroundColor: 'var(--bg)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
+                    Assign to Workspaces
+                  </div>
+                  {workspaces.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                      No active workspaces. Create one in the Governance tab.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 420 }}>
+                      {workspaces.map(ws => {
+                        const on = assigned.has(ws.id)
+                        return (
+                          <div key={ws.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
+                            <span style={{ fontSize: 13, fontWeight: 500 }}>{ws.name}</span>
+                            <Toggle on={on} onClick={() => toggleWorkspace(sc.id, ws.id, on)} />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* DRAFTS SECTION */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
+        Drafts ({drafts.length})
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {drafts.length === 0 && (
+          <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--text-secondary)', fontSize: 13 }}>
+            No draft scorecards.
+          </div>
+        )}
+        {drafts.map(sc => (
+          <div key={sc.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px' }}>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>{sc.name}</span>
+            <TypeBadge type={sc.type} />
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{sc.description || ''}</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+              {canEdit && (
+                <>
+                  <button className="btn btn-ghost btn-sm" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
+                  <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Admin ────────────────────────────────────────────────────────────────
 export default function Admin() {
   const { profile } = useAuth()
@@ -954,10 +1253,12 @@ export default function Admin() {
       <div className="tabs">
         <button className={`tab ${tab === 'users'      ? 'active' : ''}`} onClick={() => setTab('users')}>User Management</button>
         <button className={`tab ${tab === 'sampling'   ? 'active' : ''}`} onClick={() => setTab('sampling')}>Sampling Requirements</button>
+        <button className={`tab ${tab === 'scorecards' ? 'active' : ''}`} onClick={() => setTab('scorecards')}>Scorecards</button>
         <button className={`tab ${tab === 'governance' ? 'active' : ''}`} onClick={() => setTab('governance')}>Governance</button>
       </div>
       {tab === 'users'      && <UsersTab      profile={profile} flash={flash} />}
       {tab === 'sampling'   && <SamplingTab   profile={profile} flash={flash} />}
+      {tab === 'scorecards' && <ScorecardsTab profile={profile} flash={flash} />}
       {tab === 'governance' && <GovernanceTab flash={flash} />}
     </div>
   )
