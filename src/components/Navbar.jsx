@@ -50,14 +50,7 @@ export default function Navbar() {
           <i className="ti ti-clipboard-check" aria-hidden="true" />
           Evaluations
         </button>
-        {profile?.role !== 'viewer' && (
-          <button
-            className={`nav-item ${isActive('/scorecards') ? 'active' : ''}`}
-            onClick={() => safeNavigate('/scorecards')}>
-            <i className="ti ti-forms" aria-hidden="true" />
-            Scorecards
-          </button>
-        )}
+
         {['admin', 'owner'].includes(profile?.role) && (
           <button
             className={`nav-item ${isActive('/admin') ? 'active' : ''}`}

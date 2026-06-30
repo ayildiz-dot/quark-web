@@ -96,7 +96,6 @@ function AppShell({ user, profile, logout, fetchProfile }) {
             <Route path="/dashboard/:division/:scorecardId" element={<ScorecardDashboard />} />
             <Route path="/evaluations" element={<Evaluations />} />
             <Route path="/evaluations/new" element={<EvaluationForm />} />
-            <Route path="/scorecards" element={profile?.role === 'viewer' ? <Navigate to="/dashboard" replace /> : <Scorecards />} />
             <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
             <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
             <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
