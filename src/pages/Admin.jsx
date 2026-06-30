@@ -426,18 +426,58 @@ function GovernanceTab({ flash }) {
   const [workspaces, setWorkspaces] = useState([])
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
+  const [expandedS,  setExpandedS]  = useState({})   // hub.id -> bool : mapping panel open
   const [adding,     setAdding]     = useState(null)
   const [addName,    setAddName]    = useState('')
   const [editing,    setEditing]    = useState(null)
   const [editName,   setEditName]   = useState('')
   const [confirm,    setConfirm]    = useState(null)
 
-  useEffect(() => { loadAll() }, [])
+  // Governance mapping data
+  const [scHubLinks,   setScHubLinks]   = useState([])   // [{scorecard_id, hub_id}]
+  const [metaFields,   setMetaFields]   = useState([])   // [{scorecard_id, label, options}]
+  const [govRows,      setGovRows]      = useState([])   // hub_governance_map rows
+  const [savingHub,    setSavingHub]    = useState(null) // hub.id currently saving
+
+  useEffect(() => { loadAll(); loadGovernanceMapping() }, [])
 
   const loadAll = async () => {
     const { data: ws } = await supabase.from('workspaces').select('*, hubs(*, queues(*))').order('position')
     setWorkspaces(ws || [])
   }
+
+  const loadGovernanceMapping = async () => {
+    const [{ data: links }, { data: fields }, { data: gov }] = await Promise.all([
+      supabase.from('scorecard_hubs').select('scorecard_id, hub_id'),
+      supabase.from('scorecard_metadata_fields').select('scorecard_id, label, options').in('label', ['BPO - Hub', 'Market']),
+      supabase.from('hub_governance_map').select('*'),
+    ])
+    setScHubLinks(links || [])
+    setMetaFields(fields || [])
+    setGovRows(gov || [])
+  }
+
+  // For a given hub, union the option values from all scorecards tagged to it.
+  const optionsForHub = (hubId, label) => {
+    const scIds = scHubLinks.filter(l => l.hub_id === hubId).map(l => l.scorecard_id)
+    const set = new Set()
+    metaFields
+      .filter(f => f.label === label && scIds.includes(f.scorecard_id))
+      .forEach(f => (f.options || []).forEach(o => set.add(o)))
+    return [...set].sort()
+  }
+
+  // Existing mapping for a hub: its single BPO-Hub value + set of markets.
+  const mappingForHub = (hubId) => {
+    const rows = govRows.filter(r => r.hub_id === hubId)
+    const bpo  = rows.length ? rows[0].bpo_hub_value : ''
+    const markets = new Set(rows.map(r => r.market_value))
+    return { bpo, markets }
+  }
+
+  // Which (bpo, market) pairs are already claimed by OTHER hubs — for prevention.
+  const pairClaimedElsewhere = (hubId, bpo, market) =>
+    govRows.some(r => r.hub_id !== hubId && r.bpo_hub_value === bpo && r.market_value === market)
 
   const ask = (message, onYes) => setConfirm({ message, onYes })
   const closeConfirm = () => setConfirm(null)
@@ -446,7 +486,7 @@ function GovernanceTab({ flash }) {
   const toggleHub   = (hub) => ask(hub.is_active ? `Deactivate "${hub.name}" hub?`        : `Activate "${hub.name}" hub?`,        async () => { closeConfirm(); await supabase.from('hubs').update({ is_active: !hub.is_active }).eq('id', hub.id); await loadAll(); flash(`Hub ${hub.is_active ? 'deactivated' : 'activated'}`) })
   const toggleQueue = (q)   => ask(q.is_active   ? `Deactivate "${q.name}" queue?`        : `Activate "${q.name}" queue?`,        async () => { closeConfirm(); await supabase.from('queues').update({ is_active: !q.is_active   }).eq('id', q.id);   await loadAll(); flash(`Queue ${q.is_active   ? 'deactivated' : 'activated'}`) })
   const deleteWs    = (ws)  => ask(`Permanently delete "${ws.name}"? All hubs and queues inside will also be deleted.`,  async () => { closeConfirm(); await supabase.from('workspaces').delete().eq('id', ws.id);  await loadAll(); flash('Workspace deleted') })
-  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); await supabase.from('hubs').delete().eq('id', hub.id); await loadAll(); flash('Hub deleted') })
+  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); await supabase.from('hubs').delete().eq('id', hub.id); await loadAll(); await loadGovernanceMapping(); flash('Hub deleted') })
   const deleteQueue = (q)   => ask(`Permanently delete "${q.name}"? This cannot be undone.`,                             async () => { closeConfirm(); await supabase.from('queues').delete().eq('id', q.id);   await loadAll(); flash('Queue deleted') })
 
   const startAdd   = (type, parentId = null) => { setAdding({ type, parentId }); setAddName('') }
@@ -504,6 +544,115 @@ function GovernanceTab({ flash }) {
       <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>Cancel</button>
     </div>
   )
+
+  // ── Mapping panel for a single hub ──────────────────────────────────────────
+  const HubMappingPanel = ({ hub }) => {
+    const existing = mappingForHub(hub.id)
+    const bpoOptions    = optionsForHub(hub.id, 'BPO - Hub')
+    const marketOptions = optionsForHub(hub.id, 'Market')
+    const hasScorecard  = scHubLinks.some(l => l.hub_id === hub.id)
+
+    const [bpo, setBpo]         = useState(existing.bpo)
+    const [markets, setMarkets] = useState(existing.markets)
+
+    const toggleMarket = (m) => {
+      if (pairClaimedElsewhere(hub.id, bpo, m)) return // can't claim a pair owned elsewhere
+      setMarkets(prev => {
+        const n = new Set(prev)
+        n.has(m) ? n.delete(m) : n.add(m)
+        return n
+      })
+    }
+
+    const save = async () => {
+      if (!bpo)            return flash('Select a BPO - Hub value.', false)
+      if (markets.size === 0) return flash('Select at least one market.', false)
+      setSavingHub(hub.id)
+      // Replace this hub's rows wholesale: delete then insert the current selection.
+      const del = await supabase.from('hub_governance_map').delete().eq('hub_id', hub.id)
+      if (del.error) { setSavingHub(null); return flash(del.error.message, false) }
+      const rows = [...markets].map(m => ({
+        hub_id: hub.id, workspace_id: hub.workspace_id, bpo_hub_value: bpo, market_value: m,
+      }))
+      const ins = await supabase.from('hub_governance_map').insert(rows)
+      setSavingHub(null)
+      if (ins.error) {
+        // Likely the unique (bpo,market) backstop firing — a pair is owned by another hub.
+        await loadGovernanceMapping()
+        return flash('Save failed — a BPO-Hub + Market pair is already mapped to another hub.', false)
+      }
+      await loadGovernanceMapping()
+      flash('Hub mapping saved')
+    }
+
+    if (!hasScorecard) {
+      return (
+        <div style={{ padding: '12px 16px 14px 64px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            No scorecard is tagged to this hub yet. Assign one in the Scorecards tab to configure its BPO - Hub and Market mapping.
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div style={{ padding: '14px 16px 16px 64px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+          Evaluation Mapping
+        </div>
+
+        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+          {/* BPO - Hub : single select */}
+          <div style={{ minWidth: 200 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>BPO - Hub (choose one)</label>
+            <select className="select select-sm" value={bpo}
+              onChange={e => setBpo(e.target.value)} style={{ width: '100%', maxWidth: 220 }}>
+              <option value="">Select…</option>
+              {bpoOptions.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </div>
+
+          {/* Market : multi select */}
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Markets (choose one or more)</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {marketOptions.length === 0
+                ? <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No market options on tagged scorecards.</span>
+                : marketOptions.map(m => {
+                  const on = markets.has(m)
+                  const claimed = bpo && pairClaimedElsewhere(hub.id, bpo, m)
+                  return (
+                    <button key={m} onClick={() => toggleMarket(m)} disabled={claimed}
+                      title={claimed ? 'This BPO-Hub + Market pair is already mapped to another hub' : ''}
+                      style={{
+                        fontSize: 12, padding: '4px 10px', borderRadius: 6, cursor: claimed ? 'not-allowed' : 'pointer',
+                        border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`,
+                        background: on ? 'var(--accent)22' : 'transparent',
+                        color: claimed ? 'var(--text-tertiary)' : on ? 'var(--accent)' : 'var(--text-secondary)',
+                        opacity: claimed ? 0.5 : 1, fontWeight: on ? 600 : 400,
+                      }}>
+                      {on ? '✓ ' : ''}{m}{claimed ? ' ·taken' : ''}
+                    </button>
+                  )
+                })
+              }
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-primary btn-sm" onClick={save} disabled={savingHub === hub.id}>
+            {savingHub === hub.id ? 'Saving…' : 'Save Mapping'}
+          </button>
+          {existing.bpo && (
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+              Currently: {existing.bpo} › {[...existing.markets].join(', ') || '—'}
+            </span>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -568,12 +717,13 @@ function GovernanceTab({ flash }) {
                 )}
                 {hubs.map((hub, hi) => {
                   const hubExpanded = expandedH[hub.id] ?? true
+                  const settingsOpen = expandedS[hub.id] ?? false
                   const queues = hub.queues || []
                   const isLast = hi === hubs.length - 1
                   return (
                     <div key={hub.id}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 10px 40px',
-                        borderBottom: (hubExpanded && queues.length > 0) || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
+                        borderBottom: (hubExpanded && queues.length > 0) || settingsOpen || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
                         <button onClick={() => setExpandedH(e => ({ ...e, [hub.id]: !hubExpanded }))}
                           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
                           {hubExpanded ? '▾' : '▸'}
@@ -585,10 +735,18 @@ function GovernanceTab({ flash }) {
                               backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
                               {hub.is_active ? 'Active' : 'Inactive'}
                             </span>
+                            {mappingForHub(hub.id).bpo && (
+                              <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
+                                {mappingForHub(hub.id).bpo} · {mappingForHub(hub.id).markets.size} market{mappingForHub(hub.id).markets.size === 1 ? '' : 's'}
+                              </span>
+                            )}
                           </div>
                         )}
                         {!isEditing(hub.id) && (
                           <div style={{ display: 'flex', gap: 6 }}>
+                            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: settingsOpen ? 'var(--accent)' : undefined, border: settingsOpen ? '1px solid var(--accent)44' : undefined }}
+                              onClick={() => setExpandedS(e => ({ ...e, [hub.id]: !settingsOpen }))}>⚙ Mapping</button>
                             <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
                             <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
                             <button className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleHub(hub)}>{hub.is_active ? 'Deactivate' : 'Activate'}</button>
@@ -596,6 +754,9 @@ function GovernanceTab({ flash }) {
                           </div>
                         )}
                       </div>
+
+                      {settingsOpen && <HubMappingPanel hub={hub} />}
+
                       {hubExpanded && (
                         <div>
                           {isAdding('queue', hub.id) && (
@@ -729,7 +890,7 @@ const CORE_META_FIELDS = [
   { label: 'Ticket ID',          field_type: 'number',   is_required: true },
   { label: 'Communication Date', field_type: 'date',     is_required: true },
   { label: 'Market',             field_type: 'dropdown', is_required: true, options: [] },
-  { label: 'BPO',                field_type: 'dropdown', is_required: true, options: [] },
+  { label: 'BPO - Hub',          field_type: 'dropdown', is_required: true, options: [] },
   { label: "Agent's Email",      field_type: 'text',     is_required: true },
   { label: 'Channel',            field_type: 'dropdown', is_required: true, options: [] },
 ]
