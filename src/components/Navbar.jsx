@@ -56,7 +56,7 @@ export default function Navbar() {
             className={`nav-item ${isActive('/admin') ? 'active' : ''}`}
             onClick={() => safeNavigate('/admin')}>
             <i className="ti ti-settings" aria-hidden="true" />
-            Admin
+            Control Room
           </button>
         )}
       </div>

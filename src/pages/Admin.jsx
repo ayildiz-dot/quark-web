@@ -328,7 +328,7 @@ function UsersTab({ profile, flash }) {
                       {canChangeRole(u) ? (
                         <select className="select select-sm" value={u.role}
                           onChange={e => changeRole(u.id, e.target.value)} style={{ width: '100%', maxWidth: 200 }}>
-                          <option value="viewer">Viewer</option>
+                          <option value="viewer">Agent</option>
                           <option value="evaluator">Evaluator</option>
                           <option value="admin">Admin</option>
                           {profile.role === 'owner' && <option value="owner">Owner</option>}
@@ -798,6 +798,17 @@ function GovernanceTab({ flash }) {
     )
   }
 
+  const expandAllDivisions = () => {
+    const next = { __none__: true }
+    divisions.forEach(d => { next[d.id] = true })
+    setExpandedDiv(next)
+  }
+  const collapseAllDivisions = () => {
+    const next = { __none__: false }
+    divisions.forEach(d => { next[d.id] = false })
+    setExpandedDiv(next)
+  }
+
   // Group workspaces by division. Divisions render in their stored order; an
   // "Unassigned" group collects workspaces with no division so none disappear.
   const wsByDivision = (divId) => workspaces.filter(w => (w.division_id || null) === divId)
@@ -812,7 +823,11 @@ function GovernanceTab({ flash }) {
           <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>Grouped by division · manage workspaces, hubs, and queues</div>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={() => startAdd('workspace')}>+ Add Workspace</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={expandAllDivisions}>Expand all</button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={collapseAllDivisions}>Collapse all</button>
+          <button className="btn btn-primary btn-sm" onClick={() => startAdd('workspace')}>+ Add Workspace</button>
+        </div>
       </div>
 
       {isAdding('workspace', null) && (
@@ -1393,7 +1408,7 @@ export default function Admin() {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1>Admin Panel</h1>
+          <h1>Control Room</h1>
           <p className="page-sub">Manage users, roles, sampling requirements and governance</p>
         </div>
       </div>
