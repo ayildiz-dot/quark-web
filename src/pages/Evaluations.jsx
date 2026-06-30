@@ -96,6 +96,7 @@ export default function Evaluations() {
       if (isAgent) {
         q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
       } else {
+        // Evaluators, admins, owners: see evaluations they created.
         q = q.eq('evaluator_id', profile.id)
       }
 
