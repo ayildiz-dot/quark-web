@@ -424,9 +424,11 @@ function UsersTab({ profile, flash }) {
 // ─── Governance Tab ────────────────────────────────────────────────────────────
 function GovernanceTab({ flash }) {
   const [workspaces, setWorkspaces] = useState([])
+  const [divisions,  setDivisions]  = useState([])   // read-only, from Dashboard
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
   const [expandedS,  setExpandedS]  = useState({})   // hub.id -> bool : mapping panel open
+  const [expandedDiv,setExpandedDiv]= useState({})   // division id (or '__none__') -> bool
   const [adding,     setAdding]     = useState(null)
   const [addName,    setAddName]    = useState('')
   const [editing,    setEditing]    = useState(null)
@@ -442,8 +444,12 @@ function GovernanceTab({ flash }) {
   useEffect(() => { loadAll(); loadGovernanceMapping() }, [])
 
   const loadAll = async () => {
-    const { data: ws } = await supabase.from('workspaces').select('*, hubs(*, queues(*))').order('position')
+    const [{ data: ws }, { data: divs }] = await Promise.all([
+      supabase.from('workspaces').select('*, hubs(*, queues(*))').order('position'),
+      supabase.from('divisions').select('id, name, is_active, position').order('position'),
+    ])
     setWorkspaces(ws || [])
+    setDivisions(divs || [])
   }
 
   const loadGovernanceMapping = async () => {
@@ -489,6 +495,14 @@ function GovernanceTab({ flash }) {
   const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); await supabase.from('hubs').delete().eq('id', hub.id); await loadAll(); await loadGovernanceMapping(); flash('Hub deleted') })
   const deleteQueue = (q)   => ask(`Permanently delete "${q.name}"? This cannot be undone.`,                             async () => { closeConfirm(); await supabase.from('queues').delete().eq('id', q.id);   await loadAll(); flash('Queue deleted') })
 
+  // Assign a workspace to a division (or clear it). Read-only divisions; this only sets the FK.
+  const setWorkspaceDivision = async (wsId, divisionId) => {
+    const { error } = await supabase.from('workspaces').update({ division_id: divisionId || null }).eq('id', wsId)
+    if (error) return flash(error.message, false)
+    await loadAll()
+    flash(divisionId ? 'Workspace moved to division' : 'Workspace removed from division')
+  }
+
   const startAdd   = (type, parentId = null) => { setAdding({ type, parentId }); setAddName('') }
   const cancelAdd  = () => { setAdding(null); setAddName('') }
   const startEdit  = (id, level, name) => { setEditing({ id, level }); setEditName(name) }
@@ -498,7 +512,7 @@ function GovernanceTab({ flash }) {
     const name = addName.trim()
     if (!name) return flash('Name is required.', false)
     if (adding.type === 'workspace') {
-      const { error } = await supabase.from('workspaces').insert({ name, is_active: true, position: workspaces.length })
+      const { error } = await supabase.from('workspaces').insert({ name, is_active: true, position: workspaces.length, division_id: adding.parentId || null })
       if (error) return flash(error.message, false)
     } else if (adding.type === 'hub') {
       const ws = workspaces.find(w => w.id === adding.parentId)
@@ -654,6 +668,141 @@ function GovernanceTab({ flash }) {
     )
   }
 
+  // ── A single workspace card (unchanged internals, now nestable under a division) ──
+  const WorkspaceCard = ({ ws }) => {
+    const wsExpanded = expanded[ws.id] ?? true
+    const hubs = ws.hubs || []
+    return (
+      <div className="card" style={{ marginBottom: 12, padding: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
+          borderBottom: wsExpanded && (hubs.length > 0 || isAdding('hub', ws.id)) ? '1px solid var(--border)' : 'none',
+          backgroundColor: 'var(--surface)' }}>
+          <button onClick={() => setExpanded(e => ({ ...e, [ws.id]: !wsExpanded }))}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 13, width: 20, flexShrink: 0 }}>
+            {wsExpanded ? '▾' : '▸'}
+          </button>
+          {isEditing(ws.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Workspace name" /></div> : (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{ws.name}</span>
+              <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+                backgroundColor: ws.is_active ? '#22c55e22' : '#64748b22', color: ws.is_active ? '#22c55e' : '#94a3b8' }}>
+                {ws.is_active ? 'Active' : 'Inactive'}
+              </span>
+            </div>
+          )}
+          {!isEditing(ws.id) && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <select className="select select-sm" value={ws.division_id || ''}
+                onChange={e => setWorkspaceDivision(ws.id, e.target.value)}
+                title="Division" style={{ height: 28, fontSize: 12, maxWidth: 170 }}>
+                <option value="">No division</option>
+                {divisions.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}{d.is_active ? '' : ' (inactive)'}</option>
+                ))}
+              </select>
+              <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ws.id, 'workspace', ws.name)}>Rename</button>
+              <button className={`btn btn-sm ${ws.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleWs(ws)}>{ws.is_active ? 'Deactivate' : 'Activate'}</button>
+              {!ws.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteWs(ws)}>Delete</button>}
+            </div>
+          )}
+        </div>
+        {wsExpanded && (
+          <div style={{ backgroundColor: 'var(--bg)' }}>
+            {isAdding('hub', ws.id) && (
+              <div style={{ padding: '10px 16px 10px 40px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Hub</div>
+                <AddInput placeholder="e.g. Concentrix Romania" />
+              </div>
+            )}
+            {hubs.map((hub, hi) => {
+              const hubExpanded = expandedH[hub.id] ?? true
+              const settingsOpen = expandedS[hub.id] ?? false
+              const queues = hub.queues || []
+              const isLast = hi === hubs.length - 1
+              return (
+                <div key={hub.id}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 10px 40px',
+                    borderBottom: (hubExpanded && queues.length > 0) || settingsOpen || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
+                    <button onClick={() => setExpandedH(e => ({ ...e, [hub.id]: !hubExpanded }))}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
+                      {hubExpanded ? '▾' : '▸'}
+                    </button>
+                    {isEditing(hub.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Hub name" /></div> : (
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>{hub.name}</span>
+                        <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+                          backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
+                          {hub.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                        {mappingForHub(hub.id).bpo && (
+                          <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                            backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
+                            {mappingForHub(hub.id).bpo} · {mappingForHub(hub.id).markets.size} market{mappingForHub(hub.id).markets.size === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {!isEditing(hub.id) && (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: settingsOpen ? 'var(--accent)' : undefined, border: settingsOpen ? '1px solid var(--accent)44' : undefined }}
+                          onClick={() => setExpandedS(e => ({ ...e, [hub.id]: !settingsOpen }))}>⚙ Mapping</button>
+                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
+                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
+                        <button className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleHub(hub)}>{hub.is_active ? 'Deactivate' : 'Activate'}</button>
+                        {!hub.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteHub(hub)}>Delete</button>}
+                      </div>
+                    )}
+                  </div>
+
+                  {settingsOpen && <HubMappingPanel hub={hub} />}
+
+                  {hubExpanded && (
+                    <div>
+                      {isAdding('queue', hub.id) && (
+                        <div style={{ padding: '8px 16px 8px 64px', borderBottom: '1px solid var(--border)' }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Queue</div>
+                          <AddInput placeholder="e.g. Colombia Market" />
+                        </div>
+                      )}
+                      {queues.map((q, qi) => (
+                        <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 64px',
+                          borderBottom: qi < queues.length - 1 ? '1px solid var(--border)' : 'none', backgroundColor: 'var(--surface)' }}>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: q.is_active ? '#22c55e' : '#64748b' }} />
+                          {isEditing(q.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Queue name" /></div> : (
+                            <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
+                          )}
+                          {!isEditing(q.id) && (
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
+                              <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
+                              {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {queues.length === 0 && !isAdding('queue', hub.id) && (
+                        <div style={{ padding: '8px 16px 8px 64px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No queues yet</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+            {hubs.length === 0 && !isAdding('hub', ws.id) && (
+              <div style={{ padding: '10px 16px 10px 40px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No hubs yet</div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Group workspaces by division. Divisions render in their stored order; an
+  // "Unassigned" group collects workspaces with no division so none disappear.
+  const wsByDivision = (divId) => workspaces.filter(w => (w.division_id || null) === divId)
+  const unassignedWs = workspaces.filter(w => !w.division_id)
+
   return (
     <div>
       {confirm && <ConfirmModal message={confirm.message} onYes={confirm.onYes} onNo={closeConfirm} />}
@@ -661,7 +810,7 @@ function GovernanceTab({ flash }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>Manage workspaces, hubs, and queues</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>Grouped by division · manage workspaces, hubs, and queues</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => startAdd('workspace')}>+ Add Workspace</button>
       </div>
@@ -670,6 +819,9 @@ function GovernanceTab({ flash }) {
         <div className="card" style={{ marginBottom: 12, padding: '12px 16px' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>New Workspace</div>
           <AddInput placeholder="e.g. Concentrix" />
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }}>
+            You can assign it to a division after creating it.
+          </div>
         </div>
       )}
 
@@ -677,126 +829,55 @@ function GovernanceTab({ flash }) {
         <div style={{ color: 'var(--text-secondary)', fontSize: 13, padding: '20px 0' }}>No workspaces yet.</div>
       )}
 
-      {workspaces.map(ws => {
-        const wsExpanded = expanded[ws.id] ?? true
-        const hubs = ws.hubs || []
+      {/* Division-grouped sections */}
+      {divisions.map(div => {
+        const wsList = wsByDivision(div.id)
+        const open = expandedDiv[div.id] ?? true
         return (
-          <div key={ws.id} className="card" style={{ marginBottom: 12, padding: 0, overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
-              borderBottom: wsExpanded && (hubs.length > 0 || isAdding('hub', ws.id)) ? '1px solid var(--border)' : 'none',
-              backgroundColor: 'var(--surface)' }}>
-              <button onClick={() => setExpanded(e => ({ ...e, [ws.id]: !wsExpanded }))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 13, width: 20, flexShrink: 0 }}>
-                {wsExpanded ? '▾' : '▸'}
+          <div key={div.id} style={{ marginBottom: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+              paddingBottom: 8, borderBottom: '2px solid var(--border)' }}>
+              <button onClick={() => setExpandedDiv(e => ({ ...e, [div.id]: !open }))}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 14, width: 18, flexShrink: 0 }}>
+                {open ? '▾' : '▸'}
               </button>
-              {isEditing(ws.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Workspace name" /></div> : (
-                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{ws.name}</span>
-                  <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
-                    backgroundColor: ws.is_active ? '#22c55e22' : '#64748b22', color: ws.is_active ? '#22c55e' : '#94a3b8' }}>
-                    {ws.is_active ? 'Active' : 'Inactive'}
-                  </span>
-                </div>
-              )}
-              {!isEditing(ws.id) && (
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ws.id, 'workspace', ws.name)}>Rename</button>
-                  <button className={`btn btn-sm ${ws.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleWs(ws)}>{ws.is_active ? 'Deactivate' : 'Activate'}</button>
-                  {!ws.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteWs(ws)}>Delete</button>}
-                </div>
-              )}
+              <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.02em' }}>{div.name}</span>
+              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
+                backgroundColor: div.is_active ? '#22c55e22' : '#64748b22', color: div.is_active ? '#22c55e' : '#94a3b8' }}>
+                {div.is_active ? 'Active' : 'Inactive'}
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+                {wsList.length} workspace{wsList.length === 1 ? '' : 's'}
+              </span>
             </div>
-            {wsExpanded && (
-              <div style={{ backgroundColor: 'var(--bg)' }}>
-                {isAdding('hub', ws.id) && (
-                  <div style={{ padding: '10px 16px 10px 40px', borderBottom: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Hub</div>
-                    <AddInput placeholder="e.g. Concentrix Romania" />
-                  </div>
-                )}
-                {hubs.map((hub, hi) => {
-                  const hubExpanded = expandedH[hub.id] ?? true
-                  const settingsOpen = expandedS[hub.id] ?? false
-                  const queues = hub.queues || []
-                  const isLast = hi === hubs.length - 1
-                  return (
-                    <div key={hub.id}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 10px 40px',
-                        borderBottom: (hubExpanded && queues.length > 0) || settingsOpen || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
-                        <button onClick={() => setExpandedH(e => ({ ...e, [hub.id]: !hubExpanded }))}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
-                          {hubExpanded ? '▾' : '▸'}
-                        </button>
-                        {isEditing(hub.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Hub name" /></div> : (
-                          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ fontSize: 13, fontWeight: 500 }}>{hub.name}</span>
-                            <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
-                              backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
-                              {hub.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                            {mappingForHub(hub.id).bpo && (
-                              <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                                backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
-                                {mappingForHub(hub.id).bpo} · {mappingForHub(hub.id).markets.size} market{mappingForHub(hub.id).markets.size === 1 ? '' : 's'}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {!isEditing(hub.id) && (
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: settingsOpen ? 'var(--accent)' : undefined, border: settingsOpen ? '1px solid var(--accent)44' : undefined }}
-                              onClick={() => setExpandedS(e => ({ ...e, [hub.id]: !settingsOpen }))}>⚙ Mapping</button>
-                            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
-                            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
-                            <button className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleHub(hub)}>{hub.is_active ? 'Deactivate' : 'Activate'}</button>
-                            {!hub.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteHub(hub)}>Delete</button>}
-                          </div>
-                        )}
-                      </div>
-
-                      {settingsOpen && <HubMappingPanel hub={hub} />}
-
-                      {hubExpanded && (
-                        <div>
-                          {isAdding('queue', hub.id) && (
-                            <div style={{ padding: '8px 16px 8px 64px', borderBottom: '1px solid var(--border)' }}>
-                              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Queue</div>
-                              <AddInput placeholder="e.g. Colombia Market" />
-                            </div>
-                          )}
-                          {queues.map((q, qi) => (
-                            <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 64px',
-                              borderBottom: qi < queues.length - 1 ? '1px solid var(--border)' : 'none', backgroundColor: 'var(--surface)' }}>
-                              <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: q.is_active ? '#22c55e' : '#64748b' }} />
-                              {isEditing(q.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Queue name" /></div> : (
-                                <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
-                              )}
-                              {!isEditing(q.id) && (
-                                <div style={{ display: 'flex', gap: 6 }}>
-                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
-                                  <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
-                                  {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                          {queues.length === 0 && !isAdding('queue', hub.id) && (
-                            <div style={{ padding: '8px 16px 8px 64px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No queues yet</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-                {hubs.length === 0 && !isAdding('hub', ws.id) && (
-                  <div style={{ padding: '10px 16px 10px 40px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No hubs yet</div>
-                )}
-              </div>
+            {open && (
+              wsList.length === 0
+                ? <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 0 8px 28px' }}>No workspaces in this division.</div>
+                : <div style={{ paddingLeft: 4 }}>{wsList.map(ws => <WorkspaceCard key={ws.id} ws={ws} />)}</div>
             )}
           </div>
         )
       })}
+
+      {/* Unassigned workspaces */}
+      {unassignedWs.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+            paddingBottom: 8, borderBottom: '2px dashed var(--border)' }}>
+            <button onClick={() => setExpandedDiv(e => ({ ...e, ['__none__']: !(e['__none__'] ?? true) }))}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 14, width: 18, flexShrink: 0 }}>
+              {(expandedDiv['__none__'] ?? true) ? '▾' : '▸'}
+            </button>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-secondary)' }}>Unassigned</span>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 'auto' }}>
+              {unassignedWs.length} workspace{unassignedWs.length === 1 ? '' : 's'} · pick a division to place
+            </span>
+          </div>
+          {(expandedDiv['__none__'] ?? true) && (
+            <div style={{ paddingLeft: 4 }}>{unassignedWs.map(ws => <WorkspaceCard key={ws.id} ws={ws} />)}</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
