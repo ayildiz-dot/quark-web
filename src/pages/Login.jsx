@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 
-export default function Login() {
+export default function Login({ confirmed = false }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [mode, setMode] = useState('login')
   const [resetSent, setResetSent] = useState(false)
+  const [signupSuccess, setSignupSuccess] = useState(false)
 
   const handleSubmit = async () => {
     if (!email || !password) return setError('Please enter your email and password.')
@@ -18,9 +19,19 @@ export default function Login() {
       if (mode === 'login') {
         result = await supabase.auth.signInWithPassword({ email, password })
       } else {
-        result = await supabase.auth.signUp({ email, password, options: { data: { full_name: email.split('@')[0] } } })
+        result = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { full_name: email.split('@')[0] },
+            emailRedirectTo: 'https://quark-iota.vercel.app'
+          }
+        })
       }
       if (result.error) throw result.error
+      if (mode === 'signup') {
+        setSignupSuccess(true)
+      }
     } catch (e) {
       setError(e.message || e.error_description || e.msg || JSON.stringify(e) || 'Something went wrong. Please try again.')
     } finally {
@@ -45,6 +56,21 @@ export default function Login() {
 
   return (
     <div className="login-page">
+      {signupSuccess && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}>
+          <div className="login-card" style={{ maxWidth: 380, textAlign: 'center' }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📧</div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 10 }}>Check your inbox</h2>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+              You've received an email. Please open it and confirm your email address.
+            </p>
+            <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}
+              onClick={() => { setSignupSuccess(false); setMode('login'); setEmail(''); setPassword('') }}>
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
       <div className="login-card">
         <div className="login-logo">
           <span style={{ fontSize: 32 }}>⬡</span>
@@ -52,6 +78,11 @@ export default function Login() {
         </div>
         <h1 className="login-title">{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
         <p className="login-sub">{mode === 'login' ? 'Sign in to your Kaizen Gaming QC account' : 'Sign up with your Kaizen Gaming email'}</p>
+        {confirmed && (
+          <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center', margin: '0 0 16px', lineHeight: 1.5 }}>
+            ✅ Email confirmed! Please sign in below.
+          </div>
+        )}
         {error && <div className="login-error">{error}</div>}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div className="form-field" style={{ minWidth: 'auto' }}>

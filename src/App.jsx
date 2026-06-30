@@ -111,6 +111,23 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [emailConfirmed] = useState(() =>
+    typeof window !== 'undefined' &&
+    (window.location.hash.includes('type=signup') ||
+     sessionStorage.getItem('quark_email_confirmed') === '1')
+  )
+
+  // When a user clicks the email-confirmation link, Supabase auto-creates a
+  // session. We don't want to drop them straight into Quark — sign that
+  // session out and reload to a clean state so they land on the sign-in page.
+  useEffect(() => {
+    if (window.location.hash.includes('type=signup')) {
+      sessionStorage.setItem('quark_email_confirmed', '1')
+      supabase.auth.signOut().then(() => {
+        window.location.replace('/')
+      })
+    }
+  }, [])
 
   const fetchProfile = async (u) => {
     const { data } = await supabase
@@ -142,6 +159,7 @@ export default function App() {
       if (session?.user) {
         fetchProfile(session.user)
         if (event === 'SIGNED_IN') {
+          sessionStorage.removeItem('quark_email_confirmed')
           supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', session.user.id).then(({ error }) => {
             if (error) console.error('last_login update failed:', error.message)
             else console.log('last_login updated for', session.user.email)
@@ -157,6 +175,9 @@ export default function App() {
     setUser(null)
     setProfile(null)
   }
+
+  // Just confirmed their email via the link — force the sign-in page.
+  if (emailConfirmed && !user) return <Login confirmed />
 
   if (loading) return (
     <div className="fullpage-loader">
