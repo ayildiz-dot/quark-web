@@ -491,11 +491,17 @@ export default function ScorecardDashboard() {
       const isAgent = role === 'viewer'
       const isEvaluator = role === 'evaluator'
 
-      // Evaluator visibility: only scorecards assigned to their hubs.
-      // If this scorecard isn't in their scope, show no evaluations.
+      // Evaluator visibility gates:
+      //  Gate 1 (scorecard access): the scorecard must be tagged to a hub in one of
+      //    their workspaces, else they see nothing (evaluatorBlocked).
+      //  Gate 2 (row-level): they only see evaluation rows whose stamped workspace_id
+      //    is one of their assigned workspaces — even if the scorecard is shared with
+      //    other workspaces. Enforced via .in('workspace_id', evaluatorWorkspaceIds).
       let evaluatorBlocked = false
+      let evaluatorWorkspaceIds = []
       if (isEvaluator) {
-        const { workspaceScorecardIds } = await getEvaluatorScope(profile.id)
+        const { workspaceScorecardIds, workspaceIds } = await getEvaluatorScope(profile.id)
+        evaluatorWorkspaceIds = workspaceIds || []
         if (!workspaceScorecardIds.includes(scorecardId)) evaluatorBlocked = true
       }
 
@@ -505,11 +511,18 @@ export default function ScorecardDashboard() {
         (async () => {
           if (evaluatorBlocked) return { data: [] }
           let evQ = supabase.from('evaluations')
-            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version')
+            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version, hub_id, workspace_id')
             .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type)
           if (isAgent) {
+            // Agents: scoped to their own results by email. No workspace filter.
             evQ = evQ.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
+          } else if (isEvaluator) {
+            // Evaluators: row-level workspace isolation. If they somehow have no
+            // workspaces, they see nothing (empty .in list would match nothing anyway).
+            if (!evaluatorWorkspaceIds.length) return { data: [] }
+            evQ = evQ.in('workspace_id', evaluatorWorkspaceIds)
           }
+          // Admins / owners: no additional filter — full visibility.
           return await evQ
         })(),
       ])
