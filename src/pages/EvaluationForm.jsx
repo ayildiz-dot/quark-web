@@ -296,6 +296,33 @@ export default function EvaluationForm() {
         field_id: f.id, label: f.label, value: metaValues[f.id] || ''
       }))
 
+      // ── Governance resolver (blocking) ───────────────────────────────────
+      // Match the submitted (BPO - Hub, Market) pair to a hub in hub_governance_map.
+      // If it doesn't resolve, BLOCK submission — the evaluator must fix the metadata
+      // (or an admin must map the pair in Control Room → Governance). Their in-progress
+      // work stays on-screen and can be saved as a draft. Runs once, here at submit;
+      // resolves regardless of hub active state.
+      const bpoHubValue = metaPayload.find(f => f.label === 'BPO - Hub')?.value || ''
+      const marketValue = metaPayload.find(f => f.label === 'Market')?.value || ''
+      if (!bpoHubValue || !marketValue) {
+        setSubmitting(false)
+        leavingRef.current = false
+        return flash('Please select both BPO - Hub and Market before submitting.', false)
+      }
+      const { data: govMatch } = await supabase
+        .from('hub_governance_map')
+        .select('hub_id, workspace_id')
+        .eq('bpo_hub_value', bpoHubValue)
+        .eq('market_value', marketValue)
+        .maybeSingle()
+      if (!govMatch) {
+        setSubmitting(false)
+        leavingRef.current = false
+        return flash(`This BPO - Hub + Market combination (${bpoHubValue} + ${marketValue}) isn't mapped to any hub. Ask an admin to map it in Control Room → Governance, then submit. You can Save Draft in the meantime.`, false)
+      }
+      const resolvedHubId = govMatch.hub_id
+      const resolvedWorkspaceId = govMatch.workspace_id
+
       if (selectedScorecard.type === 'dsat') {
         const visitedSectionIds = new Set([...dsatSectionHistory, dsatCurrentSectionId])
         const visitedQuestions = dsatQuestions.filter(q => visitedSectionIds.has(q.section_id))
@@ -307,6 +334,7 @@ export default function EvaluationForm() {
           evaluator_id: profile.id,
           score: 100, failed_critical: false,
           metadata_values: [...metaPayload, ...dsatPayload],
+          hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
           overall_comment: null, status: 'submitted',
           evaluation_type: selectedScorecard.type,
           scorecard_version: selectedScorecard.version || 1,
@@ -320,6 +348,7 @@ export default function EvaluationForm() {
           evaluator_id: profile.id,
           score, failed_critical,
           metadata_values: metaPayload,
+          hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
           overall_comment: overallComment.trim(),
           status: 'submitted',
           evaluation_type: selectedScorecard.type,
