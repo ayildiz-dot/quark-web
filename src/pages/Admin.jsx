@@ -1012,7 +1012,8 @@ const seededFieldsForType = (type) => type === 'dsat' ? [...CORE_META_FIELDS, ..
 function ScorecardsTab({ profile, flash }) {
   const navigate = useNavigate()
   const [scorecards, setScorecards] = useState([])
-  const [workspaces, setWorkspaces] = useState([]) // [{id,name, hubs:[{id,name, queues:[{id,name}]}]}]
+  const [workspaces, setWorkspaces] = useState([]) // [{id,name,division_id, hubs:[{id,name, queues:[{id,name}]}]}]
+  const [divisions, setDivisions] = useState([])    // [{id,name,is_active}]
   const [scHubs, setScHubs] = useState({})          // scorecardId -> Set(hubId)  (the real assignment)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -1020,6 +1021,7 @@ function ScorecardsTab({ profile, flash }) {
   const [newDesc, setNewDesc] = useState('')
   const [newType, setNewType] = useState('quality')
   const [newThreshold, setNewThreshold] = useState(90)
+  const [newDivision, setNewDivision] = useState('')   // division NAME (matches scorecards.division text column)
   const [expandedRow, setExpandedRow] = useState(null)      // scorecard id row expanded
   const [openWs, setOpenWs] = useState({})                  // `${scId}:${wsId}` -> bool
   const [openHub, setOpenHub] = useState({})                // `${scId}:${hubId}` -> bool
@@ -1030,13 +1032,15 @@ function ScorecardsTab({ profile, flash }) {
   useEffect(() => { loadAll() }, [])
 
   const loadAll = async () => {
-    const [{ data: sc }, { data: ws }, { data: links }] = await Promise.all([
+    const [{ data: sc }, { data: ws }, { data: links }, { data: divs }] = await Promise.all([
       supabase.from('scorecards').select('*, users(name)').order('created_at', { ascending: false }),
-      supabase.from('workspaces').select('id, name, is_active, hubs(id, name, is_active, queues(id, name, is_active))').eq('is_active', true).order('name'),
+      supabase.from('workspaces').select('id, name, is_active, division_id, hubs(id, name, is_active, queues(id, name, is_active))').eq('is_active', true).order('name'),
       supabase.from('scorecard_hubs').select('scorecard_id, hub_id'),
+      supabase.from('divisions').select('id, name, is_active, position').order('position'),
     ])
     setScorecards(sc || [])
     setWorkspaces(ws || [])
+    setDivisions(divs || [])
     const map = {}
     ;(links || []).forEach(({ scorecard_id, hub_id }) => {
       if (!map[scorecard_id]) map[scorecard_id] = new Set()
@@ -1051,9 +1055,15 @@ function ScorecardsTab({ profile, flash }) {
 
   const createScorecard = async () => {
     if (!newName.trim()) return flash('Scorecard name is required.', false)
+    if (!newDivision) return flash('Please choose a division. Every scorecard must belong to a division.', false)
     const { data, error } = await supabase
       .from('scorecards')
-      .insert({ name: newName.trim(), description: newDesc.trim(), type: newType, created_by: profile.id, pass_threshold: newType === 'quality' ? Number(newThreshold) || 90 : null })
+      .insert({
+        name: newName.trim(), description: newDesc.trim(), type: newType,
+        created_by: profile.id,
+        division: newDivision,
+        pass_threshold: newType === 'quality' ? Number(newThreshold) || 90 : null
+      })
       .select().single()
     if (error) return flash(error.message, false)
 
@@ -1068,7 +1078,7 @@ function ScorecardsTab({ profile, flash }) {
     }))
     await supabase.from('dashboard_widgets').insert(starterWidgets)
 
-    setCreating(false); setNewName(''); setNewDesc(''); setNewType('quality'); setNewThreshold(90)
+    setCreating(false); setNewName(''); setNewDesc(''); setNewType('quality'); setNewThreshold(90); setNewDivision('')
     navigate(`/scorecards/${data.id}/edit`)
   }
 
@@ -1124,24 +1134,24 @@ function ScorecardsTab({ profile, flash }) {
   }
 
   // ── Expand all / Collapse all (within one scorecard's tree) ─────────────────
-  const expandAll = (scId) => {
+  const expandAll = (scId, wsListForCard) => {
     const wsOpen = {}, hubOpen = {}
-    for (const ws of workspaces) {
+    for (const ws of wsListForCard) {
       wsOpen[`${scId}:${ws.id}`] = true
       for (const hub of (ws.hubs || [])) hubOpen[`${scId}:${hub.id}`] = true
     }
     setOpenWs(o => ({ ...o, ...wsOpen }))
     setOpenHub(o => ({ ...o, ...hubOpen }))
   }
-  const collapseAll = (scId) => {
+  const collapseAll = (scId, wsListForCard) => {
     setOpenWs(o => {
       const n = { ...o }
-      for (const ws of workspaces) n[`${scId}:${ws.id}`] = false
+      for (const ws of wsListForCard) n[`${scId}:${ws.id}`] = false
       return n
     })
     setOpenHub(o => {
       const n = { ...o }
-      for (const ws of workspaces) for (const hub of (ws.hubs || [])) n[`${scId}:${hub.id}`] = false
+      for (const ws of wsListForCard) for (const hub of (ws.hubs || [])) n[`${scId}:${hub.id}`] = false
       return n
     })
   }
@@ -1169,28 +1179,93 @@ function ScorecardsTab({ profile, flash }) {
     )
   }
 
-  // ── Workspace → Hub → Queue cascade for one scorecard ───────────────────────
-  const AssignmentTree = ({ scId }) => {
+  // Resolve a scorecard's division NAME to a division id (bridge between the two systems).
+  const divisionIdForName = (name) => divisions.find(d => d.name === name)?.id || null
+
+  // ── Workspace → Hub → Queue cascade for one scorecard, filtered to its division ──
+  const AssignmentTree = ({ sc }) => {
+    const scId = sc.id
     const assigned = scHubs[scId] || new Set()
+    const scDivId = divisionIdForName(sc.division)
+    const divisionResolved = !!scDivId
+
+    // Workspaces shown in the toggle tree: only those in the scorecard's division.
+    const inDivisionWs = divisionResolved
+      ? workspaces.filter(w => w.division_id === scDivId)
+      : workspaces // fail-safe: if the scorecard's division name doesn't resolve, show all
+
+    // Orphan detection: hubs currently assigned to this scorecard that live in a
+    // workspace OUTSIDE the scorecard's division (would otherwise be hidden).
+    const orphanTags = []
+    if (divisionResolved) {
+      for (const ws of workspaces) {
+        if (ws.division_id === scDivId) continue
+        for (const hub of (ws.hubs || [])) {
+          if (assigned.has(hub.id)) orphanTags.push({ ws, hub })
+        }
+      }
+    }
+
+    const untagOrphan = async (hubId) => {
+      await supabase.from('scorecard_hubs').delete().eq('scorecard_id', scId).eq('hub_id', hubId)
+      setScHubs(prev => {
+        const next = { ...prev }
+        const set = new Set(next[scId] || [])
+        set.delete(hubId)
+        next[scId] = set
+        return next
+      })
+      flash('Out-of-division assignment removed')
+    }
+
     return (
       <div style={{ padding: '16px 18px 18px 24px', backgroundColor: 'var(--bg)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Assign to Hubs
+            Assign to Hubs {sc.division ? `· ${sc.division}` : ''}
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => expandAll(scId)}>Expand all</button>
-            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => collapseAll(scId)}>Collapse all</button>
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => expandAll(scId, inDivisionWs)}>Expand all</button>
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => collapseAll(scId, inDivisionWs)}>Collapse all</button>
           </div>
         </div>
 
-        {workspaces.length === 0 ? (
+        {/* Fail-safe warning: division name didn't resolve to a division record. */}
+        {!divisionResolved && (
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'rgba(245,158,11,0.1)',
+            border: '1px solid rgba(245,158,11,0.4)', borderRadius: 8, fontSize: 12.5, color: 'var(--text-primary)' }}>
+            ⚠️ This scorecard's division {sc.division ? `("${sc.division}")` : ''} doesn't match any division on record, so all workspaces are shown. Set a valid division in the scorecard's Settings.
+          </div>
+        )}
+
+        {/* Orphan warning: existing assignments outside the scorecard's division. */}
+        {orphanTags.length > 0 && (
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'rgba(245,158,11,0.1)',
+            border: '1px solid rgba(245,158,11,0.4)', borderRadius: 8, fontSize: 12.5, color: 'var(--text-primary)' }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>⚠️ Assignments outside this scorecard's division</div>
+            <div style={{ marginBottom: 8, color: 'var(--text-secondary)' }}>
+              This scorecard is tagged to hubs in workspaces that aren't in its division ({sc.division}). These won't show in the tree below. Remove them, or change the scorecard's division in Settings.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {orphanTags.map(({ ws, hub }) => (
+                <div key={hub.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px' }}>
+                  <span style={{ fontSize: 12 }}>{ws.name} › {hub.name}</span>
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--danger)' }}
+                    onClick={() => untagOrphan(hub.id)}>Remove</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {inDivisionWs.length === 0 ? (
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No active workspaces. Create one in the Governance tab.
+            No active workspaces in this scorecard's division ({sc.division}). Assign a workspace to this division in the Governance tab first.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {workspaces.map(ws => {
+            {inDivisionWs.map(ws => {
               const wsOn = wsIsOn(scId, ws)
               const wsOpen = openWs[`${scId}:${ws.id}`] ?? false
               const hubs = ws.hubs || []
@@ -1267,6 +1342,7 @@ function ScorecardsTab({ profile, flash }) {
             {expandable && <th style={{ width: 32 }}></th>}
             <th>Name</th>
             <th>Type</th>
+            <th>Division</th>
             <th>Description</th>
             <th>Created By</th>
             <th>Created At</th>
@@ -1276,7 +1352,7 @@ function ScorecardsTab({ profile, flash }) {
         </thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={(expandable ? 1 : 0) + (canEdit ? 7 : 6)} className="empty-row">
+            <tr><td colSpan={(expandable ? 1 : 0) + (canEdit ? 8 : 7)} className="empty-row">
               {expandable ? 'No published scorecards.' : 'No draft scorecards.'}
             </td></tr>
           )}
@@ -1299,6 +1375,9 @@ function ScorecardsTab({ profile, flash }) {
                     )}
                   </td>
                   <td><TypeBadge type={sc.type} /></td>
+                  <td style={{ color: sc.division ? 'var(--text-primary)' : 'var(--danger)', fontSize: 13 }}>
+                    {sc.division || 'None'}
+                  </td>
                   <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '-'}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>{sc.users?.name || '-'}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>{new Date(sc.created_at).toLocaleDateString()}</td>
@@ -1314,8 +1393,8 @@ function ScorecardsTab({ profile, flash }) {
                 </tr>
                 {expandable && isExpanded && (
                   <tr key={sc.id + '-exp'}>
-                    <td colSpan={(canEdit ? 8 : 7)} style={{ padding: 0 }}>
-                      <AssignmentTree scId={sc.id} />
+                    <td colSpan={(canEdit ? 9 : 8)} style={{ padding: 0 }}>
+                      <AssignmentTree sc={sc} />
                     </td>
                   </tr>
                 )}
@@ -1326,6 +1405,8 @@ function ScorecardsTab({ profile, flash }) {
       </table>
     </div>
   )
+
+  const activeDivisions = divisions.filter(d => d.is_active)
 
   return (
     <div>
@@ -1352,6 +1433,13 @@ function ScorecardsTab({ profile, flash }) {
               <input className="input" placeholder="e.g. Chat Quality Scorecard" value={newName} onChange={e => setNewName(e.target.value)} />
             </div>
             <div className="form-field">
+              <label>Division <span style={{ color: 'var(--danger)' }}>*</span></label>
+              <select className="select" value={newDivision} onChange={e => setNewDivision(e.target.value)}>
+                <option value="">— Select a division —</option>
+                {activeDivisions.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+              </select>
+            </div>
+            <div className="form-field">
               <label>Description (optional)</label>
               <input className="input" placeholder="What is this scorecard for?" value={newDesc} onChange={e => setNewDesc(e.target.value)} />
             </div>
@@ -1372,10 +1460,15 @@ function ScorecardsTab({ profile, flash }) {
               <label>&nbsp;</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn btn-primary" onClick={createScorecard}>Create & Edit</button>
-                <button className="btn btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
+                <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewDivision('') }}>Cancel</button>
               </div>
             </div>
           </div>
+          {activeDivisions.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 10 }}>
+              No active divisions exist yet. Create one from the Dashboard before adding a scorecard.
+            </div>
+          )}
         </div>
       )}
 
