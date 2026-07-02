@@ -24,16 +24,35 @@ export default function Evaluations() {
   const [showQuality, setShowQuality] = useState(true)
   const [showDsat,    setShowDsat]    = useState(true)
 
+  // Admin/Owner only: filter by which evaluator submitted.
+  const [evaluatorFilter, setEvaluatorFilter] = useState('') // '' = all
+  const [evaluatorList,   setEvaluatorList]   = useState([])  // [{id, name, email}]
+  const isPrivileged = ['admin', 'owner'].includes(profile?.role)
+
   const LIMIT = 50
 
   useEffect(() => {
     loadScorecards()
-  }, [])
+    if (['admin', 'owner'].includes(profile?.role)) loadEvaluatorList()
+  }, [profile])
+
+  // Build the evaluator dropdown from people who have actually submitted evaluations.
+  const loadEvaluatorList = async () => {
+    const { data: evs } = await supabase
+      .from('evaluations')
+      .select('evaluator_id, users(name, email)')
+      .eq('status', 'submitted')
+    const byId = {}
+    ;(evs || []).forEach(r => {
+      if (r.evaluator_id && r.users) byId[r.evaluator_id] = { id: r.evaluator_id, name: r.users.name, email: r.users.email }
+    })
+    setEvaluatorList(Object.values(byId).sort((a, b) => (a.email || '').localeCompare(b.email || '')))
+  }
 
   // Refetch whenever the type toggles change (and on first mount once profile is ready)
   useEffect(() => {
     if (profile?.id) fetchEvals(1)
-  }, [profile, showQuality, showDsat])
+  }, [profile, showQuality, showDsat, evaluatorFilter])
 
   useEffect(() => {
     if (profile?.id) loadDrafts()
@@ -95,8 +114,11 @@ export default function Evaluations() {
 
       if (isAgent) {
         q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
+      } else if (isPrivileged) {
+        // Admins & owners see ALL submitted evaluations; optionally narrowed to one evaluator.
+        if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
       } else {
-        // Evaluators, admins, owners: see evaluations they created.
+        // Evaluators: scoped to evaluations they created.
         q = q.eq('evaluator_id', profile.id)
       }
 
@@ -114,7 +136,7 @@ export default function Evaluations() {
     } finally {
       setLoading(false)
     }
-  }, [filters, profile, showQuality, showDsat])
+  }, [filters, profile, showQuality, showDsat, evaluatorFilter])
 
   const openDetail = async (id) => {
     const { data: ev } = await supabase
@@ -156,6 +178,8 @@ export default function Evaluations() {
       .limit(10000)
     if (isAgent) {
       q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
+    } else if (isPrivileged) {
+      if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
     } else {
       q = q.eq('evaluator_id', profile.id)
     }
@@ -323,7 +347,7 @@ export default function Evaluations() {
       <div className="page-header">
         <div>
           <h1>Evaluations</h1>
-          <p className="page-sub">{total.toLocaleString()} {profile?.role === 'viewer' ? 'evaluations on your interactions' : 'of your evaluations'}</p>
+          <p className="page-sub">{total.toLocaleString()} {profile?.role === 'viewer' ? 'evaluations on your interactions' : isPrivileged ? 'evaluations (all evaluators)' : 'of your evaluations'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
@@ -358,6 +382,15 @@ export default function Evaluations() {
             <option key={sc.id} value={sc.id}>{sc.name}</option>
           ))}
         </select>
+        {isPrivileged && (
+          <select className="select" value={evaluatorFilter}
+            onChange={e => setEvaluatorFilter(e.target.value)}>
+            <option value="">All evaluators</option>
+            {evaluatorList.map(ev => (
+              <option key={ev.id} value={ev.id}>{ev.email || ev.name || 'Unknown'}</option>
+            ))}
+          </select>
+        )}
         <input type="date" className="input" value={filters.dateFrom}
           onChange={e => setFilters(f => ({ ...f, dateFrom: e.target.value }))} />
         <input type="date" className="input" value={filters.dateTo}
@@ -365,6 +398,7 @@ export default function Evaluations() {
         <button className="btn btn-primary" onClick={() => fetchEvals(1)}>Apply</button>
         <button className="btn btn-ghost" onClick={() => {
           setFilters({ search: '', dateFrom: '', dateTo: '', scorecard: '' })
+          setEvaluatorFilter('')
           setTimeout(() => fetchEvals(1), 0)
         }}>Clear</button>
 
