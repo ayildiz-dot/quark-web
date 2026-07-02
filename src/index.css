@@ -2,27 +2,27 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg-primary:    #12161f;
-  --bg-secondary:  #191e2a;
-  --bg-surface:    #212836;
-  --bg-hover:      #2a3346;
+  --bg-primary:    #1a1f2b;
+  --bg-secondary:  #222836;
+  --bg-surface:    #2b3243;
+  --bg-hover:      #363f54;
   --accent:        #3b82f6;
   --accent-hover:  #2563eb;
-  --accent-light:  #24395c;
+  --accent-light:  #2c4368;
   --success:       #10b981;
-  --success-light: #0a5843;
+  --success-light: #0d6b52;
   --danger:        #ef4444;
-  --danger-light:  #5c1616;
+  --danger-light:  #6e1c1c;
   --warning:       #f59e0b;
-  --warning-light: #5c2606;
-  --text-primary:  #f1f5f9;
-  --text-secondary:#a3b0c2;
-  --text-tertiary: #64748b;
-  --border:        #2c3444;
-  --border-light:  #3d4a63;
+  --warning-light: #6e2f08;
+  --text-primary:  #f3f6fa;
+  --text-secondary:#aab6c8;
+  --text-tertiary: #6b7a90;
+  --border:        #3a4457;
+  --border-light:  #48566f;
   --radius:        8px;
   --radius-lg:     12px;
-  --shadow:        0 4px 24px rgba(0,0,0,0.5);
+  --shadow:        0 4px 24px rgba(0,0,0,0.45);
 }
 
 [data-theme="light"] {
