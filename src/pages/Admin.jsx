@@ -81,8 +81,17 @@ function UsersTab({ profile, flash }) {
     setUserQueues(map)
   }
 
-  const [roleFilter, setRoleFilter] = useState('all')
-  const [govFilter,  setGovFilter]  = useState('all')
+  const [roleFilter,   setRoleFilter]   = useState('all')
+  const [govFilter,    setGovFilter]    = useState('all')
+  const [bpoHubFilter, setBpoHubFilter] = useState('all')
+  const [marketFilter, setMarketFilter] = useState('all')
+
+  const bpoHubOptions = useMemo(() =>
+    [...new Set(users.map(u => u.user_bpo_hub).filter(v => v && v.trim()))].sort()
+  , [users])
+  const marketOptions = useMemo(() =>
+    [...new Set(users.map(u => u.user_market).filter(v => v && v.trim()))].sort()
+  , [users])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -92,9 +101,11 @@ function UsersTab({ profile, flash }) {
       const hasQueue = (userQueues[u.id] || []).length > 0
       if (govFilter === 'assigned'   && !hasQueue) return false
       if (govFilter === 'unassigned' &&  hasQueue) return false
+      if (bpoHubFilter !== 'all' && (u.user_bpo_hub || '') !== bpoHubFilter) return false
+      if (marketFilter !== 'all' && (u.user_market  || '') !== marketFilter) return false
       return true
     })
-  }, [users, search, roleFilter, govFilter, userQueues])
+  }, [users, search, roleFilter, govFilter, userQueues, bpoHubFilter, marketFilter])
 
   const toggleSelect  = (id) => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleAll     = () => { if (selected.size === filtered.length) setSelected(new Set()); else setSelected(new Set(filtered.map(u => u.id))) }
@@ -205,6 +216,16 @@ function UsersTab({ profile, flash }) {
           <option value="assigned">Assigned to queue</option>
           <option value="unassigned">Not assigned</option>
         </select>
+        <select className="select" style={{ height: 36, fontSize: 13, minWidth: 150 }}
+          value={bpoHubFilter} onChange={e => setBpoHubFilter(e.target.value)}>
+          <option value="all">All BPO - Hubs</option>
+          {bpoHubOptions.map(v => <option key={v} value={v}>{v}</option>)}
+        </select>
+        <select className="select" style={{ height: 36, fontSize: 13, minWidth: 140 }}
+          value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <option value="all">All Markets</option>
+          {marketOptions.map(v => <option key={v} value={v}>{v}</option>)}
+        </select>
         {selected.size > 0 && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center',
             backgroundColor: 'var(--surface)', border: '1px solid var(--border)',
@@ -252,7 +273,7 @@ function UsersTab({ profile, flash }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '32px 28px 1fr 1fr 90px 1fr 28px',
+        <div style={{ display: 'grid', gridTemplateColumns: '32px 28px 1fr 1fr 90px 110px 110px 1fr 28px',
           gap: 12, alignItems: 'center', padding: '0 16px',
           fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
           textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -262,6 +283,8 @@ function UsersTab({ profile, flash }) {
           <div>Name / Email</div>
           <div>Role</div>
           <div>Status</div>
+          <div>BPO - Hub</div>
+          <div>Market</div>
           <div>Governance</div>
           <div />
         </div>
@@ -278,7 +301,7 @@ function UsersTab({ profile, flash }) {
           const queues     = userQueues[u.id] || []
           return (
             <div key={u.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '32px 28px 1fr 1fr 90px 1fr 28px',
+              <div style={{ display: 'grid', gridTemplateColumns: '32px 28px 1fr 1fr 90px 110px 110px 1fr 28px',
                 gap: 12, alignItems: 'center', padding: '12px 16px', cursor: 'pointer',
                 borderBottom: isExpanded ? '1px solid var(--border)' : 'none' }}
                 onClick={() => setExpanded(isExpanded ? null : u.id)}>
@@ -301,6 +324,12 @@ function UsersTab({ profile, flash }) {
                     color: u.active ? '#22c55e' : '#ef4444' }}>
                     {u.active ? 'Active' : 'Inactive'}
                   </span>
+                </div>
+                <div style={{ fontSize: 13, color: u.user_bpo_hub ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                  {u.user_bpo_hub || '—'}
+                </div>
+                <div style={{ fontSize: 13, color: u.user_market ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                  {u.user_market || '—'}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {queues.length === 0
