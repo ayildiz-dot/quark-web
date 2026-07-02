@@ -273,8 +273,8 @@ function UsersTab({ profile, flash }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '32px 28px 1fr 1fr 90px 110px 110px 1fr 28px',
-          gap: 12, alignItems: 'center', padding: '0 16px',
+        <div style={{ display: 'grid', gridTemplateColumns: '28px 20px 1.2fr 80px 70px 90px 90px 1fr 20px',
+          gap: 8, alignItems: 'center', padding: '0 12px',
           fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
           textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           <input type="checkbox" checked={filtered.length > 0 && selected.size === filtered.length}
@@ -301,8 +301,8 @@ function UsersTab({ profile, flash }) {
           const queues     = userQueues[u.id] || []
           return (
             <div key={u.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '32px 28px 1fr 1fr 90px 110px 110px 1fr 28px',
-                gap: 12, alignItems: 'center', padding: '12px 16px', cursor: 'pointer',
+              <div style={{ display: 'grid', gridTemplateColumns: '28px 20px 1.2fr 80px 70px 90px 90px 1fr 20px',
+                gap: 8, alignItems: 'center', padding: '10px 12px', cursor: 'pointer',
                 borderBottom: isExpanded ? '1px solid var(--border)' : 'none' }}
                 onClick={() => setExpanded(isExpanded ? null : u.id)}>
                 <div onClick={e => e.stopPropagation()}>
@@ -325,10 +325,10 @@ function UsersTab({ profile, flash }) {
                     {u.active ? 'Active' : 'Inactive'}
                   </span>
                 </div>
-                <div style={{ fontSize: 13, color: u.user_bpo_hub ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                <div style={{ fontSize: 12, color: u.user_bpo_hub ? 'var(--text-primary)' : 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {u.user_bpo_hub || '—'}
                 </div>
-                <div style={{ fontSize: 13, color: u.user_market ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
+                <div style={{ fontSize: 12, color: u.user_market ? 'var(--text-primary)' : 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {u.user_market || '—'}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
