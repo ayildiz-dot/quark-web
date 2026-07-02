@@ -426,6 +426,7 @@ function GovernanceTab({ flash }) {
   const [workspaces, setWorkspaces] = useState([])
   const [divisions,  setDivisions]  = useState([])   // read-only, from Dashboard
   const [scorecards, setScorecards] = useState([])   // published scorecards, for the queue picker
+  const [scMarkets,  setScMarkets]  = useState({})   // scorecardId -> [market option strings]
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
   const [expandedS,  setExpandedS]  = useState({})   // queue.id -> bool : mapping panel open
@@ -448,16 +449,21 @@ function GovernanceTab({ flash }) {
     setWorkspaces(ws || [])
     setDivisions(divs || [])
     setScorecards(sc || [])
-  }
-
-  // All distinct market values already used across queues — feeds the "existing markets" dropdown.
-  const knownMarkets = useMemo(() => {
-    const set = new Set()
-    for (const ws of workspaces) for (const hub of (ws.hubs || [])) for (const q of (hub.queues || [])) {
-      if (q.market_value) set.add(q.market_value)
+    // Pull each scorecard's builder-defined Market option list.
+    const scIds = (sc || []).map(x => x.id)
+    if (scIds.length) {
+      const { data: mf } = await supabase
+        .from('scorecard_metadata_fields')
+        .select('scorecard_id, options')
+        .eq('label', 'Market')
+        .in('scorecard_id', scIds)
+      const mm = {}
+      ;(mf || []).forEach(row => { mm[row.scorecard_id] = (row.options || []).filter(Boolean) })
+      setScMarkets(mm)
+    } else {
+      setScMarkets({})
     }
-    return [...set].sort()
-  }, [workspaces])
+  }
 
   const scorecardById = (id) => scorecards.find(s => s.id === id)
 
@@ -541,10 +547,16 @@ function GovernanceTab({ flash }) {
   const QueueMappingPanel = ({ queue, hub, ws }) => {
     const [scId, setScId]     = useState(queue.scorecard_id || '')
     const [market, setMarket] = useState(queue.market_value || '')
-    const [addingMarket, setAddingMarket] = useState(false)
-    const [newMarket, setNewMarket] = useState('')
 
-    const effectiveMarket = addingMarket ? newMarket.trim() : market
+    // Market options come live from the selected scorecard's builder list.
+    const marketOptions = (scMarkets[scId] || [])
+    // If the currently-saved market isn't in the new scorecard's list, surface it
+    // so it's still visible (and re-selectable) rather than silently dropped.
+    const optionsToShow = market && !marketOptions.includes(market)
+      ? [market, ...marketOptions]
+      : marketOptions
+
+    const effectiveMarket = market
 
     const save = async () => {
       if (!scId)            return flash('Select a scorecard for this queue.', false)
@@ -600,7 +612,12 @@ function GovernanceTab({ flash }) {
           <div style={{ minWidth: 220 }}>
             <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Scorecard</label>
             <select className="select select-sm" value={scId}
-              onChange={e => setScId(e.target.value)} style={{ width: '100%', maxWidth: 240 }}>
+              onChange={e => {
+                const next = e.target.value
+                setScId(next)
+                const opts = scMarkets[next] || []
+                if (market && !opts.includes(market)) setMarket('')
+              }} style={{ width: '100%', maxWidth: 240 }}>
               <option value="">Select scorecard…</option>
               {scorecards.map(s => (
                 <option key={s.id} value={s.id}>{s.name} ({s.type === 'quality' ? 'Quality' : 'DSAT'})</option>
@@ -608,27 +625,25 @@ function GovernanceTab({ flash }) {
             </select>
           </div>
 
-          {/* Market : single select from known + add new */}
+          {/* Market : single select, driven live by the selected scorecard's builder list */}
           <div style={{ minWidth: 220 }}>
             <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Market</label>
-            {addingMarket ? (
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input autoFocus className="input" style={{ height: 32, fontSize: 13, maxWidth: 160 }}
-                  placeholder="New market name" value={newMarket}
-                  onChange={e => setNewMarket(e.target.value)} />
-                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}
-                  onClick={() => { setAddingMarket(false); setNewMarket('') }}>Cancel</button>
+            {!scId ? (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0' }}>
+                Select a scorecard first.
+              </div>
+            ) : marketOptions.length === 0 && !market ? (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0', maxWidth: 220 }}>
+                This scorecard has no markets defined. Add them in the scorecard builder's Market field.
               </div>
             ) : (
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <select className="select select-sm" value={market}
-                  onChange={e => setMarket(e.target.value)} style={{ maxWidth: 160 }}>
-                  <option value="">Select market…</option>
-                  {knownMarkets.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: 'var(--accent)' }}
-                  onClick={() => { setAddingMarket(true); setNewMarket('') }}>+ New</button>
-              </div>
+              <select className="select select-sm" value={market}
+                onChange={e => setMarket(e.target.value)} style={{ maxWidth: 200 }}>
+                <option value="">Select market…</option>
+                {optionsToShow.map(m => (
+                  <option key={m} value={m}>{m}{marketOptions.includes(m) ? '' : ' (not in scorecard)'}</option>
+                ))}
+              </select>
             )}
           </div>
         </div>
