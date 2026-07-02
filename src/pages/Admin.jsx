@@ -425,65 +425,41 @@ function UsersTab({ profile, flash }) {
 function GovernanceTab({ flash }) {
   const [workspaces, setWorkspaces] = useState([])
   const [divisions,  setDivisions]  = useState([])   // read-only, from Dashboard
+  const [scorecards, setScorecards] = useState([])   // published scorecards, for the queue picker
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
-  const [expandedS,  setExpandedS]  = useState({})   // hub.id -> bool : mapping panel open
+  const [expandedS,  setExpandedS]  = useState({})   // queue.id -> bool : mapping panel open
   const [expandedDiv,setExpandedDiv]= useState({})   // division id (or '__none__') -> bool
   const [adding,     setAdding]     = useState(null)
   const [addName,    setAddName]    = useState('')
   const [editing,    setEditing]    = useState(null)
   const [editName,   setEditName]   = useState('')
   const [confirm,    setConfirm]    = useState(null)
+  const [savingQueue,setSavingQueue]= useState(null)  // queue.id currently saving mapping
 
-  // Governance mapping data
-  const [scHubLinks,   setScHubLinks]   = useState([])   // [{scorecard_id, hub_id}]
-  const [metaFields,   setMetaFields]   = useState([])   // [{scorecard_id, label, options}]
-  const [govRows,      setGovRows]      = useState([])   // hub_governance_map rows
-  const [savingHub,    setSavingHub]    = useState(null) // hub.id currently saving
-
-  useEffect(() => { loadAll(); loadGovernanceMapping() }, [])
+  useEffect(() => { loadAll() }, [])
 
   const loadAll = async () => {
-    const [{ data: ws }, { data: divs }] = await Promise.all([
+    const [{ data: ws }, { data: divs }, { data: sc }] = await Promise.all([
       supabase.from('workspaces').select('*, hubs(*, queues(*))').order('position'),
       supabase.from('divisions').select('id, name, is_active, position').order('position'),
+      supabase.from('scorecards').select('id, name, type, is_published').eq('is_published', true).order('name'),
     ])
     setWorkspaces(ws || [])
     setDivisions(divs || [])
+    setScorecards(sc || [])
   }
 
-  const loadGovernanceMapping = async () => {
-    const [{ data: links }, { data: fields }, { data: gov }] = await Promise.all([
-      supabase.from('scorecard_hubs').select('scorecard_id, hub_id'),
-      supabase.from('scorecard_metadata_fields').select('scorecard_id, label, options').in('label', ['BPO - Hub', 'Market']),
-      supabase.from('hub_governance_map').select('*'),
-    ])
-    setScHubLinks(links || [])
-    setMetaFields(fields || [])
-    setGovRows(gov || [])
-  }
-
-  // For a given hub, union the option values from all scorecards tagged to it.
-  const optionsForHub = (hubId, label) => {
-    const scIds = scHubLinks.filter(l => l.hub_id === hubId).map(l => l.scorecard_id)
+  // All distinct market values already used across queues — feeds the "existing markets" dropdown.
+  const knownMarkets = useMemo(() => {
     const set = new Set()
-    metaFields
-      .filter(f => f.label === label && scIds.includes(f.scorecard_id))
-      .forEach(f => (f.options || []).forEach(o => set.add(o)))
+    for (const ws of workspaces) for (const hub of (ws.hubs || [])) for (const q of (hub.queues || [])) {
+      if (q.market_value) set.add(q.market_value)
+    }
     return [...set].sort()
-  }
+  }, [workspaces])
 
-  // Existing mapping for a hub: its single BPO-Hub value + set of markets.
-  const mappingForHub = (hubId) => {
-    const rows = govRows.filter(r => r.hub_id === hubId)
-    const bpo  = rows.length ? rows[0].bpo_hub_value : ''
-    const markets = new Set(rows.map(r => r.market_value))
-    return { bpo, markets }
-  }
-
-  // Which (bpo, market) pairs are already claimed by OTHER hubs — for prevention.
-  const pairClaimedElsewhere = (hubId, bpo, market) =>
-    govRows.some(r => r.hub_id !== hubId && r.bpo_hub_value === bpo && r.market_value === market)
+  const scorecardById = (id) => scorecards.find(s => s.id === id)
 
   const ask = (message, onYes) => setConfirm({ message, onYes })
   const closeConfirm = () => setConfirm(null)
@@ -492,7 +468,7 @@ function GovernanceTab({ flash }) {
   const toggleHub   = (hub) => ask(hub.is_active ? `Deactivate "${hub.name}" hub?`        : `Activate "${hub.name}" hub?`,        async () => { closeConfirm(); await supabase.from('hubs').update({ is_active: !hub.is_active }).eq('id', hub.id); await loadAll(); flash(`Hub ${hub.is_active ? 'deactivated' : 'activated'}`) })
   const toggleQueue = (q)   => ask(q.is_active   ? `Deactivate "${q.name}" queue?`        : `Activate "${q.name}" queue?`,        async () => { closeConfirm(); await supabase.from('queues').update({ is_active: !q.is_active   }).eq('id', q.id);   await loadAll(); flash(`Queue ${q.is_active   ? 'deactivated' : 'activated'}`) })
   const deleteWs    = (ws)  => ask(`Permanently delete "${ws.name}"? All hubs and queues inside will also be deleted.`,  async () => { closeConfirm(); await supabase.from('workspaces').delete().eq('id', ws.id);  await loadAll(); flash('Workspace deleted') })
-  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); await supabase.from('hubs').delete().eq('id', hub.id); await loadAll(); await loadGovernanceMapping(); flash('Hub deleted') })
+  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); await supabase.from('hubs').delete().eq('id', hub.id); await loadAll(); flash('Hub deleted') })
   const deleteQueue = (q)   => ask(`Permanently delete "${q.name}"? This cannot be undone.`,                             async () => { closeConfirm(); await supabase.from('queues').delete().eq('id', q.id);   await loadAll(); flash('Queue deleted') })
 
   // Assign a workspace to a division (or clear it). Read-only divisions; this only sets the FK.
@@ -559,108 +535,115 @@ function GovernanceTab({ flash }) {
     </div>
   )
 
-  // ── Mapping panel for a single hub ──────────────────────────────────────────
-  const HubMappingPanel = ({ hub }) => {
-    const existing = mappingForHub(hub.id)
-    const bpoOptions    = optionsForHub(hub.id, 'BPO - Hub')
-    const marketOptions = optionsForHub(hub.id, 'Market')
-    const hasScorecard  = scHubLinks.some(l => l.hub_id === hub.id)
+  // ── Mapping panel for a single QUEUE ────────────────────────────────────────
+  // A queue's BPO-Hub is its parent hub (fixed). Here you pick: scorecard + market.
+  // Saving stamps scorecard_id, market_value, hub_id (parent), workspace_id (parent's ws).
+  const QueueMappingPanel = ({ queue, hub, ws }) => {
+    const [scId, setScId]     = useState(queue.scorecard_id || '')
+    const [market, setMarket] = useState(queue.market_value || '')
+    const [addingMarket, setAddingMarket] = useState(false)
+    const [newMarket, setNewMarket] = useState('')
 
-    const [bpo, setBpo]         = useState(existing.bpo)
-    const [markets, setMarkets] = useState(existing.markets)
-
-    const toggleMarket = (m) => {
-      if (pairClaimedElsewhere(hub.id, bpo, m)) return // can't claim a pair owned elsewhere
-      setMarkets(prev => {
-        const n = new Set(prev)
-        n.has(m) ? n.delete(m) : n.add(m)
-        return n
-      })
-    }
+    const effectiveMarket = addingMarket ? newMarket.trim() : market
 
     const save = async () => {
-      if (!bpo)            return flash('Select a BPO - Hub value.', false)
-      if (markets.size === 0) return flash('Select at least one market.', false)
-      setSavingHub(hub.id)
-      // Replace this hub's rows wholesale: delete then insert the current selection.
-      const del = await supabase.from('hub_governance_map').delete().eq('hub_id', hub.id)
-      if (del.error) { setSavingHub(null); return flash(del.error.message, false) }
-      const rows = [...markets].map(m => ({
-        hub_id: hub.id, workspace_id: hub.workspace_id, bpo_hub_value: bpo, market_value: m,
-      }))
-      const ins = await supabase.from('hub_governance_map').insert(rows)
-      setSavingHub(null)
-      if (ins.error) {
-        // Likely the unique (bpo,market) backstop firing — a pair is owned by another hub.
-        await loadGovernanceMapping()
-        return flash('Save failed — a BPO-Hub + Market pair is already mapped to another hub.', false)
+      if (!scId)            return flash('Select a scorecard for this queue.', false)
+      if (!effectiveMarket) return flash('Select or enter a market for this queue.', false)
+      setSavingQueue(queue.id)
+      const { error } = await supabase.from('queues').update({
+        scorecard_id: scId,
+        market_value: effectiveMarket,
+        hub_id: hub.id,
+        workspace_id: ws.id,
+      }).eq('id', queue.id)
+      setSavingQueue(null)
+      if (error) {
+        // The unique (scorecard_id, hub_id, market_value) index is the backstop:
+        // another queue under this hub already uses this scorecard + market.
+        if (error.code === '23505') {
+          return flash('Another queue under this hub already uses that scorecard + market combination.', false)
+        }
+        return flash(error.message, false)
       }
-      await loadGovernanceMapping()
-      flash('Hub mapping saved')
+      await loadAll()
+      flash('Queue mapping saved')
     }
 
-    if (!hasScorecard) {
-      return (
-        <div style={{ padding: '12px 16px 14px 64px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No scorecard is tagged to this hub yet. Assign one in the Scorecards tab to configure its BPO - Hub and Market mapping.
-          </div>
-        </div>
-      )
+    const clearMapping = async () => {
+      setSavingQueue(queue.id)
+      const { error } = await supabase.from('queues').update({
+        scorecard_id: null, market_value: null, workspace_id: null,
+      }).eq('id', queue.id)
+      setSavingQueue(null)
+      if (error) return flash(error.message, false)
+      await loadAll()
+      flash('Queue mapping cleared')
     }
 
     return (
-      <div style={{ padding: '14px 16px 16px 64px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ padding: '14px 16px 16px 88px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-          Evaluation Mapping
+          Queue Mapping
         </div>
 
-        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
-          {/* BPO - Hub : single select */}
-          <div style={{ minWidth: 200 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>BPO - Hub (choose one)</label>
-            <select className="select select-sm" value={bpo}
-              onChange={e => setBpo(e.target.value)} style={{ width: '100%', maxWidth: 220 }}>
-              <option value="">Select…</option>
-              {bpoOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          {/* BPO - Hub : fixed = parent hub */}
+          <div style={{ minWidth: 180 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>BPO - Hub</label>
+            <div style={{ fontSize: 13, fontWeight: 500, padding: '7px 0' }}>
+              {hub.name}
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8, fontStyle: 'italic' }}>(from parent hub)</span>
+            </div>
+          </div>
+
+          {/* Scorecard : single select */}
+          <div style={{ minWidth: 220 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Scorecard</label>
+            <select className="select select-sm" value={scId}
+              onChange={e => setScId(e.target.value)} style={{ width: '100%', maxWidth: 240 }}>
+              <option value="">Select scorecard…</option>
+              {scorecards.map(s => (
+                <option key={s.id} value={s.id}>{s.name} ({s.type === 'quality' ? 'Quality' : 'DSAT'})</option>
+              ))}
             </select>
           </div>
 
-          {/* Market : multi select */}
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Markets (choose one or more)</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {marketOptions.length === 0
-                ? <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No market options on tagged scorecards.</span>
-                : marketOptions.map(m => {
-                  const on = markets.has(m)
-                  const claimed = bpo && pairClaimedElsewhere(hub.id, bpo, m)
-                  return (
-                    <button key={m} onClick={() => toggleMarket(m)} disabled={claimed}
-                      title={claimed ? 'This BPO-Hub + Market pair is already mapped to another hub' : ''}
-                      style={{
-                        fontSize: 12, padding: '4px 10px', borderRadius: 6, cursor: claimed ? 'not-allowed' : 'pointer',
-                        border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`,
-                        background: on ? 'var(--accent)22' : 'transparent',
-                        color: claimed ? 'var(--text-tertiary)' : on ? 'var(--accent)' : 'var(--text-secondary)',
-                        opacity: claimed ? 0.5 : 1, fontWeight: on ? 600 : 400,
-                      }}>
-                      {on ? '✓ ' : ''}{m}{claimed ? ' ·taken' : ''}
-                    </button>
-                  )
-                })
-              }
-            </div>
+          {/* Market : single select from known + add new */}
+          <div style={{ minWidth: 220 }}>
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Market</label>
+            {addingMarket ? (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input autoFocus className="input" style={{ height: 32, fontSize: 13, maxWidth: 160 }}
+                  placeholder="New market name" value={newMarket}
+                  onChange={e => setNewMarket(e.target.value)} />
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }}
+                  onClick={() => { setAddingMarket(false); setNewMarket('') }}>Cancel</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select className="select select-sm" value={market}
+                  onChange={e => setMarket(e.target.value)} style={{ maxWidth: 160 }}>
+                  <option value="">Select market…</option>
+                  {knownMarkets.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: 'var(--accent)' }}
+                  onClick={() => { setAddingMarket(true); setNewMarket('') }}>+ New</button>
+              </div>
+            )}
           </div>
         </div>
 
         <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn btn-primary btn-sm" onClick={save} disabled={savingHub === hub.id}>
-            {savingHub === hub.id ? 'Saving…' : 'Save Mapping'}
+          <button className="btn btn-primary btn-sm" onClick={save} disabled={savingQueue === queue.id}>
+            {savingQueue === queue.id ? 'Saving…' : 'Save Mapping'}
           </button>
-          {existing.bpo && (
+          {queue.scorecard_id && (
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: 'var(--danger)' }}
+              onClick={clearMapping} disabled={savingQueue === queue.id}>Clear</button>
+          )}
+          {queue.scorecard_id && queue.market_value && (
             <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-              Currently: {existing.bpo} › {[...existing.markets].join(', ') || '—'}
+              Currently: {scorecardById(queue.scorecard_id)?.name || 'Unknown scorecard'} › {queue.market_value}
             </span>
           )}
         </div>
@@ -668,7 +651,7 @@ function GovernanceTab({ flash }) {
     )
   }
 
-  // ── A single workspace card (unchanged internals, now nestable under a division) ──
+  // ── A single workspace card ─────────────────────────────────────────────────
   const WorkspaceCard = ({ ws }) => {
     const wsExpanded = expanded[ws.id] ?? true
     const hubs = ws.hubs || []
@@ -717,13 +700,12 @@ function GovernanceTab({ flash }) {
             )}
             {hubs.map((hub, hi) => {
               const hubExpanded = expandedH[hub.id] ?? true
-              const settingsOpen = expandedS[hub.id] ?? false
               const queues = hub.queues || []
               const isLast = hi === hubs.length - 1
               return (
                 <div key={hub.id}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 10px 40px',
-                    borderBottom: (hubExpanded && queues.length > 0) || settingsOpen || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
+                    borderBottom: (hubExpanded && queues.length > 0) || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
                     <button onClick={() => setExpandedH(e => ({ ...e, [hub.id]: !hubExpanded }))}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
                       {hubExpanded ? '▾' : '▸'}
@@ -735,18 +717,10 @@ function GovernanceTab({ flash }) {
                           backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
                           {hub.is_active ? 'Active' : 'Inactive'}
                         </span>
-                        {mappingForHub(hub.id).bpo && (
-                          <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                            backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
-                            {mappingForHub(hub.id).bpo} · {mappingForHub(hub.id).markets.size} market{mappingForHub(hub.id).markets.size === 1 ? '' : 's'}
-                          </span>
-                        )}
                       </div>
                     )}
                     {!isEditing(hub.id) && (
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: settingsOpen ? 'var(--accent)' : undefined, border: settingsOpen ? '1px solid var(--accent)44' : undefined }}
-                          onClick={() => setExpandedS(e => ({ ...e, [hub.id]: !settingsOpen }))}>⚙ Mapping</button>
                         <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
                         <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
                         <button className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleHub(hub)}>{hub.is_active ? 'Deactivate' : 'Activate'}</button>
@@ -755,32 +729,47 @@ function GovernanceTab({ flash }) {
                     )}
                   </div>
 
-                  {settingsOpen && <HubMappingPanel hub={hub} />}
-
                   {hubExpanded && (
                     <div>
                       {isAdding('queue', hub.id) && (
                         <div style={{ padding: '8px 16px 8px 64px', borderBottom: '1px solid var(--border)' }}>
                           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Queue</div>
-                          <AddInput placeholder="e.g. Colombia Market" />
+                          <AddInput placeholder="e.g. DSAT · Romania" />
                         </div>
                       )}
-                      {queues.map((q, qi) => (
-                        <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 64px',
-                          borderBottom: qi < queues.length - 1 ? '1px solid var(--border)' : 'none', backgroundColor: 'var(--surface)' }}>
-                          <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: q.is_active ? '#22c55e' : '#64748b' }} />
-                          {isEditing(q.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Queue name" /></div> : (
-                            <span style={{ flex: 1, fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
-                          )}
-                          {!isEditing(q.id) && (
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
-                              <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
-                              {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
+                      {queues.map((q, qi) => {
+                        const mapOpen = expandedS[q.id] ?? false
+                        const mapped = q.scorecard_id && q.market_value
+                        return (
+                          <div key={q.id}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 64px',
+                              borderBottom: mapOpen || qi < queues.length - 1 ? '1px solid var(--border)' : 'none', backgroundColor: 'var(--surface)' }}>
+                              <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: q.is_active ? '#22c55e' : '#64748b' }} />
+                              {isEditing(q.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Queue name" /></div> : (
+                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
+                                  {mapped && (
+                                    <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                      backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
+                                      {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                              {!isEditing(q.id) && (
+                                <div style={{ display: 'flex', gap: 6 }}>
+                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: mapOpen ? 'var(--accent)' : undefined, border: mapOpen ? '1px solid var(--accent)44' : undefined }}
+                                    onClick={() => setExpandedS(e => ({ ...e, [q.id]: !mapOpen }))}>⚙ Mapping</button>
+                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
+                                  <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
+                                  {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            {mapOpen && <QueueMappingPanel queue={q} hub={hub} ws={ws} />}
+                          </div>
+                        )
+                      })}
                       {queues.length === 0 && !isAdding('queue', hub.id) && (
                         <div style={{ padding: '8px 16px 8px 64px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No queues yet</div>
                       )}
@@ -809,8 +798,6 @@ function GovernanceTab({ flash }) {
     setExpandedDiv(next)
   }
 
-  // Group workspaces by division. Divisions render in their stored order; an
-  // "Unassigned" group collects workspaces with no division so none disappear.
   const wsByDivision = (divId) => workspaces.filter(w => (w.division_id || null) === divId)
   const unassignedWs = workspaces.filter(w => !w.division_id)
 
@@ -821,7 +808,7 @@ function GovernanceTab({ flash }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Workspace Structure</div>
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>Grouped by division · manage workspaces, hubs, and queues</div>
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>Grouped by division · manage workspaces, hubs, and queues · map each queue to a scorecard + market</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={expandAllDivisions}>Expand all</button>
@@ -844,7 +831,6 @@ function GovernanceTab({ flash }) {
         <div style={{ color: 'var(--text-secondary)', fontSize: 13, padding: '20px 0' }}>No workspaces yet.</div>
       )}
 
-      {/* Division-grouped sections */}
       {divisions.map(div => {
         const wsList = wsByDivision(div.id)
         const open = expandedDiv[div.id] ?? true
@@ -874,7 +860,6 @@ function GovernanceTab({ flash }) {
         )
       })}
 
-      {/* Unassigned workspaces */}
       {unassignedWs.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
@@ -1012,9 +997,7 @@ const seededFieldsForType = (type) => type === 'dsat' ? [...CORE_META_FIELDS, ..
 function ScorecardsTab({ profile, flash }) {
   const navigate = useNavigate()
   const [scorecards, setScorecards] = useState([])
-  const [workspaces, setWorkspaces] = useState([]) // [{id,name,division_id, hubs:[{id,name, queues:[{id,name}]}]}]
   const [divisions, setDivisions] = useState([])    // [{id,name,is_active}]
-  const [scHubs, setScHubs] = useState({})          // scorecardId -> Set(hubId)  (the real assignment)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
@@ -1022,9 +1005,6 @@ function ScorecardsTab({ profile, flash }) {
   const [newType, setNewType] = useState('quality')
   const [newThreshold, setNewThreshold] = useState(90)
   const [newDivision, setNewDivision] = useState('')   // division NAME (matches scorecards.division text column)
-  const [expandedRow, setExpandedRow] = useState(null)      // scorecard id row expanded
-  const [openWs, setOpenWs] = useState({})                  // `${scId}:${wsId}` -> bool
-  const [openHub, setOpenHub] = useState({})                // `${scId}:${hubId}` -> bool
   const [confirm, setConfirm] = useState(null)
 
   const canEdit = ['admin', 'owner'].includes(profile?.role)
@@ -1032,21 +1012,12 @@ function ScorecardsTab({ profile, flash }) {
   useEffect(() => { loadAll() }, [])
 
   const loadAll = async () => {
-    const [{ data: sc }, { data: ws }, { data: links }, { data: divs }] = await Promise.all([
+    const [{ data: sc }, { data: divs }] = await Promise.all([
       supabase.from('scorecards').select('*, users(name)').order('created_at', { ascending: false }),
-      supabase.from('workspaces').select('id, name, is_active, division_id, hubs(id, name, is_active, queues(id, name, is_active))').eq('is_active', true).order('name'),
-      supabase.from('scorecard_hubs').select('scorecard_id, hub_id'),
       supabase.from('divisions').select('id, name, is_active, position').order('position'),
     ])
     setScorecards(sc || [])
-    setWorkspaces(ws || [])
     setDivisions(divs || [])
-    const map = {}
-    ;(links || []).forEach(({ scorecard_id, hub_id }) => {
-      if (!map[scorecard_id]) map[scorecard_id] = new Set()
-      map[scorecard_id].add(hub_id)
-    })
-    setScHubs(map)
     setLoading(false)
   }
 
@@ -1087,75 +1058,6 @@ function ScorecardsTab({ profile, flash }) {
     async () => { closeConfirm(); await supabase.from('scorecards').delete().eq('id', sc.id); await loadAll(); flash('Scorecard deleted') }
   )
 
-  // ── Hub-level assignment (the real link) ────────────────────────────────────
-  const toggleHub = async (scId, hubId, currentlyOn) => {
-    if (currentlyOn) {
-      await supabase.from('scorecard_hubs').delete().eq('scorecard_id', scId).eq('hub_id', hubId)
-    } else {
-      await supabase.from('scorecard_hubs').insert({ scorecard_id: scId, hub_id: hubId })
-      // auto-expand the hub to reveal queues
-      setOpenHub(o => ({ ...o, [`${scId}:${hubId}`]: true }))
-    }
-    setScHubs(prev => {
-      const next = { ...prev }
-      const set = new Set(next[scId] || [])
-      currentlyOn ? set.delete(hubId) : set.add(hubId)
-      next[scId] = set
-      return next
-    })
-  }
-
-  // ── Workspace toggle: organizational. ON reveals hubs; OFF unassigns all child hubs ──
-  const toggleWorkspace = async (scId, ws, currentlyOn) => {
-    const childHubIds = (ws.hubs || []).map(h => h.id)
-    if (currentlyOn) {
-      // turning workspace off → remove all its hub assignments
-      if (childHubIds.length) {
-        await supabase.from('scorecard_hubs').delete().eq('scorecard_id', scId).in('hub_id', childHubIds)
-      }
-      setScHubs(prev => {
-        const next = { ...prev }
-        const set = new Set(next[scId] || [])
-        childHubIds.forEach(id => set.delete(id))
-        next[scId] = set
-        return next
-      })
-      setOpenWs(o => ({ ...o, [`${scId}:${ws.id}`]: false }))
-    } else {
-      // turning workspace on → just reveal hubs (no assignment yet)
-      setOpenWs(o => ({ ...o, [`${scId}:${ws.id}`]: true }))
-    }
-  }
-
-  // A workspace is "on" if any of its hubs are assigned
-  const wsIsOn = (scId, ws) => {
-    const assigned = scHubs[scId] || new Set()
-    return (ws.hubs || []).some(h => assigned.has(h.id))
-  }
-
-  // ── Expand all / Collapse all (within one scorecard's tree) ─────────────────
-  const expandAll = (scId, wsListForCard) => {
-    const wsOpen = {}, hubOpen = {}
-    for (const ws of wsListForCard) {
-      wsOpen[`${scId}:${ws.id}`] = true
-      for (const hub of (ws.hubs || [])) hubOpen[`${scId}:${hub.id}`] = true
-    }
-    setOpenWs(o => ({ ...o, ...wsOpen }))
-    setOpenHub(o => ({ ...o, ...hubOpen }))
-  }
-  const collapseAll = (scId, wsListForCard) => {
-    setOpenWs(o => {
-      const n = { ...o }
-      for (const ws of wsListForCard) n[`${scId}:${ws.id}`] = false
-      return n
-    })
-    setOpenHub(o => {
-      const n = { ...o }
-      for (const ws of wsListForCard) for (const hub of (ws.hubs || [])) n[`${scId}:${hub.id}`] = false
-      return n
-    })
-  }
-
   const published = scorecards.filter(s => s.is_published)
   const drafts    = scorecards.filter(s => !s.is_published)
 
@@ -1165,181 +1067,13 @@ function ScorecardsTab({ profile, flash }) {
     </span>
   )
 
-  const Toggle = ({ on, onClick, size = 'md' }) => {
-    const w = size === 'sm' ? 34 : 40, h = size === 'sm' ? 19 : 22, k = h - 4
-    return (
-      <button onClick={onClick} style={{
-        width: w, height: h, borderRadius: h / 2, border: 'none', cursor: 'pointer',
-        background: on ? 'var(--accent)' : 'var(--border)', position: 'relative',
-        transition: 'background .15s', flexShrink: 0,
-      }}>
-        <span style={{ position: 'absolute', top: 2, left: on ? w - k - 2 : 2, width: k, height: k,
-          borderRadius: '50%', background: '#fff', transition: 'left .15s' }} />
-      </button>
-    )
-  }
-
-  // Resolve a scorecard's division NAME to a division id (bridge between the two systems).
-  const divisionIdForName = (name) => divisions.find(d => d.name === name)?.id || null
-
-  // ── Workspace → Hub → Queue cascade for one scorecard, filtered to its division ──
-  const AssignmentTree = ({ sc }) => {
-    const scId = sc.id
-    const assigned = scHubs[scId] || new Set()
-    const scDivId = divisionIdForName(sc.division)
-    const divisionResolved = !!scDivId
-
-    // Workspaces shown in the toggle tree: only those in the scorecard's division.
-    const inDivisionWs = divisionResolved
-      ? workspaces.filter(w => w.division_id === scDivId)
-      : workspaces // fail-safe: if the scorecard's division name doesn't resolve, show all
-
-    // Orphan detection: hubs currently assigned to this scorecard that live in a
-    // workspace OUTSIDE the scorecard's division (would otherwise be hidden).
-    const orphanTags = []
-    if (divisionResolved) {
-      for (const ws of workspaces) {
-        if (ws.division_id === scDivId) continue
-        for (const hub of (ws.hubs || [])) {
-          if (assigned.has(hub.id)) orphanTags.push({ ws, hub })
-        }
-      }
-    }
-
-    const untagOrphan = async (hubId) => {
-      await supabase.from('scorecard_hubs').delete().eq('scorecard_id', scId).eq('hub_id', hubId)
-      setScHubs(prev => {
-        const next = { ...prev }
-        const set = new Set(next[scId] || [])
-        set.delete(hubId)
-        next[scId] = set
-        return next
-      })
-      flash('Out-of-division assignment removed')
-    }
-
-    return (
-      <div style={{ padding: '16px 18px 18px 24px', backgroundColor: 'var(--bg)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            Assign to Hubs {sc.division ? `· ${sc.division}` : ''}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => expandAll(scId, inDivisionWs)}>Expand all</button>
-            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => collapseAll(scId, inDivisionWs)}>Collapse all</button>
-          </div>
-        </div>
-
-        {/* Fail-safe warning: division name didn't resolve to a division record. */}
-        {!divisionResolved && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'rgba(245,158,11,0.1)',
-            border: '1px solid rgba(245,158,11,0.4)', borderRadius: 8, fontSize: 12.5, color: 'var(--text-primary)' }}>
-            ⚠️ This scorecard's division {sc.division ? `("${sc.division}")` : ''} doesn't match any division on record, so all workspaces are shown. Set a valid division in the scorecard's Settings.
-          </div>
-        )}
-
-        {/* Orphan warning: existing assignments outside the scorecard's division. */}
-        {orphanTags.length > 0 && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'rgba(245,158,11,0.1)',
-            border: '1px solid rgba(245,158,11,0.4)', borderRadius: 8, fontSize: 12.5, color: 'var(--text-primary)' }}>
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>⚠️ Assignments outside this scorecard's division</div>
-            <div style={{ marginBottom: 8, color: 'var(--text-secondary)' }}>
-              This scorecard is tagged to hubs in workspaces that aren't in its division ({sc.division}). These won't show in the tree below. Remove them, or change the scorecard's division in Settings.
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {orphanTags.map(({ ws, hub }) => (
-                <div key={hub.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 10px' }}>
-                  <span style={{ fontSize: 12 }}>{ws.name} › {hub.name}</span>
-                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--danger)' }}
-                    onClick={() => untagOrphan(hub.id)}>Remove</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {inDivisionWs.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-            No active workspaces in this scorecard's division ({sc.division}). Assign a workspace to this division in the Governance tab first.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {inDivisionWs.map(ws => {
-              const wsOn = wsIsOn(scId, ws)
-              const wsOpen = openWs[`${scId}:${ws.id}`] ?? false
-              const hubs = ws.hubs || []
-              return (
-                <div key={ws.id} style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-                  {/* Workspace row */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--surface)' }}>
-                    <button onClick={() => setOpenWs(o => ({ ...o, [`${scId}:${ws.id}`]: !wsOpen }))}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 14, flexShrink: 0 }}>
-                      {wsOpen ? '▾' : '▸'}
-                    </button>
-                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{ws.name}</span>
-                    <Toggle on={wsOn} onClick={() => toggleWorkspace(scId, ws, wsOn)} />
-                  </div>
-
-                  {/* Hubs */}
-                  {wsOpen && (
-                    <div style={{ background: 'var(--bg)' }}>
-                      {hubs.length === 0 ? (
-                        <div style={{ padding: '8px 14px 8px 38px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                          No hubs in this workspace
-                        </div>
-                      ) : hubs.map(hub => {
-                        const hubOn = assigned.has(hub.id)
-                        const hubOpen = openHub[`${scId}:${hub.id}`] ?? false
-                        const queues = hub.queues || []
-                        return (
-                          <div key={hub.id}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px 9px 38px', borderTop: '1px solid var(--border)' }}>
-                              <button onClick={() => setOpenHub(o => ({ ...o, [`${scId}:${hub.id}`]: !hubOpen }))}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 11, width: 14, flexShrink: 0 }}>
-                                {hubOpen ? '▾' : '▸'}
-                              </button>
-                              <span style={{ flex: 1, fontSize: 13 }}>{hub.name}</span>
-                              <Toggle on={hubOn} size="sm" onClick={() => toggleHub(scId, hub.id, hubOn)} />
-                            </div>
-
-                            {/* Queues (visual only) */}
-                            {hubOpen && (
-                              <div style={{ background: 'var(--surface)' }}>
-                                {queues.length === 0 ? (
-                                  <div style={{ padding: '7px 14px 7px 62px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-                                    No queues in this hub
-                                  </div>
-                                ) : queues.map(q => (
-                                  <div key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 14px 7px 62px', borderTop: '1px solid var(--border)' }}>
-                                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--text-tertiary)', flexShrink: 0 }} />
-                                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{q.name}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    )
-  }
-
   if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
 
-  const renderTable = (rows, expandable) => (
+  const renderTable = (rows) => (
     <div className="table-wrap">
       <table className="table">
         <thead>
           <tr>
-            {expandable && <th style={{ width: 32 }}></th>}
             <th>Name</th>
             <th>Type</th>
             <th>Division</th>
@@ -1352,55 +1086,31 @@ function ScorecardsTab({ profile, flash }) {
         </thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={(expandable ? 1 : 0) + (canEdit ? 8 : 7)} className="empty-row">
-              {expandable ? 'No published scorecards.' : 'No draft scorecards.'}
+            <tr><td colSpan={canEdit ? 8 : 7} className="empty-row">
+              {rows === published ? 'No published scorecards.' : 'No draft scorecards.'}
             </td></tr>
           )}
-          {rows.map(sc => {
-            const isExpanded = expandedRow === sc.id
-            const assignedCount = (scHubs[sc.id] || new Set()).size
-            return (
-              <>
-                <tr key={sc.id} style={{ cursor: expandable ? 'pointer' : 'default' }}
-                  onClick={expandable ? () => setExpandedRow(isExpanded ? null : sc.id) : undefined}>
-                  {expandable && (
-                    <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{isExpanded ? '▾' : '▸'}</td>
-                  )}
-                  <td style={{ fontWeight: 500 }}>
-                    {sc.name}
-                    {expandable && assignedCount > 0 && (
-                      <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-secondary)' }}>
-                        · {assignedCount} hub{assignedCount === 1 ? '' : 's'}
-                      </span>
-                    )}
-                  </td>
-                  <td><TypeBadge type={sc.type} /></td>
-                  <td style={{ color: sc.division ? 'var(--text-primary)' : 'var(--danger)', fontSize: 13 }}>
-                    {sc.division || 'None'}
-                  </td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '-'}</td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{sc.users?.name || '-'}</td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{new Date(sc.created_at).toLocaleDateString()}</td>
-                  <td style={{ color: 'var(--text-secondary)' }}>{sc.updated_at ? new Date(sc.updated_at).toLocaleDateString() : '-'}</td>
-                  {canEdit && (
-                    <td onClick={e => e.stopPropagation()}>
-                      <div className="action-group">
-                        <button className="btn btn-sm btn-ghost" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
-                        <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
-                      </div>
-                    </td>
-                  )}
-                </tr>
-                {expandable && isExpanded && (
-                  <tr key={sc.id + '-exp'}>
-                    <td colSpan={(canEdit ? 9 : 8)} style={{ padding: 0 }}>
-                      <AssignmentTree sc={sc} />
-                    </td>
-                  </tr>
-                )}
-              </>
-            )
-          })}
+          {rows.map(sc => (
+            <tr key={sc.id}>
+              <td style={{ fontWeight: 500 }}>{sc.name}</td>
+              <td><TypeBadge type={sc.type} /></td>
+              <td style={{ color: sc.division ? 'var(--text-primary)' : 'var(--danger)', fontSize: 13 }}>
+                {sc.division || 'None'}
+              </td>
+              <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '-'}</td>
+              <td style={{ color: 'var(--text-secondary)' }}>{sc.users?.name || '-'}</td>
+              <td style={{ color: 'var(--text-secondary)' }}>{new Date(sc.created_at).toLocaleDateString()}</td>
+              <td style={{ color: 'var(--text-secondary)' }}>{sc.updated_at ? new Date(sc.updated_at).toLocaleDateString() : '-'}</td>
+              {canEdit && (
+                <td>
+                  <div className="action-group">
+                    <button className="btn btn-sm btn-ghost" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
+                    <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
+                  </div>
+                </td>
+              )}
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
@@ -1416,7 +1126,7 @@ function ScorecardsTab({ profile, flash }) {
         <div>
           <div style={{ fontWeight: 600, fontSize: 15 }}>Scorecards</div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
-            Build and manage your evaluation scorecards
+            Build and manage your evaluation scorecards · assign them to queues in the Governance tab
           </div>
         </div>
         {canEdit && !creating && (
@@ -1476,14 +1186,14 @@ function ScorecardsTab({ profile, flash }) {
         Published ({published.length})
       </div>
       <div style={{ marginBottom: 28 }}>
-        {renderTable(published, true)}
+        {renderTable(published)}
       </div>
 
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
         Drafts ({drafts.length})
       </div>
       <div>
-        {renderTable(drafts, false)}
+        {renderTable(drafts)}
       </div>
     </div>
   )
