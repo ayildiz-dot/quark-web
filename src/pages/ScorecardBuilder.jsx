@@ -158,6 +158,7 @@ export default function ScorecardBuilder() {
 
   const saveAllChanges = async () => {
     if (leavingRef.current || skipSaveRef.current) return
+    if (!division) return flash('Please select a division before saving. Every scorecard must belong to a division.', false)
     if (!checkTotalWeight()) return
     // Show version reason modal — actual save runs in executeVersionSave
     setVersionReason('')
@@ -698,6 +699,7 @@ export default function ScorecardBuilder() {
 
           {!isPublished && (
             <button className="btn btn-primary" onClick={async () => {
+              if (!division) return flash('Please select a division before saving. Every scorecard must belong to a division.', false)
               const { error } = await supabase.from('scorecards')
                 .update({ name: scorecard.name, description: scorecard.description,
                   pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
