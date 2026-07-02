@@ -23,6 +23,7 @@
   --radius:        8px;
   --radius-lg:     12px;
   --shadow:        0 4px 24px rgba(0,0,0,0.45);
+  --sidebar-bg:    #222836;
 }
 
 [data-theme="light"] {
@@ -45,6 +46,7 @@
   --border:        #e2e8f0;
   --border-light:  #cbd5e1;
   --shadow:        0 4px 24px rgba(0,0,0,0.08);
+  --sidebar-bg:    #ffffff;
 }
 
 [data-theme="light"] .role-admin { background: #e0e7ff; color: #3730a3; }
@@ -83,7 +85,7 @@ a:hover { color: var(--accent-hover); }
 .page-sub { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
 
 /* Navbar */
-.navbar { width: 220px; background: var(--bg-secondary); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; position: fixed; height: 100vh; z-index: 50; }
+.navbar { width: 220px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; position: fixed; height: 100vh; z-index: 50; }
 .navbar-brand { padding: 0 20px 24px; border-bottom: 1px solid var(--border); }
 .brand-icon { font-size: 22px; }
 .brand-name { font-size: 18px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.5px; display: block; margin-top: 6px; }
@@ -223,3 +225,28 @@ a:hover { color: var(--accent-hover); }
 /* Divider */
 hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: var(--bg-secondary); padding: 1px 5px; border-radius: 4px; color: var(--accent); }
+
+/* ===================== color schemes ===================== */
+/* Each scheme overrides sidebar background + accent, in both dark and light. */
+
+/* Midnight */
+[data-scheme="midnight"] { --accent: #6366f1; --accent-hover: #4f46e5; --accent-light: #312e81; --sidebar-bg: #1e1b4b; }
+[data-theme="light"][data-scheme="midnight"] { --accent: #4f46e5; --accent-hover: #4338ca; --accent-light: #e0e7ff; --sidebar-bg: #eef2ff; }
+
+/* Forest */
+[data-scheme="forest"] { --accent: #10b981; --accent-hover: #059669; --accent-light: #064e3b; --sidebar-bg: #14332b; }
+[data-theme="light"][data-scheme="forest"] { --accent: #059669; --accent-hover: #047857; --accent-light: #d1fae5; --sidebar-bg: #ecfdf5; }
+
+/* Slate */
+[data-scheme="slate"] { --accent: #64748b; --accent-hover: #475569; --accent-light: #334155; --sidebar-bg: #1f2937; }
+[data-theme="light"][data-scheme="slate"] { --accent: #475569; --accent-hover: #334155; --accent-light: #e2e8f0; --sidebar-bg: #f8fafc; }
+
+/* Plum */
+[data-scheme="plum"] { --accent: #a855f7; --accent-hover: #9333ea; --accent-light: #4c1d95; --sidebar-bg: #2e1065; }
+[data-theme="light"][data-scheme="plum"] { --accent: #9333ea; --accent-hover: #7e22ce; --accent-light: #f3e8ff; --sidebar-bg: #faf5ff; }
+
+/* Crimson */
+[data-scheme="crimson"] { --accent: #ef4444; --accent-hover: #dc2626; --accent-light: #5c1616; --sidebar-bg: #3f1414; }
+[data-theme="light"][data-scheme="crimson"] { --accent: #dc2626; --accent-hover: #b91c1c; --accent-light: #fee2e2; --sidebar-bg: #fef2f2; }
+
+/* Default needs no block — it uses the base :root / light values. */
