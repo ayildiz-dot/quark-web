@@ -49,7 +49,8 @@ export default function EvaluationForm() {
       metaValues, answers, overallComment,
       dsatSections, dsatQuestions, dsatOptions, dsatAnswers,
       dsatCurrentSectionId, dsatSectionHistory,
-      profileId: profile?.id
+      profileId: profile?.id,
+      editingEvalId
     }
   })
   useEffect(() => { draftIdRef.current = draftId }, [draftId])
@@ -72,6 +73,7 @@ export default function EvaluationForm() {
 
   // Trigger auto-save 2 seconds after any answer/metadata change
   const triggerAutoSave = () => {
+    if (editingEvalId) return // never autosave-as-draft while editing an existing evaluation
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => {
       if (leavingRef.current) return
@@ -86,6 +88,7 @@ export default function EvaluationForm() {
     if (!s) s = stateRef.current
     if (!existingDraftId) existingDraftId = draftIdRef.current
     if (!s.selectedScorecard || s.step === 'select' || s.step === 'done') return
+    if (s.editingEvalId) return // edit mode is not a draft — never persist a draft row
 
     setDraftSaving(true)
     const state = {
