@@ -28,6 +28,9 @@ export default function EvaluationForm() {
   const [draftSaving,          setDraftSaving]          = useState(false)
   const [lastSaved,            setLastSaved]            = useState(null)
   const [showDraftLimit,       setShowDraftLimit]       = useState(false)
+  // Queue-anchored governance: the queues this user may evaluate under.
+  // Evaluators are limited to user_queues; admins/owners see all mapped queues.
+  const [allowedQueues, setAllowedQueues] = useState([]) // [{id, scorecard_id, hub_id, hub_name, workspace_id, market_value}]
 
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
@@ -51,6 +54,7 @@ export default function EvaluationForm() {
 
   useEffect(() => {
     loadScorecards()
+    loadAllowedQueues()
     if (location.state?.draft) resumeDraft(location.state.draft)
   }, [])
 
@@ -163,6 +167,47 @@ export default function EvaluationForm() {
     setScorecards(data || [])
   }
 
+  const loadAllowedQueues = async () => {
+    const isPrivileged = ['admin', 'owner'].includes(profile?.role)
+    // Pull mapped queues (those with a scorecard + market set) joined to their hub.
+    const { data: queues } = await supabase
+      .from('queues')
+      .select('id, scorecard_id, hub_id, workspace_id, market_value, is_active, hubs(name)')
+      .not('scorecard_id', 'is', null)
+      .not('market_value', 'is', null)
+    let list = (queues || []).map(q => ({
+      id: q.id,
+      scorecard_id: q.scorecard_id,
+      hub_id: q.hub_id,
+      hub_name: q.hubs?.name || '',
+      workspace_id: q.workspace_id,
+      market_value: q.market_value,
+      is_active: q.is_active,
+    }))
+    if (!isPrivileged && profile?.id) {
+      // Evaluators: restrict to queues they're assigned to.
+      const { data: uq } = await supabase
+        .from('user_queues')
+        .select('queue_id')
+        .eq('user_id', profile.id)
+      const allowed = new Set((uq || []).map(r => r.queue_id))
+      list = list.filter(q => allowed.has(q.id))
+    }
+    setAllowedQueues(list)
+  }
+
+  // Valid queues for the currently-selected scorecard.
+  const validQueuesForScorecard = () =>
+    selectedScorecard
+      ? allowedQueues.filter(q => q.scorecard_id === selectedScorecard.id)
+      : []
+
+  // Connection 1: BPO-Hub + Market options derived from the user's valid queues.
+  const bpoHubOptionsFromQueues = () =>
+    [...new Set(validQueuesForScorecard().map(q => q.hub_name).filter(Boolean))].sort()
+  const marketOptionsFromQueues = () =>
+    [...new Set(validQueuesForScorecard().map(q => q.market_value).filter(Boolean))].sort()
+
   const selectScorecard = async (sc) => {
     // Check draft limit for this specific scorecard
     if (profile?.id) {
@@ -226,7 +271,8 @@ export default function EvaluationForm() {
 
   const flash = (text, ok = true) => {
     setMsg({ text, ok })
-    setTimeout(() => setMsg(null), 3000)
+    // Success toasts auto-dismiss; error toasts persist until the user clicks OK.
+    if (ok) setTimeout(() => setMsg(null), 4000)
   }
 
   const metaValid = () => {
@@ -297,11 +343,9 @@ export default function EvaluationForm() {
       }))
 
       // ── Governance resolver (blocking) ───────────────────────────────────
-      // Match the submitted (BPO - Hub, Market) pair to a hub in hub_governance_map.
-      // If it doesn't resolve, BLOCK submission — the evaluator must fix the metadata
-      // (or an admin must map the pair in Control Room → Governance). Their in-progress
-      // work stays on-screen and can be saved as a draft. Runs once, here at submit;
-      // resolves regardless of hub active state.
+      // Resolve the (scorecard + BPO-Hub + Market) triple to exactly one queue the
+      // user may evaluate under, then stamp queue_id + hub_id + workspace_id.
+      // Runs once, here at submit. Reads the queues table (not hub_governance_map).
       const bpoHubValue = metaPayload.find(f => f.label === 'BPO - Hub')?.value || ''
       const marketValue = metaPayload.find(f => f.label === 'Market')?.value || ''
       if (!bpoHubValue || !marketValue) {
@@ -309,19 +353,18 @@ export default function EvaluationForm() {
         leavingRef.current = false
         return flash('Please select both BPO - Hub and Market before submitting.', false)
       }
-      const { data: govMatch } = await supabase
-        .from('hub_governance_map')
-        .select('hub_id, workspace_id')
-        .eq('bpo_hub_value', bpoHubValue)
-        .eq('market_value', marketValue)
-        .maybeSingle()
-      if (!govMatch) {
+      const matches = validQueuesForScorecard().filter(
+        q => q.hub_name === bpoHubValue && q.market_value === marketValue
+      )
+      if (matches.length === 0) {
         setSubmitting(false)
         leavingRef.current = false
-        return flash(`This BPO - Hub + Market combination (${bpoHubValue} + ${marketValue}) isn't mapped to any hub. Ask an admin to map it in Control Room → Governance, then submit. You can Save Draft in the meantime.`, false)
+        return flash(`This BPO - Hub + Market combination (${bpoHubValue} + ${marketValue}) isn't mapped to a queue you can evaluate under. Ask an admin to map it in Control Room → Governance, or check your queue assignments. You can Save Draft in the meantime.`, false)
       }
-      const resolvedHubId = govMatch.hub_id
-      const resolvedWorkspaceId = govMatch.workspace_id
+      // Unique index on (scorecard_id, hub_id, market_value) guarantees at most one.
+      const resolvedQueueId = matches[0].id
+      const resolvedHubId = matches[0].hub_id
+      const resolvedWorkspaceId = matches[0].workspace_id
 
       if (selectedScorecard.type === 'dsat') {
         const visitedSectionIds = new Set([...dsatSectionHistory, dsatCurrentSectionId])
@@ -334,7 +377,7 @@ export default function EvaluationForm() {
           evaluator_id: profile.id,
           score: 100, failed_critical: false,
           metadata_values: [...metaPayload, ...dsatPayload],
-          hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
+          queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
           overall_comment: null, status: 'submitted',
           evaluation_type: selectedScorecard.type,
           scorecard_version: selectedScorecard.version || 1,
@@ -348,7 +391,7 @@ export default function EvaluationForm() {
           evaluator_id: profile.id,
           score, failed_critical,
           metadata_values: metaPayload,
-          hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
+          queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
           overall_comment: overallComment.trim(),
           status: 'submitted',
           evaluation_type: selectedScorecard.type,
@@ -401,7 +444,7 @@ export default function EvaluationForm() {
           <p className="page-sub">Select a scorecard to begin</p>
         </div>
       </div>
-      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
       {showDraftLimit && (
         <div className="modal-backdrop">
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
@@ -464,7 +507,7 @@ export default function EvaluationForm() {
         </div>
         <DraftSaveButton />
       </div>
-      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
       {metadata.length === 0 ? (
         <div className="card" style={{ maxWidth: 600, color: 'var(--text-secondary)', padding: 24 }}>
           No metadata fields configured for this scorecard.
@@ -480,7 +523,11 @@ export default function EvaluationForm() {
               </label>
               {field.field_type === 'dropdown' ? (
                 <SearchableDropdown
-                  options={field.options || []}
+                  options={
+                    field.label === 'BPO - Hub' ? bpoHubOptionsFromQueues()
+                    : field.label === 'Market'  ? marketOptionsFromQueues()
+                    : (field.options || [])
+                  }
                   value={metaValues[field.id] || ''}
                   onChange={val => { setMetaValues(v => ({ ...v, [field.id]: val })); triggerAutoSave() }}
                   placeholder="Select..."
@@ -547,7 +594,7 @@ export default function EvaluationForm() {
             width: `${pct}%`, transition: 'width 0.3s'
           }} />
         </div>
-        {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+        {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
 
         {isDsat ? (
           (() => {
