@@ -31,6 +31,8 @@ export default function EvaluationForm() {
   // Queue-anchored governance: the queues this user may evaluate under.
   // Evaluators are limited to user_queues; admins/owners see all mapped queues.
   const [allowedQueues, setAllowedQueues] = useState([]) // [{id, scorecard_id, hub_id, hub_name, workspace_id, market_value}]
+  // Edit mode: when set, we are editing an already-submitted evaluation (not creating one).
+  const [editingEvalId, setEditingEvalId] = useState(null)
 
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
@@ -56,6 +58,7 @@ export default function EvaluationForm() {
     loadScorecards()
     loadAllowedQueues()
     if (location.state?.draft) resumeDraft(location.state.draft)
+    if (location.state?.editEval) loadForEdit(location.state.editEval)
   }, [])
 
   // Reset leavingRef on mount, set on unmount
@@ -156,6 +159,81 @@ export default function EvaluationForm() {
     setLastSaved(new Date(draft.submitted_at))
     // Set step last so all DSAT state is ready before the questions step renders
     setTimeout(() => setStep(s.step || 'metadata'), 0)
+  }
+
+  // Reconstruct the full form from an already-submitted evaluation so it can be edited.
+  // Quality: rebuild answers from evaluation_scores (keyed by question_id).
+  // DSAT: pre-fill dsatAnswers by mapping stored metadata_values (keyed by title) back to question ids;
+  //       the editor re-walks sections from the first one (routing may change; only the final path is saved).
+  const loadForEdit = async (evalId) => {
+    const { data: ev } = await supabase
+      .from('evaluations')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(*)')
+      .eq('id', evalId)
+      .single()
+    if (!ev) { flash('Could not load this evaluation for editing.', false); return }
+    const sc = ev.scorecards
+    setSelectedScorecard(sc)
+    setEditingEvalId(ev.id)
+
+    // Load this scorecard's metadata field definitions.
+    const { data: metaDefs } = await supabase
+      .from('scorecard_metadata_fields')
+      .select('*').eq('scorecard_id', sc.id).order('position')
+    setMetadata(metaDefs || [])
+
+    // Rebuild metaValues: match stored metadata_values (by label) to field ids.
+    const storedMeta = ev.metadata_values || []
+    const mv = {}
+    ;(metaDefs || []).forEach(f => {
+      const found = storedMeta.find(m => m.label === f.label)
+      if (found) mv[f.id] = found.value
+    })
+    setMetaValues(mv)
+    setOverallComment(ev.overall_comment || '')
+
+    if (sc.type === 'dsat') {
+      const [secs, dqs, opts] = await Promise.all([
+        supabase.from('dsat_sections').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('dsat_questions').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('dsat_options').select('*').order('position'),
+      ])
+      const secsData = secs.data || []
+      const dqsData = dqs.data || []
+      setDsatSections(secsData)
+      setDsatQuestions(dqsData)
+      setDsatOptions(opts.data || [])
+      // Pre-fill answers: map stored answer titles back to question ids (titles are unique per scorecard).
+      const initDsat = {}
+      for (const q of dqsData) {
+        const found = storedMeta.find(m => m.label === q.title)
+        initDsat[q.id] = { value: found?.value || '' }
+      }
+      setDsatAnswers(initDsat)
+      const firstSection = [...secsData].sort((a, b) => a.position - b.position)[0]
+      setDsatCurrentSectionId(firstSection?.id || null)
+      setDsatSectionHistory([])
+      setGroups([]); setQuestions([]); setAnswers({})
+    } else {
+      const [grp, qs, scoreRows] = await Promise.all([
+        supabase.from('scorecard_question_groups').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('scorecard_questions').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('evaluation_scores').select('question_id, score, comment').eq('evaluation_id', ev.id),
+      ])
+      setGroups(grp.data || [])
+      setQuestions(qs.data || [])
+      // Rebuild answers from stored per-question scores, keyed by question_id.
+      const byQ = {}
+      ;(scoreRows.data || []).forEach(r => { byQ[r.question_id] = { score: r.score, comment: r.comment || '' } })
+      const init = {}
+      for (const q of (qs.data || [])) init[q.id] = byQ[q.id] || { score: null, comment: '' }
+      setAnswers(init)
+      setDsatSections([]); setDsatQuestions([]); setDsatOptions([]); setDsatAnswers({})
+    }
+    setDraftId(null)
+    draftIdRef.current = null
+    setLastSaved(null)
+    setTimeout(() => setStep('metadata'), 0)
   }
 
   const loadScorecards = async () => {
@@ -372,45 +450,77 @@ export default function EvaluationForm() {
         const dsatPayload = visitedQuestions.map(q => ({
           field_id: q.id, label: q.title, value: dsatAnswers[q.id]?.value || ''
         }))
-        const { error: evalError } = await supabase.from('evaluations').insert({
-          scorecard_id: selectedScorecard.id,
-          evaluator_id: profile.id,
-          score: 100, failed_critical: false,
-          metadata_values: [...metaPayload, ...dsatPayload],
-          queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
-          overall_comment: null, status: 'submitted',
-          evaluation_type: selectedScorecard.type,
-          scorecard_version: selectedScorecard.version || 1,
-          submitted_at: new Date().toISOString()
-        })
-        if (evalError) throw evalError
+        if (editingEvalId) {
+          // EDIT: update the existing row. Freeze evaluator_id + submitted_at; stamp last_edit_date.
+          const { error: upErr } = await supabase.from('evaluations').update({
+            metadata_values: [...metaPayload, ...dsatPayload],
+            queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
+            last_edit_date: new Date().toISOString(),
+          }).eq('id', editingEvalId)
+          if (upErr) throw upErr
+        } else {
+          const { error: evalError } = await supabase.from('evaluations').insert({
+            scorecard_id: selectedScorecard.id,
+            evaluator_id: profile.id,
+            score: 100, failed_critical: false,
+            metadata_values: [...metaPayload, ...dsatPayload],
+            queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
+            overall_comment: null, status: 'submitted',
+            evaluation_type: selectedScorecard.type,
+            scorecard_version: selectedScorecard.version || 1,
+            submitted_at: new Date().toISOString()
+          })
+          if (evalError) throw evalError
+        }
       } else {
         const { score, failed_critical } = calculateScore()
-        const { data: evaluation, error: evalError } = await supabase.from('evaluations').insert({
-          scorecard_id: selectedScorecard.id,
-          evaluator_id: profile.id,
-          score, failed_critical,
-          metadata_values: metaPayload,
-          queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
-          overall_comment: overallComment.trim(),
-          status: 'submitted',
-          evaluation_type: selectedScorecard.type,
-          scorecard_version: selectedScorecard.version || 1,
-          submitted_at: new Date().toISOString()
-        }).select().single()
-        if (evalError) throw evalError
-        const scoreRows = questions.map(q => ({
-          evaluation_id: evaluation.id,
-          question_id: q.id,
-          score: answers[q.id]?.score,
-          comment: answers[q.id]?.comment || null
-        }))
-        const { error: scoresError } = await supabase.from('evaluation_scores').insert(scoreRows)
-        if (scoresError) throw scoresError
+        if (editingEvalId) {
+          // EDIT: update row (recompute score), freeze evaluator_id + submitted_at, stamp last_edit_date,
+          // then replace the per-question score rows wholesale.
+          const { error: upErr } = await supabase.from('evaluations').update({
+            score, failed_critical,
+            metadata_values: metaPayload,
+            queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
+            overall_comment: overallComment.trim(),
+            last_edit_date: new Date().toISOString(),
+          }).eq('id', editingEvalId)
+          if (upErr) throw upErr
+          await supabase.from('evaluation_scores').delete().eq('evaluation_id', editingEvalId)
+          const newScoreRows = questions.map(q => ({
+            evaluation_id: editingEvalId,
+            question_id: q.id,
+            score: answers[q.id]?.score,
+            comment: answers[q.id]?.comment || null
+          }))
+          const { error: scErr } = await supabase.from('evaluation_scores').insert(newScoreRows)
+          if (scErr) throw scErr
+        } else {
+          const { data: evaluation, error: evalError } = await supabase.from('evaluations').insert({
+            scorecard_id: selectedScorecard.id,
+            evaluator_id: profile.id,
+            score, failed_critical,
+            metadata_values: metaPayload,
+            queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
+            overall_comment: overallComment.trim(),
+            status: 'submitted',
+            evaluation_type: selectedScorecard.type,
+            scorecard_version: selectedScorecard.version || 1,
+            submitted_at: new Date().toISOString()
+          }).select().single()
+          if (evalError) throw evalError
+          const scoreRows = questions.map(q => ({
+            evaluation_id: evaluation.id,
+            question_id: q.id,
+            score: answers[q.id]?.score,
+            comment: answers[q.id]?.comment || null
+          }))
+          const { error: scoresError } = await supabase.from('evaluation_scores').insert(scoreRows)
+          if (scoresError) throw scoresError
+        }
       }
 
-      // Delete draft if exists
-      if (draftId) {
+      // Delete draft if exists (never applies in edit mode)
+      if (draftId && !editingEvalId) {
         await supabase.from('evaluations').delete().eq('id', draftId)
         setDraftId(null)
         draftIdRef.current = null
@@ -502,10 +612,10 @@ export default function EvaluationForm() {
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
             onClick={() => setStep('select')}>← Back</button>
-          <h1>{selectedScorecard.name}</h1>
+          <h1>{editingEvalId ? 'Edit — ' : ''}{selectedScorecard.name}</h1>
           <p className="page-sub">Step 1 of 2 — Interaction details</p>
         </div>
-        <DraftSaveButton />
+        {!editingEvalId && <DraftSaveButton />}
       </div>
       {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
       {metadata.length === 0 ? (
@@ -579,12 +689,12 @@ export default function EvaluationForm() {
             <p className="page-sub">Step 2 of 2 — {isDsat ? 'Complete the DSAT form' : 'Score each question'}</p>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <DraftSaveButton />
+            {!editingEvalId && <DraftSaveButton />}
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               {answered}/{total} answered
             </span>
             <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}>
-              {submitting ? 'Submitting…' : 'Submit Evaluation'}
+              {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
             </button>
           </div>
         </div>
@@ -695,7 +805,7 @@ export default function EvaluationForm() {
                   <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
                     <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
                       style={{ marginRight: 12 }}>
-                      {submitting ? 'Submitting…' : 'Submit Evaluation'}
+                      {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
                     </button>
                     <button className="btn btn-ghost" onClick={goToPrevSection}>← Back</button>
                   </div>
@@ -743,7 +853,7 @@ export default function EvaluationForm() {
               </div>
               <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
                 style={{ marginRight: 12 }}>
-                {submitting ? 'Submitting…' : 'Submit Evaluation'}
+                {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
               </button>
               <button className="btn btn-ghost" onClick={() => setStep('metadata')}>
                 ← Back to Details
@@ -766,7 +876,7 @@ export default function EvaluationForm() {
           <div style={{ fontSize: 48, marginBottom: 16 }}>
             {isDsat ? '✅' : (failed_critical || !passed) ? '❌' : '✅'}
           </div>
-          <h1 style={{ marginBottom: 8 }}>Evaluation Submitted</h1>
+          <h1 style={{ marginBottom: 8 }}>{editingEvalId ? 'Evaluation Updated' : 'Evaluation Submitted'}</h1>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>{selectedScorecard.name}</p>
           {!isDsat && (
             <div className="card" style={{ marginBottom: 32 }}>

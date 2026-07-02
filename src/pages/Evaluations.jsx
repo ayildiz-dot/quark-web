@@ -278,6 +278,18 @@ export default function Evaluations() {
     return 'var(--danger)'
   }
 
+  // An evaluation is editable for 72h after submission, by its author or an admin/owner.
+  const within72h = (submittedAt) => {
+    if (!submittedAt) return false
+    const ms = Date.now() - new Date(submittedAt).getTime()
+    return ms < 72 * 60 * 60 * 1000
+  }
+  const canEdit = (ev) => {
+    const privileged = ['admin', 'owner'].includes(profile?.role)
+    const isAuthor = ev.evaluator_id === profile?.id
+    return within72h(ev.submitted_at) && (isAuthor || privileged)
+  }
+
   // Toggle pill button — ticked + grayed when active
   const TypeToggle = ({ label, active, onClick }) => (
     <button
@@ -375,12 +387,13 @@ export default function Evaluations() {
                 <th>Scorecard</th>
                 <th>Score</th>
                 <th>Result</th>
+                <th>Last Edited</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {data.length === 0 && (
-                <tr><td colSpan="7" className="empty-row">No evaluations yet. Start one with + New Evaluation.</td></tr>
+                <tr><td colSpan="8" className="empty-row">No evaluations yet. Start one with + New Evaluation.</td></tr>
               )}
               {data.map(ev => {
                 const isDsat = ev.evaluation_type === 'dsat'
@@ -435,10 +448,21 @@ export default function Evaluations() {
                         </span>
                       )}
                     </td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                      {ev.last_edit_date ? new Date(ev.last_edit_date).toLocaleDateString() : '—'}
+                    </td>
                     <td>
-                      <button className="btn btn-ghost btn-sm" onClick={() => openDetail(ev.id)}>
-                        View
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => openDetail(ev.id)}>
+                          View
+                        </button>
+                        {canEdit(ev) && (
+                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }}
+                            onClick={() => navigate('/evaluations/new', { state: { editEval: ev.id } })}>
+                            Edit
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
