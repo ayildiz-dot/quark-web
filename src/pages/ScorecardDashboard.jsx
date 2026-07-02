@@ -124,7 +124,7 @@ const WIDGET_CATALOG = {
 }
 
 /* ===================== filter definitions ===================== */
-function buildFilterDefs(metadataFields, evals, scorecard) {
+function buildFilterDefs(metadataFields, evals, scorecard, govQueues = []) {
   const defs = []
   const versions = [...new Set(evals.map(e => e.scorecard_version).filter(v => v != null))].sort((a,b)=>a-b)
   if (versions.length) {
@@ -144,7 +144,28 @@ function buildFilterDefs(metadataFields, evals, scorecard) {
   if (weeks.size) defs.push({ key: '__week__', label: 'Week', kind: 'multiselect', search: true,
     options: [...weeks].sort((a,b)=>a-b).map(w => ({ value: String(w), label: 'Week ' + w })) })
   defs.push({ key: '__daterange__', label: 'Date range', kind: 'daterange' })
+
+  // Governance-sourced BPO-Hub filter: options come from the scorecard's mapped
+  // queues (hub names), and matching is by the evaluation's stamped hub_id — not
+  // by the scraped metadata string. Stale values (e.g. old "CNX RO") never appear.
+  const hubMap = new Map() // hub_id -> hub_name
+  const marketSet = new Set()
+  for (const q of govQueues) {
+    if (q.hub_id && q.hub_name) hubMap.set(q.hub_id, q.hub_name)
+    if (q.market_value) marketSet.add(q.market_value)
+  }
+  if (hubMap.size) {
+    defs.push({ key: '__hub__', label: 'BPO - Hub', kind: 'multiselect', search: true,
+      options: [...hubMap.entries()].sort((a,b)=>a[1].localeCompare(b[1])).map(([id, name]) => ({ value: id, label: name })) })
+  }
+  if (marketSet.size) {
+    defs.push({ key: '__market__', label: 'Market', kind: 'multiselect', search: true,
+      options: [...marketSet].sort().map(m => ({ value: m, label: m })) })
+  }
+
   for (const f of metadataFields) {
+    // BPO-Hub and Market are governed above (by hub_id / queue market) — skip scraping them.
+    if (f.label === 'BPO - Hub' || f.label === 'Market') continue
     if (f.field_type === 'date') {
       const isPrimary = (scorecard.type === 'dsat' && f.label === 'Communication Date')
       if (!isPrimary) defs.push({ key: 'meta:' + f.label, label: f.label, kind: 'daterange', metaLabel: f.label })
@@ -160,7 +181,7 @@ function buildFilterDefs(metadataFields, evals, scorecard) {
 }
 
 /* ===================== filter application ===================== */
-function applyFilters(evals, defs, state, scorecard) {
+function applyFilters(evals, defs, state, scorecard, queueMarketById = {}) {
   return evals.filter(ev => {
     for (const def of defs) {
       const sel = state[def.key]
@@ -168,6 +189,8 @@ function applyFilters(evals, defs, state, scorecard) {
         if (!sel || !sel.length) continue
         let val
         if (def.key === '__version__') val = String(ev.scorecard_version)
+        else if (def.key === '__hub__') val = ev.hub_id
+        else if (def.key === '__market__') val = ev.queue_id ? (queueMarketById[ev.queue_id] || null) : null
         else if (def.key === '__year__' || def.key === '__month__' || def.key === '__week__') {
           const raw = evalDate(ev, scorecard); if (!raw) return false
           const d = new Date(raw); if (isNaN(d)) return false
@@ -469,6 +492,7 @@ export default function ScorecardDashboard() {
   const [metadataFields, setMetadataFields] = useState([])
   const [widgets, setWidgets] = useState([])
   const [evals, setEvals] = useState([])
+  const [govQueues, setGovQueues] = useState([]) // [{id, hub_id, hub_name, market_value}] mapped to this scorecard
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filterState, setFilterState] = useState({})
@@ -511,7 +535,7 @@ export default function ScorecardDashboard() {
         (async () => {
           if (evaluatorBlocked) return { data: [] }
           let evQ = supabase.from('evaluations')
-            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version, hub_id, workspace_id')
+            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version, hub_id, workspace_id, queue_id')
             .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type)
           if (isAgent) {
             // Agents: scoped to their own results by email. No workspace filter.
@@ -526,17 +550,34 @@ export default function ScorecardDashboard() {
           return await evQ
         })(),
       ])
+      // Governance-sourced filter options: queues mapped to this scorecard, with hub names.
+      const { data: gq } = await supabase
+        .from('queues')
+        .select('id, hub_id, market_value, hubs(name)')
+        .eq('scorecard_id', scorecardId)
+        .not('market_value', 'is', null)
+      const govList = (gq || []).map(q => ({
+        id: q.id, hub_id: q.hub_id, hub_name: q.hubs?.name || '', market_value: q.market_value,
+      }))
+
       setScorecard(sc); setMetadataFields(mf || []); setWidgets(w || []); setEvals(ev || [])
+      setGovQueues(govList)
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
   const filterDefs = useMemo(
-    () => scorecard ? buildFilterDefs(metadataFields, evals, scorecard) : [],
-    [metadataFields, evals, scorecard]
+    () => scorecard ? buildFilterDefs(metadataFields, evals, scorecard, govQueues) : [],
+    [metadataFields, evals, scorecard, govQueues]
   )
+  // queue_id -> market_value, so the Market filter can match an eval by its stamped queue.
+  const queueMarketById = useMemo(() => {
+    const m = {}
+    for (const q of govQueues) m[q.id] = q.market_value
+    return m
+  }, [govQueues])
   const filteredEvals = useMemo(
-    () => scorecard ? applyFilters(evals, filterDefs, filterState, scorecard) : [],
-    [evals, filterDefs, filterState, scorecard]
+    () => scorecard ? applyFilters(evals, filterDefs, filterState, scorecard, queueMarketById) : [],
+    [evals, filterDefs, filterState, scorecard, queueMarketById]
   )
   const weeklyData = useMemo(() => scorecard ? buildWeeklySeries(filteredEvals, scorecard) : [], [filteredEvals, scorecard])
   const agentData  = useMemo(() => scorecard ? buildAgentSeries(filteredEvals, scorecard) : [],  [filteredEvals, scorecard])
