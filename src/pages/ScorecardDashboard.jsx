@@ -522,11 +522,13 @@ export default function ScorecardDashboard() {
       //    is one of their assigned workspaces — even if the scorecard is shared with
       //    other workspaces. Enforced via .in('workspace_id', evaluatorWorkspaceIds).
       let evaluatorBlocked = false
-      let evaluatorWorkspaceIds = []
+      let evaluatorHubIds = []
       if (isEvaluator) {
-        const { workspaceScorecardIds, workspaceIds } = await getEvaluatorScope(profile.id)
-        evaluatorWorkspaceIds = workspaceIds || []
-        if (!workspaceScorecardIds.includes(scorecardId)) evaluatorBlocked = true
+        // Hub-level scope: an evaluator sees only scorecards on their assigned hubs,
+        // and only evaluation rows stamped with one of those hubs.
+        const { hubScorecardIds, hubIds } = await getEvaluatorScope(profile.id)
+        evaluatorHubIds = hubIds || []
+        if (!hubScorecardIds.includes(scorecardId)) evaluatorBlocked = true
       }
 
       const [{ data: mf }, { data: w }, { data: ev }] = await Promise.all([
@@ -541,10 +543,9 @@ export default function ScorecardDashboard() {
             // Agents: scoped to their own results by email. No workspace filter.
             evQ = evQ.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
           } else if (isEvaluator) {
-            // Evaluators: row-level workspace isolation. If they somehow have no
-            // workspaces, they see nothing (empty .in list would match nothing anyway).
-            if (!evaluatorWorkspaceIds.length) return { data: [] }
-            evQ = evQ.in('workspace_id', evaluatorWorkspaceIds)
+            // Evaluators: row-level HUB isolation. No assigned hubs → sees nothing.
+            if (!evaluatorHubIds.length) return { data: [] }
+            evQ = evQ.in('hub_id', evaluatorHubIds)
           }
           // Admins / owners: no additional filter — full visibility.
           return await evQ
