@@ -397,9 +397,10 @@ export default function Evaluations() {
           onChange={e => setFilters(f => ({ ...f, dateTo: e.target.value }))} />
         <button className="btn btn-primary" onClick={() => fetchEvals(1)}>Apply</button>
         <button className="btn btn-ghost" onClick={() => {
+          // Clearing evaluatorFilter triggers the fetchEvals effect (it's a dependency),
+          // so we don't manually refetch here — doing so would read a stale filter value.
           setFilters({ search: '', dateFrom: '', dateTo: '', scorecard: '' })
           setEvaluatorFilter('')
-          setTimeout(() => fetchEvals(1), 0)
         }}>Clear</button>
 
         <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
