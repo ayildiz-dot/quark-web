@@ -154,7 +154,7 @@ export default function Navbar() {
             {/* Color scheme */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 6 }}>Color scheme</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
                 {SCHEMES.map(sc => (
                   <button key={sc.key} onClick={() => chooseScheme(sc.key)}
                     style={{
@@ -164,10 +164,11 @@ export default function Navbar() {
                       background: scheme === sc.key ? 'var(--accent-light)' : 'transparent',
                       color: scheme === sc.key ? 'var(--accent)' : 'var(--text-secondary)',
                       fontWeight: scheme === sc.key ? 600 : 400,
+                      overflow: 'hidden', whiteSpace: 'nowrap',
                     }}>
                     <span style={{ width: 12, height: 12, borderRadius: '50%', background: sc.swatch, flexShrink: 0,
                       border: '1px solid rgba(255,255,255,0.2)' }} />
-                    {sc.label}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sc.label}</span>
                   </button>
                 ))}
               </div>
