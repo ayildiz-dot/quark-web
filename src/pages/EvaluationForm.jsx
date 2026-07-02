@@ -413,6 +413,7 @@ export default function EvaluationForm() {
   }
 
   const submitEvaluation = async () => {
+    console.log('[EDIT DEBUG] submit start. editingEvalId=', editingEvalId, 'metaValid=', metaValid(), 'questionsValid=', questionsValid())
     if (!metaValid()) return flash('Please fill in all required metadata fields.', false)
     if (!questionsValid()) return flash('Please answer all required questions before submitting.', false)
     if (selectedScorecard.type !== 'dsat' && !overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
@@ -434,6 +435,7 @@ export default function EvaluationForm() {
         leavingRef.current = false
         return flash('Please select both BPO - Hub and Market before submitting.', false)
       }
+      console.log('[EDIT DEBUG] resolver. bpoHubValue=', JSON.stringify(bpoHubValue), 'marketValue=', JSON.stringify(marketValue), 'allowedQueues=', allowedQueues.length, 'validForScorecard=', JSON.stringify(validQueuesForScorecard().map(q => ({hub: q.hub_name, market: q.market_value}))))
       const matches = validQueuesForScorecard().filter(
         q => q.hub_name === bpoHubValue && q.market_value === marketValue
       )
