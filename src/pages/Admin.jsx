@@ -577,35 +577,110 @@ function GovernanceTab({ profile, flash }) {
     const [scId, setScId]     = useState(queue.scorecard_id || '')
     const [market, setMarket] = useState(queue.market_value || '')
 
-    const [samplingList, setSamplingList] = useState([])
-    const [newSamp, setNewSamp] = useState({ channel: 'all', targetCount: 10, period: 'weekly' })
-    const [savingSamp, setSavingSamp] = useState(false)
+    const [samplingConfig, setSamplingConfig] = useState(null)
+    const [samplingRules, setSamplingRules] = useState([])
+    const [cycleFrequency, setCycleFrequency] = useState('weekly')
+    const [runDay, setRunDay] = useState('monday')
+    const [captureDays, setCaptureDays] = useState([])
+    const [globalMin, setGlobalMin] = useState('')
+    const [savingSampling, setSavingSampling] = useState(false)
 
-    useEffect(() => { loadSampling() }, [])
+    const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
 
-    const loadSampling = async () => {
-      const { data } = await supabase.from('sampling_requirements').select('*').eq('queue_name', queue.name).order('channel')
-      setSamplingList(data || [])
+    useEffect(() => { loadSamplingConfig() }, [])
+
+    const loadSamplingConfig = async () => {
+      const { data: cfg } = await supabase.from('sampling_configurations').select('*').eq('queue_id', queue.id).maybeSingle()
+      if (cfg) {
+        setSamplingConfig(cfg)
+        setCycleFrequency(cfg.cycle_frequency)
+        setRunDay(cfg.run_day || 'monday')
+        setCaptureDays(cfg.capture_days || [])
+        setGlobalMin(cfg.global_min_cases_per_agent ?? '')
+        const { data: rules } = await supabase.from('sampling_stratification_rules').select('*').eq('sampling_configuration_id', cfg.id).order('position')
+        setSamplingRules((rules || []).map(r => ({ ...r, _localId: r.id })))
+      } else {
+        setSamplingConfig(null)
+        setCycleFrequency('weekly')
+        setRunDay('monday')
+        setCaptureDays([])
+        setGlobalMin('')
+        setSamplingRules([])
+      }
     }
 
-    const addSampling = async () => {
-      setSavingSamp(true)
-      const { error } = await supabase.from('sampling_requirements').upsert({
-        queue_name: queue.name, channel: newSamp.channel,
-        target_count: newSamp.targetCount, period: newSamp.period,
-        updated_by: profile?.id, updated_at: new Date().toISOString()
-      }, { onConflict: 'queue_name,channel' })
-      setSavingSamp(false)
-      if (error) return flash(error.message, false)
-      await loadSampling()
-      flash('Sampling requirement saved')
-      setNewSamp({ channel: 'all', targetCount: 10, period: 'weekly' })
+    const toggleCaptureDay = (day) => setCaptureDays(d => d.includes(day) ? d.filter(x => x !== day) : [...d, day])
+
+    const addRule = () => {
+      setSamplingRules(rs => [...rs, {
+        _localId: 'new-' + Date.now() + '-' + Math.random(),
+        category: '', subcategory: '', channel: '', percentage: 10, min_cases_per_agent: '', is_fallback: false, position: rs.length
+      }])
     }
 
-    const deleteSampling = async (id) => {
-      await supabase.from('sampling_requirements').delete().eq('id', id)
-      await loadSampling()
-      flash('Requirement removed')
+    const addFallbackRule = () => {
+      if (samplingRules.some(r => r.is_fallback)) return flash('Only one fallback rule is allowed per queue.', false)
+      setSamplingRules(rs => [...rs, {
+        _localId: 'new-' + Date.now(),
+        category: null, subcategory: null, channel: '', percentage: 5, min_cases_per_agent: '', is_fallback: true, position: rs.length
+      }])
+    }
+
+    const updateRule = (localId, field, value) => {
+      setSamplingRules(rs => rs.map(r => r._localId === localId ? { ...r, [field]: value } : r))
+    }
+
+    const removeRule = (localId) => setSamplingRules(rs => rs.filter(r => r._localId !== localId))
+
+    const saveSamplingConfig = async () => {
+      if (cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
+      if (captureDays.length === 0) return flash('Select at least one capture day.', false)
+      const nonFallback = samplingRules.filter(r => !r.is_fallback)
+      if (nonFallback.some(r => !r.category || !r.percentage)) return flash('Each rule needs a category and a percentage.', false)
+
+      setSavingSampling(true)
+
+      const payload = {
+        queue_id: queue.id,
+        global_min_cases_per_agent: globalMin === '' ? null : parseInt(globalMin),
+        cycle_frequency: cycleFrequency,
+        run_day: cycleFrequency === 'weekly' ? runDay : null,
+        capture_days: captureDays,
+        updated_by: profile?.id,
+        updated_at: new Date().toISOString(),
+      }
+
+      const { data: cfg, error: cfgError } = await supabase
+        .from('sampling_configurations')
+        .upsert({ ...(samplingConfig ? { id: samplingConfig.id } : {}), ...payload, created_by: samplingConfig?.created_by || profile?.id }, { onConflict: 'queue_id' })
+        .select().single()
+
+      if (cfgError) { setSavingSampling(false); return flash(cfgError.message, false) }
+
+      await supabase.from('sampling_stratification_rules').delete().eq('sampling_configuration_id', cfg.id)
+
+      if (samplingRules.length > 0) {
+        const rowsToInsert = samplingRules.map((r, i) => ({
+          sampling_configuration_id: cfg.id,
+          category: r.is_fallback ? null : (r.category || null),
+          subcategory: r.is_fallback ? null : (r.subcategory || null),
+          channel: r.channel || null,
+          percentage: parseFloat(r.percentage) || 0,
+          min_cases_per_agent: (r.min_cases_per_agent === '' || r.min_cases_per_agent == null) ? null : parseInt(r.min_cases_per_agent),
+          is_fallback: r.is_fallback,
+          position: i,
+        }))
+        const { error: rulesError } = await supabase.from('sampling_stratification_rules').insert(rowsToInsert)
+        if (rulesError) {
+          setSavingSampling(false)
+          if (rulesError.code === '23505') return flash('Only one fallback rule is allowed per queue.', false)
+          return flash(rulesError.message, false)
+        }
+      }
+
+      setSavingSampling(false)
+      await loadSamplingConfig()
+      flash('Sampling configuration saved')
     }
 
     // Market options come live from the selected scorecard's builder list.
@@ -727,57 +802,110 @@ function GovernanceTab({ profile, flash }) {
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
             Sampling Settings
           </div>
-          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-            <div style={{ minWidth: 220 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sampling Configuration</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not configured yet.</div>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 18 }}>
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Cycle Frequency</label>
+              <select className="select select-sm" value={cycleFrequency} onChange={e => setCycleFrequency(e.target.value)}>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+              </select>
             </div>
-            <div style={{ minWidth: 320 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sampling Requirement</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 10 }}>
-                <div>
-                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Channel</label>
-                  <select className="select select-sm" value={newSamp.channel}
-                    onChange={e => setNewSamp(s => ({ ...s, channel: e.target.value }))}>
-                    <option value="all">All</option>
-                    <option value="chat">Chat</option>
-                    <option value="email">Email</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Target Count</label>
-                  <input type="number" className="input" style={{ width: 90, height: 30 }} min={1} value={newSamp.targetCount}
-                    onChange={e => setNewSamp(s => ({ ...s, targetCount: parseInt(e.target.value) }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Period</label>
-                  <select className="select select-sm" value={newSamp.period}
-                    onChange={e => setNewSamp(s => ({ ...s, period: e.target.value }))}>
-                    <option value="daily">Daily</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                  </select>
-                </div>
-                <button className="btn btn-primary btn-sm" onClick={addSampling} disabled={savingSamp}>
-                  {savingSamp ? 'Saving…' : 'Save'}
-                </button>
+            {cycleFrequency === 'weekly' && (
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Run Day</label>
+                <select className="select select-sm" value={runDay} onChange={e => setRunDay(e.target.value)}>
+                  {WEEKDAYS.map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>)}
+                </select>
               </div>
-              {samplingList.length === 0 ? (
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No sampling requirements set for this queue.</div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {samplingList.map(sr => (
-                    <div key={sr.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      backgroundColor: 'var(--surface)', borderRadius: 8, padding: '6px 10px', border: '1px solid var(--border)', fontSize: 12 }}>
-                      <span><strong>{sr.channel}</strong> · {sr.target_count} / {sr.period}</span>
-                      <button onClick={() => deleteSampling(sr.id)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 12 }}>Remove</button>
-                    </div>
-                  ))}
-                </div>
-              )}
+            )}
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Global Minimum Cases / Agent</label>
+              <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={globalMin}
+                placeholder="None" onChange={e => setGlobalMin(e.target.value)} />
             </div>
           </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Capture Days (whose handled cases get pulled in)</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {WEEKDAYS.map(d => (
+                <button key={d} type="button" onClick={() => toggleCaptureDay(d)} className="btn btn-sm"
+                  style={{ fontSize: 11, padding: '4px 10px',
+                    backgroundColor: captureDays.includes(d) ? 'var(--accent)' : 'var(--surface)',
+                    color: captureDays.includes(d) ? '#fff' : 'var(--text-secondary)',
+                    border: '1px solid ' + (captureDays.includes(d) ? 'var(--accent)' : 'var(--border)') }}>
+                  {d.slice(0,3).charAt(0).toUpperCase() + d.slice(1,3)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <label style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Stratification Rules</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addRule}>+ Add Rule</button>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addFallbackRule}>+ Add Fallback Rule</button>
+              </div>
+            </div>
+
+            {samplingRules.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No stratification rules yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {samplingRules.map(r => (
+                  <div key={r._localId} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
+                    backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+                    {r.is_fallback ? (
+                      <div style={{ fontSize: 12, fontWeight: 600, minWidth: 140 }}>Fallback (all remaining categories)</div>
+                    ) : (
+                      <>
+                        <div>
+                          <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Category</label>
+                          <input className="input" style={{ width: 130, height: 30, fontSize: 12 }} value={r.category || ''}
+                            onChange={e => updateRule(r._localId, 'category', e.target.value)} placeholder="e.g. Account" />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Subcategory</label>
+                          <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={r.subcategory || ''}
+                            onChange={e => updateRule(r._localId, 'subcategory', e.target.value)} placeholder="All subcategories" />
+                        </div>
+                      </>
+                    )}
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Channel</label>
+                      <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.channel || ''}
+                        onChange={e => updateRule(r._localId, 'channel', e.target.value)}>
+                        <option value="">All Channels</option>
+                        <option value="chat">Chat</option>
+                        <option value="email">Email</option>
+                        <option value="phone">Phone</option>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="social">Social Media</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Percentage</label>
+                      <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={1} max={100} step="0.01"
+                        value={r.percentage} onChange={e => updateRule(r._localId, 'percentage', e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Min / Agent</label>
+                      <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={0}
+                        value={r.min_cases_per_agent ?? ''} placeholder="—"
+                        onChange={e => updateRule(r._localId, 'min_cases_per_agent', e.target.value)} />
+                    </div>
+                    <button onClick={() => removeRule(r._localId)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 12, height: 30 }}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button className="btn btn-primary btn-sm" onClick={saveSamplingConfig} disabled={savingSampling}>
+            {savingSampling ? 'Saving…' : 'Save Sampling Configuration'}
+          </button>
         </div>
       </div>
     )
