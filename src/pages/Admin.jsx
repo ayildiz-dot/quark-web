@@ -118,7 +118,6 @@ function UsersTab({ profile, flash }) {
     await loadUsers(); flash(`Role updated to ${bulkRole} for ${ids.length} user(s)`)
   }
 
-  // bulk governance state
   const [bulkWs,    setBulkWs]    = useState('')
   const [bulkHub,   setBulkHub]   = useState('')
   const [bulkQueue, setBulkQueue] = useState('')
@@ -151,7 +150,7 @@ function UsersTab({ profile, flash }) {
   }
 
   const toggleActive = (u) => ask(
-    u.active ? `This will deactivate ${u.name}'\''s account. They will no longer be able to log in.` : `This will reactivate ${u.name}'\''s account.`,
+    u.active ? `This will deactivate ${u.name}'s account. They will no longer be able to log in.` : `This will reactivate ${u.name}'s account.`,
     async () => {
       closeConfirm()
       if (u.id === profile.id) return flash('You cannot deactivate yourself.', false)
@@ -449,23 +448,511 @@ function UsersTab({ profile, flash }) {
   )
 }
 
+// ─── Small reusable inline inputs (top-level so they never lose focus/state) ───
+function AddInputInline({ value, onChange, onSave, onCancel, placeholder }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+      <input autoFocus className="input" style={{ maxWidth: 260, height: 34, fontSize: 13 }}
+        placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel() }} />
+      <button className="btn btn-primary btn-sm" onClick={onSave}>Save</button>
+      <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+    </div>
+  )
+}
+
+function EditInputInline({ value, onChange, onSave, onCancel, placeholder }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <input autoFocus className="input" style={{ maxWidth: 260, height: 34, fontSize: 13 }}
+        placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') onSave(); if (e.key === 'Escape') onCancel() }} />
+      <button className="btn btn-primary btn-sm" onClick={onSave}>Save</button>
+      <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+    </div>
+  )
+}
+
+// ─── Queue Settings panel (top-level component — preserves its own state across re-renders) ───
+function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved }) {
+  const [scId, setScId]     = useState(queue.scorecard_id || '')
+  const [market, setMarket] = useState(queue.market_value || '')
+  const [savingMapping, setSavingMapping] = useState(false)
+
+  const scorecardById = (id) => scorecards.find(s => s.id === id)
+  const marketOptions = (scMarkets[scId] || [])
+  const optionsToShow = market && !marketOptions.includes(market) ? [market, ...marketOptions] : marketOptions
+
+  const saveMapping = async () => {
+    if (!scId)   return flash('Select a scorecard for this queue.', false)
+    if (!market) return flash('Select or enter a market for this queue.', false)
+    setSavingMapping(true)
+    const { error } = await supabase.from('queues').update({
+      scorecard_id: scId, market_value: market, hub_id: hub.id, workspace_id: ws.id,
+    }).eq('id', queue.id)
+    setSavingMapping(false)
+    if (error) {
+      if (error.code === '23505') return flash('Another queue under this hub already uses that scorecard + market combination.', false)
+      return flash(error.message, false)
+    }
+    await onMappingSaved()
+    flash('Queue mapping saved')
+  }
+
+  const clearMapping = async () => {
+    setSavingMapping(true)
+    const { error } = await supabase.from('queues').update({ scorecard_id: null, market_value: null, workspace_id: null }).eq('id', queue.id)
+    setSavingMapping(false)
+    if (error) return flash(error.message, false)
+    await onMappingSaved()
+    flash('Queue mapping cleared')
+  }
+
+  const [samplingConfig, setSamplingConfig] = useState(null)
+  const [samplingRules, setSamplingRules]   = useState([])
+  const [cycleFrequency, setCycleFrequency] = useState('weekly')
+  const [runDay, setRunDay]                 = useState('monday')
+  const [captureDays, setCaptureDays]       = useState([])
+  const [globalMin, setGlobalMin]           = useState('')
+  const [savingSampling, setSavingSampling] = useState(false)
+
+  const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+
+  useEffect(() => { loadSamplingConfig() }, [])
+
+  const loadSamplingConfig = async () => {
+    const { data: cfg } = await supabase.from('sampling_configurations').select('*').eq('queue_id', queue.id).maybeSingle()
+    if (cfg) {
+      setSamplingConfig(cfg)
+      setCycleFrequency(cfg.cycle_frequency)
+      setRunDay(cfg.run_day || 'monday')
+      setCaptureDays(cfg.capture_days || [])
+      setGlobalMin(cfg.global_min_cases_per_agent ?? '')
+      const { data: rules } = await supabase.from('sampling_stratification_rules').select('*').eq('sampling_configuration_id', cfg.id).order('position')
+      setSamplingRules((rules || []).map(r => ({ ...r, _localId: r.id })))
+    } else {
+      setSamplingConfig(null)
+      setCycleFrequency('weekly')
+      setRunDay('monday')
+      setCaptureDays([])
+      setGlobalMin('')
+      setSamplingRules([])
+    }
+  }
+
+  const toggleCaptureDay = (day) => setCaptureDays(d => d.includes(day) ? d.filter(x => x !== day) : [...d, day])
+
+  const addRule = () => {
+    setSamplingRules(rs => [...rs, {
+      _localId: 'new-' + Date.now() + '-' + Math.random(),
+      category: '', subcategory: '', channel: '', percentage: 10, min_cases_per_agent: '', is_fallback: false, position: rs.length
+    }])
+  }
+
+  const addFallbackRule = () => {
+    if (samplingRules.some(r => r.is_fallback)) return flash('Only one fallback rule is allowed per queue.', false)
+    setSamplingRules(rs => [...rs, {
+      _localId: 'new-' + Date.now(),
+      category: null, subcategory: null, channel: '', percentage: 5, min_cases_per_agent: '', is_fallback: true, position: rs.length
+    }])
+  }
+
+  const updateRule = (localId, field, value) => setSamplingRules(rs => rs.map(r => r._localId === localId ? { ...r, [field]: value } : r))
+  const removeRule = (localId) => setSamplingRules(rs => rs.filter(r => r._localId !== localId))
+
+  const incompleteRuleCount = samplingRules.filter(r => !r.is_fallback && (!r.category || !r.percentage)).length
+
+  const saveSamplingConfig = async () => {
+    if (cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
+    if (captureDays.length === 0) return flash('Select at least one capture day.', false)
+    if (incompleteRuleCount > 0) return flash(`${incompleteRuleCount} rule(s) are missing a category or percentage — fill them in or remove them.`, false)
+
+    setSavingSampling(true)
+    const payload = {
+      queue_id: queue.id,
+      global_min_cases_per_agent: globalMin === '' ? null : parseInt(globalMin),
+      cycle_frequency: cycleFrequency,
+      run_day: cycleFrequency === 'weekly' ? runDay : null,
+      capture_days: captureDays,
+      updated_by: profile?.id,
+      updated_at: new Date().toISOString(),
+    }
+    const { data: cfg, error: cfgError } = await supabase
+      .from('sampling_configurations')
+      .upsert({ ...(samplingConfig ? { id: samplingConfig.id } : {}), ...payload, created_by: samplingConfig?.created_by || profile?.id }, { onConflict: 'queue_id' })
+      .select().single()
+
+    if (cfgError) { setSavingSampling(false); return flash(cfgError.message, false) }
+
+    await supabase.from('sampling_stratification_rules').delete().eq('sampling_configuration_id', cfg.id)
+
+    if (samplingRules.length > 0) {
+      const rowsToInsert = samplingRules.map((r, i) => ({
+        sampling_configuration_id: cfg.id,
+        category: r.is_fallback ? null : (r.category || null),
+        subcategory: r.is_fallback ? null : (r.subcategory || null),
+        channel: r.channel || null,
+        percentage: parseFloat(r.percentage) || 0,
+        min_cases_per_agent: (r.min_cases_per_agent === '' || r.min_cases_per_agent == null) ? null : parseInt(r.min_cases_per_agent),
+        is_fallback: r.is_fallback,
+        position: i,
+      }))
+      const { error: rulesError } = await supabase.from('sampling_stratification_rules').insert(rowsToInsert)
+      if (rulesError) {
+        setSavingSampling(false)
+        if (rulesError.code === '23505') return flash('Only one fallback rule is allowed per queue.', false)
+        return flash(rulesError.message, false)
+      }
+    }
+
+    setSavingSampling(false)
+    await loadSamplingConfig()
+    flash('Sampling configuration saved')
+  }
+
+  return (
+    <div style={{ padding: '14px 16px 16px 88px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+        Queue Settings
+      </div>
+
+      <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div style={{ minWidth: 180 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>BPO - Hub</label>
+          <div style={{ fontSize: 13, fontWeight: 500, padding: '7px 0' }}>
+            {hub.name}
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8, fontStyle: 'italic' }}>(from parent hub)</span>
+          </div>
+        </div>
+        <div style={{ minWidth: 220 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Scorecard</label>
+          <select className="select select-sm" value={scId}
+            onChange={e => {
+              const next = e.target.value
+              setScId(next)
+              const opts = scMarkets[next] || []
+              if (market && !opts.includes(market)) setMarket('')
+            }} style={{ width: '100%', maxWidth: 240 }}>
+            <option value="">Select scorecard…</option>
+            {scorecards.map(s => <option key={s.id} value={s.id}>{s.name} ({s.type === 'quality' ? 'Quality' : 'DSAT'})</option>)}
+          </select>
+        </div>
+        <div style={{ minWidth: 220 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Market</label>
+          {!scId ? (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0' }}>Select a scorecard first.</div>
+          ) : marketOptions.length === 0 && !market ? (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0', maxWidth: 220 }}>
+              This scorecard has no markets defined. Add them in the scorecard builder's Market field.
+            </div>
+          ) : (
+            <select className="select select-sm" value={market} onChange={e => setMarket(e.target.value)} style={{ maxWidth: 200 }}>
+              <option value="">Select market…</option>
+              {optionsToShow.map(m => <option key={m} value={m}>{m}{marketOptions.includes(m) ? '' : ' (not in scorecard)'}</option>)}
+            </select>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <button className="btn btn-primary btn-sm" onClick={saveMapping} disabled={savingMapping}>{savingMapping ? 'Saving…' : 'Save Mapping'}</button>
+        {queue.scorecard_id && <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: 'var(--danger)' }} onClick={clearMapping} disabled={savingMapping}>Clear</button>}
+        {queue.scorecard_id && queue.market_value && (
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            Currently: {scorecardById(queue.scorecard_id)?.name || 'Unknown scorecard'} › {queue.market_value}
+          </span>
+        )}
+      </div>
+
+      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+          Sampling Configuration
+        </div>
+
+        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 18 }}>
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Cycle Frequency</label>
+            <select className="select select-sm" value={cycleFrequency} onChange={e => setCycleFrequency(e.target.value)}>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+          {cycleFrequency === 'weekly' && (
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Run Day</label>
+              <select className="select select-sm" value={runDay} onChange={e => setRunDay(e.target.value)}>
+                {WEEKDAYS.map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>)}
+              </select>
+            </div>
+          )}
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Global Minimum Cases / Agent</label>
+            <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={globalMin} placeholder="None" onChange={e => setGlobalMin(e.target.value)} />
+            <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 3, maxWidth: 180 }}>Applies across the whole sample, on top of any per-rule minimums below.</div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 18 }}>
+          <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Capture Days (whose handled cases get pulled in)</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {WEEKDAYS.map(d => (
+              <button key={d} type="button" onClick={() => toggleCaptureDay(d)} className="btn btn-sm"
+                style={{ fontSize: 11, padding: '4px 10px',
+                  backgroundColor: captureDays.includes(d) ? 'var(--accent)' : 'var(--surface)',
+                  color: captureDays.includes(d) ? '#fff' : 'var(--text-secondary)',
+                  border: '1px solid ' + (captureDays.includes(d) ? 'var(--accent)' : 'var(--border)') }}>
+                {d.slice(0,3).charAt(0).toUpperCase() + d.slice(1,3)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Stratification Rules</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addRule}>+ Add Rule</button>
+              <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addFallbackRule}>+ Add Fallback Rule</button>
+            </div>
+          </div>
+
+          {samplingRules.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No stratification rules yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {samplingRules.map(r => {
+                const incomplete = !r.is_fallback && (!r.category || !r.percentage)
+                return (
+                <div key={r._localId} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
+                  backgroundColor: 'var(--surface)', border: '1px solid ' + (incomplete ? 'var(--danger)' : 'var(--border)'), borderRadius: 8, padding: '10px 12px' }}>
+                  {r.is_fallback ? (
+                    <div style={{ fontSize: 12, fontWeight: 600, minWidth: 140 }}>Fallback (all remaining categories)</div>
+                  ) : (
+                    <>
+                      <div>
+                        <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Category</label>
+                        <input className="input" style={{ width: 130, height: 30, fontSize: 12 }} value={r.category || ''}
+                          onChange={e => updateRule(r._localId, 'category', e.target.value)} placeholder="e.g. Account" />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Subcategory</label>
+                        <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={r.subcategory || ''}
+                          onChange={e => updateRule(r._localId, 'subcategory', e.target.value)} placeholder="All subcategories" />
+                      </div>
+                    </>
+                  )}
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Channel</label>
+                    <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.channel || ''}
+                      onChange={e => updateRule(r._localId, 'channel', e.target.value)}>
+                      <option value="">All Channels</option>
+                      <option value="chat">Chat</option>
+                      <option value="email">Email</option>
+                      <option value="phone">Phone</option>
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="social">Social Media</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Percentage</label>
+                    <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={1} max={100} step="0.01"
+                      value={r.percentage} onChange={e => updateRule(r._localId, 'percentage', e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Min / Agent</label>
+                    <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={0}
+                      value={r.min_cases_per_agent ?? ''} placeholder="—"
+                      onChange={e => updateRule(r._localId, 'min_cases_per_agent', e.target.value)} />
+                  </div>
+                  <button onClick={() => removeRule(r._localId)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 12, height: 30 }}>Remove</button>
+                </div>
+              )})}
+            </div>
+          )}
+          {incompleteRuleCount > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 8 }}>
+              {incompleteRuleCount} rule(s) outlined in red need a category and percentage before saving.
+            </div>
+          )}
+        </div>
+
+        <button className="btn btn-primary btn-sm" onClick={saveSamplingConfig} disabled={savingSampling}>
+          {savingSampling ? 'Saving…' : 'Save Sampling Configuration'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Workspace card (top-level component — preserves its own state across re-renders) ───
+function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, ui, actions }) {
+  const { expanded, setExpanded, expandedH, setExpandedH, expandedS, setExpandedS, adding, addName, setAddName, editing, editName, setEditName } = ui
+  const { isAdding, isEditing, startAdd, cancelAdd, confirmAdd, startEdit, cancelEdit, confirmEdit, toggleWs, toggleHub, toggleQueue, deleteWs, deleteHub, deleteQueue, setWorkspaceDivision, scorecardById, reloadAll } = actions
+
+  const wsExpanded = expanded[ws.id] ?? true
+  const hubs = ws.hubs || []
+
+  return (
+    <div className="card" style={{ marginBottom: 12, padding: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
+        borderBottom: wsExpanded && (hubs.length > 0 || isAdding('hub', ws.id)) ? '1px solid var(--border)' : 'none',
+        backgroundColor: 'var(--surface)' }}>
+        <button onClick={() => setExpanded(e => ({ ...e, [ws.id]: !wsExpanded }))}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 13, width: 20, flexShrink: 0 }}>
+          {wsExpanded ? '▾' : '▸'}
+        </button>
+        {isEditing(ws.id) ? (
+          <div style={{ flex: 1 }}>
+            <EditInputInline value={editName} onChange={setEditName} onSave={confirmEdit} onCancel={cancelEdit} placeholder="Workspace name" />
+          </div>
+        ) : (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>{ws.name}</span>
+            <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+              backgroundColor: ws.is_active ? '#22c55e22' : '#64748b22', color: ws.is_active ? '#22c55e' : '#94a3b8' }}>
+              {ws.is_active ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+        )}
+        {!isEditing(ws.id) && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <select className="select select-sm" value={ws.division_id || ''}
+              onChange={e => setWorkspaceDivision(ws.id, e.target.value)}
+              title="Division" style={{ height: 28, fontSize: 12, maxWidth: 170 }}>
+              <option value="">No division</option>
+              {divisions.map(d => <option key={d.id} value={d.id}>{d.name}{d.is_active ? '' : ' (inactive)'}</option>)}
+            </select>
+            <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ws.id, 'workspace', ws.name)}>Rename</button>
+            <button className={`btn btn-sm ${ws.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleWs(ws)}>{ws.is_active ? 'Deactivate' : 'Activate'}</button>
+            {!ws.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteWs(ws)}>Delete</button>}
+          </div>
+        )}
+      </div>
+      {wsExpanded && (
+        <div style={{ backgroundColor: 'var(--bg)' }}>
+          {isAdding('hub', ws.id) && (
+            <div style={{ padding: '10px 16px 10px 40px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Hub</div>
+              <AddInputInline value={addName} onChange={setAddName} onSave={confirmAdd} onCancel={cancelAdd} placeholder="e.g. Concentrix Romania" />
+            </div>
+          )}
+          {hubs.map((hub, hi) => {
+            const hubExpanded = expandedH[hub.id] ?? true
+            const queues = hub.queues || []
+            const isLast = hi === hubs.length - 1
+            return (
+              <div key={hub.id}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 10px 40px',
+                  borderBottom: (hubExpanded && queues.length > 0) || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
+                  <button onClick={() => setExpandedH(e => ({ ...e, [hub.id]: !hubExpanded }))}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
+                    {hubExpanded ? '▾' : '▸'}
+                  </button>
+                  {isEditing(hub.id) ? (
+                    <div style={{ flex: 1 }}>
+                      <EditInputInline value={editName} onChange={setEditName} onSave={confirmEdit} onCancel={cancelEdit} placeholder="Hub name" />
+                    </div>
+                  ) : (
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 500 }}>{hub.name}</span>
+                      <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+                        backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
+                        {hub.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                  )}
+                  {!isEditing(hub.id) && (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
+                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
+                      <button className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleHub(hub)}>{hub.is_active ? 'Deactivate' : 'Activate'}</button>
+                      {!hub.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteHub(hub)}>Delete</button>}
+                    </div>
+                  )}
+                </div>
+
+                {hubExpanded && (
+                  <div>
+                    {isAdding('queue', hub.id) && (
+                      <div style={{ padding: '8px 16px 8px 64px', borderBottom: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Queue</div>
+                        <AddInputInline value={addName} onChange={setAddName} onSave={confirmAdd} onCancel={cancelAdd} placeholder="e.g. DSAT · Romania" />
+                      </div>
+                    )}
+                    {queues.map((q, qi) => {
+                      const mapOpen = expandedS[q.id] ?? false
+                      const mapped = q.scorecard_id && q.market_value
+                      return (
+                        <div key={q.id}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 64px',
+                            borderBottom: mapOpen || qi < queues.length - 1 ? '1px solid var(--border)' : 'none', backgroundColor: 'var(--surface)' }}>
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: q.is_active ? '#22c55e' : '#64748b' }} />
+                            {isEditing(q.id) ? (
+                              <div style={{ flex: 1 }}>
+                                <EditInputInline value={editName} onChange={setEditName} onSave={confirmEdit} onCancel={cancelEdit} placeholder="Queue name" />
+                              </div>
+                            ) : (
+                              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
+                                {mapped && (
+                                  <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                    backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
+                                    {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            {!isEditing(q.id) && (
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: mapOpen ? 'var(--accent)' : undefined, border: mapOpen ? '1px solid var(--accent)44' : undefined }}
+                                  onClick={() => setExpandedS(e => ({ ...e, [q.id]: !mapOpen }))}>⚙ Queue Settings</button>
+                                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
+                                <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
+                                {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
+                              </div>
+                            )}
+                          </div>
+                          {mapOpen && (
+                            <QueueMappingPanel queue={q} hub={hub} ws={ws} scorecards={scorecards} scMarkets={scMarkets}
+                              profile={profile} flash={flash} onMappingSaved={reloadAll} />
+                          )}
+                        </div>
+                      )
+                    })}
+                    {queues.length === 0 && !isAdding('queue', hub.id) && (
+                      <div style={{ padding: '8px 16px 8px 64px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No queues yet</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {hubs.length === 0 && !isAdding('hub', ws.id) && (
+            <div style={{ padding: '10px 16px 10px 40px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No hubs yet</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ─── Governance Tab ────────────────────────────────────────────────────────────
 function GovernanceTab({ profile, flash }) {
   const [workspaces, setWorkspaces] = useState([])
-  const [divisions,  setDivisions]  = useState([])   // read-only, from Dashboard
-  const [scorecards, setScorecards] = useState([])   // published scorecards, for the queue picker
-  const [scMarkets,  setScMarkets]  = useState({})   // scorecardId -> [market option strings]
+  const [divisions,  setDivisions]  = useState([])
+  const [scorecards, setScorecards] = useState([])
+  const [scMarkets,  setScMarkets]  = useState({})
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
-  const [expandedS,  setExpandedS]  = useState({})   // queue.id -> bool : mapping panel open
-  const [expandedDiv,setExpandedDiv]= useState({})   // division id (or '__none__') -> bool
+  const [expandedS,  setExpandedS]  = useState({})
+  const [expandedDiv,setExpandedDiv]= useState({})
   const [adding,     setAdding]     = useState(null)
   const [addName,    setAddName]    = useState('')
   const [editing,    setEditing]    = useState(null)
   const [editName,   setEditName]   = useState('')
   const [confirm,    setConfirm]    = useState(null)
-  const [savingQueue,setSavingQueue]= useState(null)  // queue.id currently saving mapping
 
   useEffect(() => { loadAll() }, [])
 
@@ -478,7 +965,6 @@ function GovernanceTab({ profile, flash }) {
     setWorkspaces(ws || [])
     setDivisions(divs || [])
     setScorecards(sc || [])
-    // Pull each scorecard's builder-defined Market option list.
     const scIds = (sc || []).map(x => x.id)
     if (scIds.length) {
       const { data: mf } = await supabase
@@ -506,7 +992,6 @@ function GovernanceTab({ profile, flash }) {
   const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); await supabase.from('hubs').delete().eq('id', hub.id); await loadAll(); flash('Hub deleted') })
   const deleteQueue = (q)   => ask(`Permanently delete "${q.name}"? This cannot be undone.`,                             async () => { closeConfirm(); await supabase.from('queues').delete().eq('id', q.id);   await loadAll(); flash('Queue deleted') })
 
-  // Assign a workspace to a division (or clear it). Read-only divisions; this only sets the FK.
   const setWorkspaceDivision = async (wsId, divisionId) => {
     const { error } = await supabase.from('workspaces').update({ division_id: divisionId || null }).eq('id', wsId)
     if (error) return flash(error.message, false)
@@ -550,503 +1035,6 @@ function GovernanceTab({ profile, flash }) {
   const isAdding  = (type, parentId) => adding?.type === type && adding?.parentId === parentId
   const isEditing = (id) => editing?.id === id
 
-  const AddInput = ({ placeholder }) => (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
-      <input autoFocus className="input" style={{ maxWidth: 260, height: 34, fontSize: 13 }}
-        placeholder={placeholder} value={addName} onChange={e => setAddName(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') confirmAdd(); if (e.key === 'Escape') cancelAdd() }} />
-      <button className="btn btn-primary btn-sm" onClick={confirmAdd}>Save</button>
-      <button className="btn btn-ghost btn-sm" onClick={cancelAdd}>Cancel</button>
-    </div>
-  )
-
-  const EditInput = ({ placeholder }) => (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-      <input autoFocus className="input" style={{ maxWidth: 260, height: 34, fontSize: 13 }}
-        placeholder={placeholder} value={editName} onChange={e => setEditName(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') confirmEdit(); if (e.key === 'Escape') cancelEdit() }} />
-      <button className="btn btn-primary btn-sm" onClick={confirmEdit}>Save</button>
-      <button className="btn btn-ghost btn-sm" onClick={cancelEdit}>Cancel</button>
-    </div>
-  )
-
-  // ── Mapping panel for a single QUEUE ────────────────────────────────────────
-  // A queue's BPO-Hub is its parent hub (fixed). Here you pick: scorecard + market.
-  // Saving stamps scorecard_id, market_value, hub_id (parent), workspace_id (parent's ws).
-  const QueueMappingPanel = ({ queue, hub, ws }) => {
-    const [scId, setScId]     = useState(queue.scorecard_id || '')
-    const [market, setMarket] = useState(queue.market_value || '')
-
-    const [samplingConfig, setSamplingConfig] = useState(null)
-    const [samplingRules, setSamplingRules] = useState([])
-    const [cycleFrequency, setCycleFrequency] = useState('weekly')
-    const [runDay, setRunDay] = useState('monday')
-    const [captureDays, setCaptureDays] = useState([])
-    const [globalMin, setGlobalMin] = useState('')
-    const [savingSampling, setSavingSampling] = useState(false)
-
-    const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
-
-    useEffect(() => { loadSamplingConfig() }, [])
-
-    const loadSamplingConfig = async () => {
-      const { data: cfg } = await supabase.from('sampling_configurations').select('*').eq('queue_id', queue.id).maybeSingle()
-      if (cfg) {
-        setSamplingConfig(cfg)
-        setCycleFrequency(cfg.cycle_frequency)
-        setRunDay(cfg.run_day || 'monday')
-        setCaptureDays(cfg.capture_days || [])
-        setGlobalMin(cfg.global_min_cases_per_agent ?? '')
-        const { data: rules } = await supabase.from('sampling_stratification_rules').select('*').eq('sampling_configuration_id', cfg.id).order('position')
-        setSamplingRules((rules || []).map(r => ({ ...r, _localId: r.id })))
-      } else {
-        setSamplingConfig(null)
-        setCycleFrequency('weekly')
-        setRunDay('monday')
-        setCaptureDays([])
-        setGlobalMin('')
-        setSamplingRules([])
-      }
-    }
-
-    const toggleCaptureDay = (day) => setCaptureDays(d => d.includes(day) ? d.filter(x => x !== day) : [...d, day])
-
-    const addRule = () => {
-      setSamplingRules(rs => [...rs, {
-        _localId: 'new-' + Date.now() + '-' + Math.random(),
-        category: '', subcategory: '', channel: '', percentage: 10, min_cases_per_agent: '', is_fallback: false, position: rs.length
-      }])
-    }
-
-    const addFallbackRule = () => {
-      if (samplingRules.some(r => r.is_fallback)) return flash('Only one fallback rule is allowed per queue.', false)
-      setSamplingRules(rs => [...rs, {
-        _localId: 'new-' + Date.now(),
-        category: null, subcategory: null, channel: '', percentage: 5, min_cases_per_agent: '', is_fallback: true, position: rs.length
-      }])
-    }
-
-    const updateRule = (localId, field, value) => {
-      setSamplingRules(rs => rs.map(r => r._localId === localId ? { ...r, [field]: value } : r))
-    }
-
-    const removeRule = (localId) => setSamplingRules(rs => rs.filter(r => r._localId !== localId))
-
-    const saveSamplingConfig = async () => {
-      if (cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
-      if (captureDays.length === 0) return flash('Select at least one capture day.', false)
-      const nonFallback = samplingRules.filter(r => !r.is_fallback)
-      if (nonFallback.some(r => !r.category || !r.percentage)) return flash('Each rule needs a category and a percentage.', false)
-
-      setSavingSampling(true)
-
-      const payload = {
-        queue_id: queue.id,
-        global_min_cases_per_agent: globalMin === '' ? null : parseInt(globalMin),
-        cycle_frequency: cycleFrequency,
-        run_day: cycleFrequency === 'weekly' ? runDay : null,
-        capture_days: captureDays,
-        updated_by: profile?.id,
-        updated_at: new Date().toISOString(),
-      }
-
-      const { data: cfg, error: cfgError } = await supabase
-        .from('sampling_configurations')
-        .upsert({ ...(samplingConfig ? { id: samplingConfig.id } : {}), ...payload, created_by: samplingConfig?.created_by || profile?.id }, { onConflict: 'queue_id' })
-        .select().single()
-
-      if (cfgError) { setSavingSampling(false); return flash(cfgError.message, false) }
-
-      await supabase.from('sampling_stratification_rules').delete().eq('sampling_configuration_id', cfg.id)
-
-      if (samplingRules.length > 0) {
-        const rowsToInsert = samplingRules.map((r, i) => ({
-          sampling_configuration_id: cfg.id,
-          category: r.is_fallback ? null : (r.category || null),
-          subcategory: r.is_fallback ? null : (r.subcategory || null),
-          channel: r.channel || null,
-          percentage: parseFloat(r.percentage) || 0,
-          min_cases_per_agent: (r.min_cases_per_agent === '' || r.min_cases_per_agent == null) ? null : parseInt(r.min_cases_per_agent),
-          is_fallback: r.is_fallback,
-          position: i,
-        }))
-        const { error: rulesError } = await supabase.from('sampling_stratification_rules').insert(rowsToInsert)
-        if (rulesError) {
-          setSavingSampling(false)
-          if (rulesError.code === '23505') return flash('Only one fallback rule is allowed per queue.', false)
-          return flash(rulesError.message, false)
-        }
-      }
-
-      setSavingSampling(false)
-      await loadSamplingConfig()
-      flash('Sampling configuration saved')
-    }
-
-    // Market options come live from the selected scorecard's builder list.
-    const marketOptions = (scMarkets[scId] || [])
-    // If the currently-saved market isn't in the new scorecard's list, surface it
-    // so it's still visible (and re-selectable) rather than silently dropped.
-    const optionsToShow = market && !marketOptions.includes(market)
-      ? [market, ...marketOptions]
-      : marketOptions
-
-    const effectiveMarket = market
-
-    const save = async () => {
-      if (!scId)            return flash('Select a scorecard for this queue.', false)
-      if (!effectiveMarket) return flash('Select or enter a market for this queue.', false)
-      setSavingQueue(queue.id)
-      const { error } = await supabase.from('queues').update({
-        scorecard_id: scId,
-        market_value: effectiveMarket,
-        hub_id: hub.id,
-        workspace_id: ws.id,
-      }).eq('id', queue.id)
-      setSavingQueue(null)
-      if (error) {
-        // The unique (scorecard_id, hub_id, market_value) index is the backstop:
-        // another queue under this hub already uses this scorecard + market.
-        if (error.code === '23505') {
-          return flash('Another queue under this hub already uses that scorecard + market combination.', false)
-        }
-        return flash(error.message, false)
-      }
-      await loadAll()
-      flash('Queue mapping saved')
-    }
-
-    const clearMapping = async () => {
-      setSavingQueue(queue.id)
-      const { error } = await supabase.from('queues').update({
-        scorecard_id: null, market_value: null, workspace_id: null,
-      }).eq('id', queue.id)
-      setSavingQueue(null)
-      if (error) return flash(error.message, false)
-      await loadAll()
-      flash('Queue mapping cleared')
-    }
-
-    return (
-      <div style={{ padding: '14px 16px 16px 88px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-          Queue Settings
-        </div>
-
-        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-          {/* BPO - Hub : fixed = parent hub */}
-          <div style={{ minWidth: 180 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>BPO - Hub</label>
-            <div style={{ fontSize: 13, fontWeight: 500, padding: '7px 0' }}>
-              {hub.name}
-              <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 8, fontStyle: 'italic' }}>(from parent hub)</span>
-            </div>
-          </div>
-
-          {/* Scorecard : single select */}
-          <div style={{ minWidth: 220 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Scorecard</label>
-            <select className="select select-sm" value={scId}
-              onChange={e => {
-                const next = e.target.value
-                setScId(next)
-                const opts = scMarkets[next] || []
-                if (market && !opts.includes(market)) setMarket('')
-              }} style={{ width: '100%', maxWidth: 240 }}>
-              <option value="">Select scorecard…</option>
-              {scorecards.map(s => (
-                <option key={s.id} value={s.id}>{s.name} ({s.type === 'quality' ? 'Quality' : 'DSAT'})</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Market : single select, driven live by the selected scorecard's builder list */}
-          <div style={{ minWidth: 220 }}>
-            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Market</label>
-            {!scId ? (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0' }}>
-                Select a scorecard first.
-              </div>
-            ) : marketOptions.length === 0 && !market ? (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0', maxWidth: 220 }}>
-                This scorecard has no markets defined. Add them in the scorecard builder's Market field.
-              </div>
-            ) : (
-              <select className="select select-sm" value={market}
-                onChange={e => setMarket(e.target.value)} style={{ maxWidth: 200 }}>
-                <option value="">Select market…</option>
-                {optionsToShow.map(m => (
-                  <option key={m} value={m}>{m}{marketOptions.includes(m) ? '' : ' (not in scorecard)'}</option>
-                ))}
-              </select>
-            )}
-          </div>
-        </div>
-
-        <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="btn btn-primary btn-sm" onClick={save} disabled={savingQueue === queue.id}>
-            {savingQueue === queue.id ? 'Saving…' : 'Save Mapping'}
-          </button>
-          {queue.scorecard_id && (
-            <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: 'var(--danger)' }}
-              onClick={clearMapping} disabled={savingQueue === queue.id}>Clear</button>
-          )}
-          {queue.scorecard_id && queue.market_value && (
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-              Currently: {scorecardById(queue.scorecard_id)?.name || 'Unknown scorecard'} › {queue.market_value}
-            </span>
-          )}
-        </div>
-
-        <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-            Sampling Settings
-          </div>
-          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 18 }}>
-            <div>
-              <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Cycle Frequency</label>
-              <select className="select select-sm" value={cycleFrequency} onChange={e => setCycleFrequency(e.target.value)}>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-              </select>
-            </div>
-            {cycleFrequency === 'weekly' && (
-              <div>
-                <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Run Day</label>
-                <select className="select select-sm" value={runDay} onChange={e => setRunDay(e.target.value)}>
-                  {WEEKDAYS.map(d => <option key={d} value={d}>{d.charAt(0).toUpperCase() + d.slice(1)}</option>)}
-                </select>
-              </div>
-            )}
-            <div>
-              <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Global Minimum Cases / Agent</label>
-              <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={globalMin}
-                placeholder="None" onChange={e => setGlobalMin(e.target.value)} />
-            </div>
-          </div>
-
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Capture Days (whose handled cases get pulled in)</label>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {WEEKDAYS.map(d => (
-                <button key={d} type="button" onClick={() => toggleCaptureDay(d)} className="btn btn-sm"
-                  style={{ fontSize: 11, padding: '4px 10px',
-                    backgroundColor: captureDays.includes(d) ? 'var(--accent)' : 'var(--surface)',
-                    color: captureDays.includes(d) ? '#fff' : 'var(--text-secondary)',
-                    border: '1px solid ' + (captureDays.includes(d) ? 'var(--accent)' : 'var(--border)') }}>
-                  {d.slice(0,3).charAt(0).toUpperCase() + d.slice(1,3)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <label style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Stratification Rules</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addRule}>+ Add Rule</button>
-                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addFallbackRule}>+ Add Fallback Rule</button>
-              </div>
-            </div>
-
-            {samplingRules.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No stratification rules yet.</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {samplingRules.map(r => (
-                  <div key={r._localId} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
-                    backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
-                    {r.is_fallback ? (
-                      <div style={{ fontSize: 12, fontWeight: 600, minWidth: 140 }}>Fallback (all remaining categories)</div>
-                    ) : (
-                      <>
-                        <div>
-                          <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Category</label>
-                          <input className="input" style={{ width: 130, height: 30, fontSize: 12 }} value={r.category || ''}
-                            onChange={e => updateRule(r._localId, 'category', e.target.value)} placeholder="e.g. Account" />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Subcategory</label>
-                          <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={r.subcategory || ''}
-                            onChange={e => updateRule(r._localId, 'subcategory', e.target.value)} placeholder="All subcategories" />
-                        </div>
-                      </>
-                    )}
-                    <div>
-                      <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Channel</label>
-                      <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.channel || ''}
-                        onChange={e => updateRule(r._localId, 'channel', e.target.value)}>
-                        <option value="">All Channels</option>
-                        <option value="chat">Chat</option>
-                        <option value="email">Email</option>
-                        <option value="phone">Phone</option>
-                        <option value="whatsapp">WhatsApp</option>
-                        <option value="social">Social Media</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Percentage</label>
-                      <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={1} max={100} step="0.01"
-                        value={r.percentage} onChange={e => updateRule(r._localId, 'percentage', e.target.value)} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Min / Agent</label>
-                      <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={0}
-                        value={r.min_cases_per_agent ?? ''} placeholder="—"
-                        onChange={e => updateRule(r._localId, 'min_cases_per_agent', e.target.value)} />
-                    </div>
-                    <button onClick={() => removeRule(r._localId)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 12, height: 30 }}>Remove</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <button className="btn btn-primary btn-sm" onClick={saveSamplingConfig} disabled={savingSampling}>
-            {savingSampling ? 'Saving…' : 'Save Sampling Configuration'}
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // ── A single workspace card ─────────────────────────────────────────────────
-  const WorkspaceCard = ({ ws }) => {
-    const wsExpanded = expanded[ws.id] ?? true
-    const hubs = ws.hubs || []
-    return (
-      <div className="card" style={{ marginBottom: 12, padding: 0, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
-          borderBottom: wsExpanded && (hubs.length > 0 || isAdding('hub', ws.id)) ? '1px solid var(--border)' : 'none',
-          backgroundColor: 'var(--surface)' }}>
-          <button onClick={() => setExpanded(e => ({ ...e, [ws.id]: !wsExpanded }))}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 13, width: 20, flexShrink: 0 }}>
-            {wsExpanded ? '▾' : '▸'}
-          </button>
-          {isEditing(ws.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Workspace name" /></div> : (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>{ws.name}</span>
-              <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
-                backgroundColor: ws.is_active ? '#22c55e22' : '#64748b22', color: ws.is_active ? '#22c55e' : '#94a3b8' }}>
-                {ws.is_active ? 'Active' : 'Inactive'}
-              </span>
-            </div>
-          )}
-          {!isEditing(ws.id) && (
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <select className="select select-sm" value={ws.division_id || ''}
-                onChange={e => setWorkspaceDivision(ws.id, e.target.value)}
-                title="Division" style={{ height: 28, fontSize: 12, maxWidth: 170 }}>
-                <option value="">No division</option>
-                {divisions.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}{d.is_active ? '' : ' (inactive)'}</option>
-                ))}
-              </select>
-              <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ws.id, 'workspace', ws.name)}>Rename</button>
-              <button className={`btn btn-sm ${ws.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleWs(ws)}>{ws.is_active ? 'Deactivate' : 'Activate'}</button>
-              {!ws.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteWs(ws)}>Delete</button>}
-            </div>
-          )}
-        </div>
-        {wsExpanded && (
-          <div style={{ backgroundColor: 'var(--bg)' }}>
-            {isAdding('hub', ws.id) && (
-              <div style={{ padding: '10px 16px 10px 40px', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Hub</div>
-                <AddInput placeholder="e.g. Concentrix Romania" />
-              </div>
-            )}
-            {hubs.map((hub, hi) => {
-              const hubExpanded = expandedH[hub.id] ?? true
-              const queues = hub.queues || []
-              const isLast = hi === hubs.length - 1
-              return (
-                <div key={hub.id}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px 10px 40px',
-                    borderBottom: (hubExpanded && queues.length > 0) || !isLast || isAdding('queue', hub.id) ? '1px solid var(--border)' : 'none' }}>
-                    <button onClick={() => setExpandedH(e => ({ ...e, [hub.id]: !hubExpanded }))}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
-                      {hubExpanded ? '▾' : '▸'}
-                    </button>
-                    {isEditing(hub.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Hub name" /></div> : (
-                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: 13, fontWeight: 500 }}>{hub.name}</span>
-                        <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
-                          backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
-                          {hub.is_active ? 'Active' : 'Inactive'}
-                        </span>
-                      </div>
-                    )}
-                    {!isEditing(hub.id) && (
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
-                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
-                        <button className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleHub(hub)}>{hub.is_active ? 'Deactivate' : 'Activate'}</button>
-                        {!hub.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteHub(hub)}>Delete</button>}
-                      </div>
-                    )}
-                  </div>
-
-                  {hubExpanded && (
-                    <div>
-                      {isAdding('queue', hub.id) && (
-                        <div style={{ padding: '8px 16px 8px 64px', borderBottom: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>New Queue</div>
-                          <AddInput placeholder="e.g. DSAT · Romania" />
-                        </div>
-                      )}
-                      {queues.map((q, qi) => {
-                        const mapOpen = expandedS[q.id] ?? false
-                        const mapped = q.scorecard_id && q.market_value
-                        return (
-                          <div key={q.id}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 16px 8px 64px',
-                              borderBottom: mapOpen || qi < queues.length - 1 ? '1px solid var(--border)' : 'none', backgroundColor: 'var(--surface)' }}>
-                              <div style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: q.is_active ? '#22c55e' : '#64748b' }} />
-                              {isEditing(q.id) ? <div style={{ flex: 1 }}><EditInput placeholder="Queue name" /></div> : (
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                  <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
-                                  {mapped && (
-                                    <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                                      backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
-                                      {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                              {!isEditing(q.id) && (
-                                <div style={{ display: 'flex', gap: 6 }}>
-                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: mapOpen ? 'var(--accent)' : undefined, border: mapOpen ? '1px solid var(--accent)44' : undefined }}
-                                    onClick={() => setExpandedS(e => ({ ...e, [q.id]: !mapOpen }))}>⚙ Queue Settings</button>
-                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
-                                  <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
-                                  {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
-                                </div>
-                              )}
-                            </div>
-                            {mapOpen && <QueueMappingPanel queue={q} hub={hub} ws={ws} />}
-                          </div>
-                        )
-                      })}
-                      {queues.length === 0 && !isAdding('queue', hub.id) && (
-                        <div style={{ padding: '8px 16px 8px 64px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No queues yet</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-            {hubs.length === 0 && !isAdding('hub', ws.id) && (
-              <div style={{ padding: '10px 16px 10px 40px', fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No hubs yet</div>
-            )}
-          </div>
-        )}
-      </div>
-    )
-  }
-
   const expandAllDivisions = () => {
     const next = { __none__: true }
     divisions.forEach(d => { next[d.id] = true })
@@ -1060,6 +1048,9 @@ function GovernanceTab({ profile, flash }) {
 
   const wsByDivision = (divId) => workspaces.filter(w => (w.division_id || null) === divId)
   const unassignedWs = workspaces.filter(w => !w.division_id)
+
+  const ui = { expanded, setExpanded, expandedH, setExpandedH, expandedS, setExpandedS, adding, addName, setAddName, editing, editName, setEditName }
+  const actions = { isAdding, isEditing, startAdd, cancelAdd, confirmAdd, startEdit, cancelEdit, confirmEdit, toggleWs, toggleHub, toggleQueue, deleteWs, deleteHub, deleteQueue, setWorkspaceDivision, scorecardById, reloadAll: loadAll }
 
   return (
     <div>
@@ -1080,7 +1071,7 @@ function GovernanceTab({ profile, flash }) {
       {isAdding('workspace', null) && (
         <div className="card" style={{ marginBottom: 12, padding: '12px 16px' }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>New Workspace</div>
-          <AddInput placeholder="e.g. Concentrix" />
+          <AddInputInline value={addName} onChange={setAddName} onSave={confirmAdd} onCancel={cancelAdd} placeholder="e.g. Concentrix" />
           <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 8 }}>
             You can assign it to a division after creating it.
           </div>
@@ -1114,7 +1105,10 @@ function GovernanceTab({ profile, flash }) {
             {open && (
               wsList.length === 0
                 ? <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 0 8px 28px' }}>No workspaces in this division.</div>
-                : <div style={{ paddingLeft: 4 }}>{wsList.map(ws => <WorkspaceCard key={ws.id} ws={ws} />)}</div>
+                : <div style={{ paddingLeft: 4 }}>{wsList.map(ws => (
+                    <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets}
+                      profile={profile} flash={flash} ui={ui} actions={actions} />
+                  ))}</div>
             )}
           </div>
         )
@@ -1134,15 +1128,16 @@ function GovernanceTab({ profile, flash }) {
             </span>
           </div>
           {(expandedDiv['__none__'] ?? true) && (
-            <div style={{ paddingLeft: 4 }}>{unassignedWs.map(ws => <WorkspaceCard key={ws.id} ws={ws} />)}</div>
+            <div style={{ paddingLeft: 4 }}>{unassignedWs.map(ws => (
+              <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets}
+                profile={profile} flash={flash} ui={ui} actions={actions} />
+            ))}</div>
           )}
         </div>
       )}
     </div>
   )
 }
-
-
 
 // ─── Scorecards Tab ────────────────────────────────────────────────────────────
 const CORE_META_FIELDS = [
@@ -1175,14 +1170,14 @@ const seededFieldsForType = (type) => type === 'dsat' ? [...CORE_META_FIELDS, ..
 function ScorecardsTab({ profile, flash }) {
   const navigate = useNavigate()
   const [scorecards, setScorecards] = useState([])
-  const [divisions, setDivisions] = useState([])    // [{id,name,is_active}]
+  const [divisions, setDivisions] = useState([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
   const [newType, setNewType] = useState('quality')
   const [newThreshold, setNewThreshold] = useState(90)
-  const [newDivision, setNewDivision] = useState('')   // division NAME (matches scorecards.division text column)
+  const [newDivision, setNewDivision] = useState('')
   const [confirm, setConfirm] = useState(null)
 
   const canEdit = ['admin', 'owner'].includes(profile?.role)
