@@ -451,7 +451,7 @@ function UsersTab({ profile, flash }) {
 
 
 // ─── Governance Tab ────────────────────────────────────────────────────────────
-function GovernanceTab({ flash }) {
+function GovernanceTab({ profile, flash }) {
   const [workspaces, setWorkspaces] = useState([])
   const [divisions,  setDivisions]  = useState([])   // read-only, from Dashboard
   const [scorecards, setScorecards] = useState([])   // published scorecards, for the queue picker
@@ -577,6 +577,37 @@ function GovernanceTab({ flash }) {
     const [scId, setScId]     = useState(queue.scorecard_id || '')
     const [market, setMarket] = useState(queue.market_value || '')
 
+    const [samplingList, setSamplingList] = useState([])
+    const [newSamp, setNewSamp] = useState({ channel: 'all', targetCount: 10, period: 'weekly' })
+    const [savingSamp, setSavingSamp] = useState(false)
+
+    useEffect(() => { loadSampling() }, [])
+
+    const loadSampling = async () => {
+      const { data } = await supabase.from('sampling_requirements').select('*').eq('queue_name', queue.name).order('channel')
+      setSamplingList(data || [])
+    }
+
+    const addSampling = async () => {
+      setSavingSamp(true)
+      const { error } = await supabase.from('sampling_requirements').upsert({
+        queue_name: queue.name, channel: newSamp.channel,
+        target_count: newSamp.targetCount, period: newSamp.period,
+        updated_by: profile?.id, updated_at: new Date().toISOString()
+      }, { onConflict: 'queue_name,channel' })
+      setSavingSamp(false)
+      if (error) return flash(error.message, false)
+      await loadSampling()
+      flash('Sampling requirement saved')
+      setNewSamp({ channel: 'all', targetCount: 10, period: 'weekly' })
+    }
+
+    const deleteSampling = async (id) => {
+      await supabase.from('sampling_requirements').delete().eq('id', id)
+      await loadSampling()
+      flash('Requirement removed')
+    }
+
     // Market options come live from the selected scorecard's builder list.
     const marketOptions = (scMarkets[scId] || [])
     // If the currently-saved market isn't in the new scorecard's list, surface it
@@ -696,14 +727,55 @@ function GovernanceTab({ flash }) {
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
             Sampling Settings
           </div>
-          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
             <div style={{ minWidth: 220 }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sampling Configuration</div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not configured yet.</div>
             </div>
-            <div style={{ minWidth: 220 }}>
+            <div style={{ minWidth: 320 }}>
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sampling Requirement</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not configured yet.</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 10 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Channel</label>
+                  <select className="select select-sm" value={newSamp.channel}
+                    onChange={e => setNewSamp(s => ({ ...s, channel: e.target.value }))}>
+                    <option value="all">All</option>
+                    <option value="chat">Chat</option>
+                    <option value="email">Email</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Target Count</label>
+                  <input type="number" className="input" style={{ width: 90, height: 30 }} min={1} value={newSamp.targetCount}
+                    onChange={e => setNewSamp(s => ({ ...s, targetCount: parseInt(e.target.value) }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Period</label>
+                  <select className="select select-sm" value={newSamp.period}
+                    onChange={e => setNewSamp(s => ({ ...s, period: e.target.value }))}>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                <button className="btn btn-primary btn-sm" onClick={addSampling} disabled={savingSamp}>
+                  {savingSamp ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              {samplingList.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No sampling requirements set for this queue.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {samplingList.map(sr => (
+                    <div key={sr.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      backgroundColor: 'var(--surface)', borderRadius: 8, padding: '6px 10px', border: '1px solid var(--border)', fontSize: 12 }}>
+                      <span><strong>{sr.channel}</strong> · {sr.target_count} / {sr.period}</span>
+                      <button onClick={() => deleteSampling(sr.id)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 12 }}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -942,89 +1014,7 @@ function GovernanceTab({ flash }) {
   )
 }
 
-// ─── Sampling Tab ──────────────────────────────────────────────────────────────
-function SamplingTab({ profile, flash }) {
-  const [sampling, setSampling] = useState([])
-  const [newSamp,  setNewSamp]  = useState({ queueName: '', channel: 'all', targetCount: 10, period: 'weekly' })
 
-  useEffect(() => { loadSampling() }, [])
-
-  const loadSampling = async () => {
-    const { data } = await supabase.from('sampling_requirements').select('*').order('queue_name')
-    setSampling(data || [])
-  }
-
-  const addSampling = async () => {
-    if (!newSamp.queueName) return flash('Queue name is required.', false)
-    const { error } = await supabase.from('sampling_requirements').upsert({
-      queue_name: newSamp.queueName, channel: newSamp.channel,
-      target_count: newSamp.targetCount, period: newSamp.period,
-      updated_by: profile.id, updated_at: new Date().toISOString()
-    }, { onConflict: 'queue_name,channel' })
-    if (error) return flash(error.message, false)
-    await loadSampling(); flash('Sampling requirement saved')
-    setNewSamp({ queueName: '', channel: 'all', targetCount: 10, period: 'weekly' })
-  }
-
-  const deleteSampling = async (id) => {
-    await supabase.from('sampling_requirements').delete().eq('id', id)
-    await loadSampling(); flash('Requirement removed')
-  }
-
-  return (
-    <div>
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-title" style={{ marginBottom: 16 }}>Add / Update Requirement</div>
-        <div className="form-row">
-          <div className="form-field">
-            <label>Queue Name</label>
-            <input className="input" placeholder="e.g. Payments Support" value={newSamp.queueName}
-              onChange={e => setNewSamp(s => ({ ...s, queueName: e.target.value }))} />
-          </div>
-          <div className="form-field">
-            <label>Channel</label>
-            <select className="select" value={newSamp.channel} onChange={e => setNewSamp(s => ({ ...s, channel: e.target.value }))}>
-              <option value="all">All</option><option value="chat">Chat</option><option value="email">Email</option>
-            </select>
-          </div>
-          <div className="form-field">
-            <label>Target Count</label>
-            <input type="number" className="input" min={1} value={newSamp.targetCount}
-              onChange={e => setNewSamp(s => ({ ...s, targetCount: parseInt(e.target.value) }))} />
-          </div>
-          <div className="form-field">
-            <label>Period</label>
-            <select className="select" value={newSamp.period} onChange={e => setNewSamp(s => ({ ...s, period: e.target.value }))}>
-              <option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option>
-            </select>
-          </div>
-          <div className="form-field form-field-btn">
-            <label>&nbsp;</label>
-            <button className="btn btn-primary" onClick={addSampling}>Save</button>
-          </div>
-        </div>
-      </div>
-      <div className="table-wrap">
-        <table className="table">
-          <thead><tr><th>Queue</th><th>Channel</th><th>Target</th><th>Period</th><th>Updated At</th><th></th></tr></thead>
-          <tbody>
-            {sampling.length === 0 && <tr><td colSpan="6" className="empty-row">No sampling requirements set.</td></tr>}
-            {sampling.map(sr => (
-              <tr key={sr.id}>
-                <td>{sr.queue_name}</td>
-                <td><span className="badge badge-channel">{sr.channel}</span></td>
-                <td>{sr.target_count}</td>
-                <td style={{ color: 'var(--text-secondary)' }}>{sr.period}</td>
-                <td style={{ color: 'var(--text-secondary)' }}>{new Date(sr.updated_at).toLocaleDateString()}</td>
-                <td><button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => deleteSampling(sr.id)}>Remove</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
 
 // ─── Scorecards Tab ────────────────────────────────────────────────────────────
 const CORE_META_FIELDS = [
@@ -1272,20 +1262,18 @@ export default function Admin() {
       <div className="page-header">
         <div>
           <h1>Control Room</h1>
-          <p className="page-sub">Manage users, roles, sampling requirements and governance</p>
+          <p className="page-sub">Manage users, roles and governance</p>
         </div>
       </div>
       {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
       <div className="tabs">
         <button className={`tab ${tab === 'users'      ? 'active' : ''}`} onClick={() => setTab('users')}>User Management</button>
-        <button className={`tab ${tab === 'sampling'   ? 'active' : ''}`} onClick={() => setTab('sampling')}>Sampling Requirements</button>
         <button className={`tab ${tab === 'scorecards' ? 'active' : ''}`} onClick={() => setTab('scorecards')}>Scorecards</button>
         <button className={`tab ${tab === 'governance' ? 'active' : ''}`} onClick={() => setTab('governance')}>Governance</button>
       </div>
       {tab === 'users'      && <UsersTab      profile={profile} flash={flash} />}
-      {tab === 'sampling'   && <SamplingTab   profile={profile} flash={flash} />}
       {tab === 'scorecards' && <ScorecardsTab profile={profile} flash={flash} />}
-      {tab === 'governance' && <GovernanceTab flash={flash} />}
+      {tab === 'governance' && <GovernanceTab profile={profile} flash={flash} />}
     </div>
   )
 }
