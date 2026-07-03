@@ -624,7 +624,7 @@ function GovernanceTab({ flash }) {
     return (
       <div style={{ padding: '14px 16px 16px 88px', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-          Queue Mapping
+          Queue Settings
         </div>
 
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'flex-start' }}>
@@ -690,6 +690,22 @@ function GovernanceTab({ flash }) {
               Currently: {scorecardById(queue.scorecard_id)?.name || 'Unknown scorecard'} › {queue.market_value}
             </span>
           )}
+        </div>
+
+        <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+            Sampling Settings
+          </div>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 220 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sampling Configuration</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not configured yet.</div>
+            </div>
+            <div style={{ minWidth: 220 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Sampling Requirement</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>Not configured yet.</div>
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -803,7 +819,7 @@ function GovernanceTab({ flash }) {
                               {!isEditing(q.id) && (
                                 <div style={{ display: 'flex', gap: 6 }}>
                                   <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: mapOpen ? 'var(--accent)' : undefined, border: mapOpen ? '1px solid var(--accent)44' : undefined }}
-                                    onClick={() => setExpandedS(e => ({ ...e, [q.id]: !mapOpen }))}>⚙ Mapping</button>
+                                    onClick={() => setExpandedS(e => ({ ...e, [q.id]: !mapOpen }))}>⚙ Queue Settings</button>
                                   <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
                                   <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
                                   {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
