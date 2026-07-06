@@ -486,33 +486,17 @@ function InfoTooltip({ text }) {
 function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
   const [market, setMarket] = useState(queue.market_value || '')
-  const [savingMapping, setSavingMapping] = useState(false)
 
   const scorecardById = (id) => scorecards.find(s => s.id === id)
   const marketOptions = (scMarkets[scId] || [])
   const optionsToShow = market && !marketOptions.includes(market) ? [market, ...marketOptions] : marketOptions
 
-  const saveMapping = async () => {
-    if (!scId)   return flash('Select a scorecard for this queue.', false)
-    if (!market) return flash('Select or enter a market for this queue.', false)
-    setSavingMapping(true)
-    const { error } = await supabase.from('queues').update({
-      scorecard_id: scId, market_value: market, hub_id: hub.id, workspace_id: ws.id,
-    }).eq('id', queue.id)
-    setSavingMapping(false)
-    if (error) {
-      if (error.code === '23505') return flash('Another queue under this hub already uses that scorecard + market combination.', false)
-      return flash(error.message, false)
-    }
-    await onMappingSaved()
-    flash('Queue mapping saved')
-  }
-
   const clearMapping = async () => {
-    setSavingMapping(true)
+    setSaving(true)
     const { error } = await supabase.from('queues').update({ scorecard_id: null, market_value: null, workspace_id: null }).eq('id', queue.id)
-    setSavingMapping(false)
+    setSaving(false)
     if (error) return flash(error.message, false)
+    setScId(''); setMarket('')
     await onMappingSaved()
     flash('Queue mapping cleared')
   }
@@ -525,7 +509,11 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const [globalMin, setGlobalMin]           = useState('')
   const [minTotalCases, setMinTotalCases]   = useState('')
   const [maxTotalCases, setMaxTotalCases]   = useState('')
-  const [savingSampling, setSavingSampling] = useState(false)
+
+  const [evaluators, setEvaluators]         = useState([])
+  const [assignmentRules, setAssignmentRules] = useState({})
+
+  const [saving, setSaving] = useState(false)
 
   const WEEKDAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
   const DIMENSIONS = [
@@ -534,7 +522,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
     { value: 'channel', label: 'Channel' },
   ]
 
-  useEffect(() => { loadSamplingConfig() }, [])
+  useEffect(() => { loadSamplingConfig(); loadAssignmentSettings() }, [])
 
   const loadSamplingConfig = async () => {
     const { data: cfg } = await supabase.from('sampling_configurations').select('*').eq('queue_id', queue.id).maybeSingle()
@@ -558,6 +546,42 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       setMaxTotalCases('')
       setSamplingRules([])
     }
+  }
+
+  const loadAssignmentSettings = async () => {
+    const { data: uq } = await supabase.from('user_queues').select('user_id, users(id, name, email, role)').eq('queue_id', queue.id)
+    const evalList = (uq || []).map(r => r.users).filter(u => u && u.role === 'evaluator')
+    setEvaluators(evalList)
+
+    const { data: settings } = await supabase.from('evaluator_assignment_settings').select('*').eq('queue_id', queue.id)
+    const settingIds = (settings || []).map(s => s.id)
+    let groups = []
+    let conditions = []
+    if (settingIds.length > 0) {
+      const { data: g } = await supabase.from('evaluator_assignment_groups').select('*').in('assignment_setting_id', settingIds).order('position')
+      groups = g || []
+      const groupIds = groups.map(x => x.id)
+      if (groupIds.length > 0) {
+        const { data: c } = await supabase.from('evaluator_assignment_conditions').select('*').in('group_id', groupIds).order('position')
+        conditions = c || []
+      }
+    }
+
+    const rules = {}
+    evalList.forEach((ev, i) => {
+      const setting = (settings || []).find(s => s.user_id === ev.id)
+      const evGroups = setting ? groups.filter(g => g.assignment_setting_id === setting.id) : []
+      rules[ev.id] = {
+        settingId: setting?.id || null,
+        priority: setting?.priority ?? i,
+        maxCases: setting?.max_cases_per_cycle ?? '',
+        groups: evGroups.map(g => ({
+          _localId: g.id, id: g.id,
+          conditions: conditions.filter(c => c.group_id === g.id).map(c => ({ _localId: c.id, id: c.id, dimension: c.dimension, value: c.value }))
+        }))
+      }
+    })
+    setAssignmentRules(rules)
   }
 
   const toggleCaptureDay = (day) => setCaptureDays(d => d.includes(day) ? d.filter(x => x !== day) : [...d, day])
@@ -613,13 +637,90 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 
   const incompleteRuleCount = samplingRules.filter(r => !r.dimension || !r.sizing_value || (!r.is_fallback && !r.value)).length
 
-  const saveSamplingConfig = async () => {
+  const addGroup = (userId) => {
+    setAssignmentRules(prev => {
+      const cur = prev[userId] || { settingId: null, priority: 0, maxCases: '', groups: [] }
+      return { ...prev, [userId]: { ...cur, groups: [...cur.groups, { _localId: 'new-' + Date.now() + '-' + Math.random(), id: null, conditions: [] }] } }
+    })
+  }
+
+  const removeGroup = (userId, groupLocalId) => {
+    setAssignmentRules(prev => {
+      const cur = prev[userId]
+      if (!cur) return prev
+      return { ...prev, [userId]: { ...cur, groups: cur.groups.filter(g => g._localId !== groupLocalId) } }
+    })
+  }
+
+  const addCondition = (userId, groupLocalId) => {
+    setAssignmentRules(prev => {
+      const cur = prev[userId]
+      if (!cur) return prev
+      const groups = cur.groups.map(g => g._localId === groupLocalId
+        ? { ...g, conditions: [...g.conditions, { _localId: 'new-' + Date.now() + '-' + Math.random(), id: null, dimension: '', value: '' }] }
+        : g)
+      return { ...prev, [userId]: { ...cur, groups } }
+    })
+  }
+
+  const updateCondition = (userId, groupLocalId, conditionLocalId, field, value) => {
+    setAssignmentRules(prev => {
+      const cur = prev[userId]
+      if (!cur) return prev
+      const groups = cur.groups.map(g => g._localId === groupLocalId
+        ? { ...g, conditions: g.conditions.map(c => c._localId === conditionLocalId
+            ? { ...c, [field]: value, ...(field === 'dimension' ? { value: '' } : {}) }
+            : c) }
+        : g)
+      return { ...prev, [userId]: { ...cur, groups } }
+    })
+  }
+
+  const removeCondition = (userId, groupLocalId, conditionLocalId) => {
+    setAssignmentRules(prev => {
+      const cur = prev[userId]
+      if (!cur) return prev
+      const groups = cur.groups.map(g => g._localId === groupLocalId
+        ? { ...g, conditions: g.conditions.filter(c => c._localId !== conditionLocalId) }
+        : g)
+      return { ...prev, [userId]: { ...cur, groups } }
+    })
+  }
+
+  const updatePriority = (userId, value) => {
+    setAssignmentRules(prev => ({ ...prev, [userId]: { ...(prev[userId] || { groups: [], maxCases: '' }), priority: value } }))
+  }
+  const updateMaxCases = (userId, value) => {
+    setAssignmentRules(prev => ({ ...prev, [userId]: { ...(prev[userId] || { groups: [], priority: 0 }), maxCases: value } }))
+  }
+
+  const incompleteAssignmentCount = Object.values(assignmentRules).reduce((sum, rule) => {
+    return sum + rule.groups.reduce((gsum, g) => {
+      if (g.conditions.length === 0) return gsum + 1
+      return gsum + g.conditions.filter(c => !c.dimension || !c.value).length
+    }, 0)
+  }, 0)
+
+  const saveQueueSettings = async () => {
+    if (!scId)   return flash('Select a scorecard for this queue.', false)
+    if (!market) return flash('Select or enter a market for this queue.', false)
     if (cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
     if (captureDays.length === 0) return flash('Select at least one capture day.', false)
-    if (incompleteRuleCount > 0) return flash(incompleteRuleCount + ' rule(s) are missing a dimension, value, or sizing amount — fill them in or remove them.', false)
+    if (incompleteRuleCount > 0) return flash(incompleteRuleCount + ' stratification rule(s) are missing a dimension, value, or sizing amount — fill them in or remove them.', false)
     if (minTotalCases !== '' && maxTotalCases !== '' && parseInt(minTotalCases) > parseInt(maxTotalCases)) return flash('Min Total Cases cannot exceed Max Total Cases.', false)
+    if (incompleteAssignmentCount > 0) return flash(incompleteAssignmentCount + ' assignment condition(s) are incomplete or empty — fill them in or remove the group.', false)
 
-    setSavingSampling(true)
+    setSaving(true)
+
+    const { error: mapError } = await supabase.from('queues').update({
+      scorecard_id: scId, market_value: market, hub_id: hub.id, workspace_id: ws.id,
+    }).eq('id', queue.id)
+    if (mapError) {
+      setSaving(false)
+      if (mapError.code === '23505') return flash('Another queue under this hub already uses that scorecard + market combination.', false)
+      return flash(mapError.message, false)
+    }
+
     const payload = {
       queue_id: queue.id,
       global_min_cases_per_agent: globalMin === '' ? null : parseInt(globalMin),
@@ -635,8 +736,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       .from('sampling_configurations')
       .upsert({ ...(samplingConfig ? { id: samplingConfig.id } : {}), ...payload, created_by: samplingConfig?.created_by || profile?.id }, { onConflict: 'queue_id' })
       .select().single()
-
-    if (cfgError) { setSavingSampling(false); return flash(cfgError.message, false) }
+    if (cfgError) { setSaving(false); return flash(cfgError.message, false) }
 
     await supabase.from('sampling_stratification_rules').delete().eq('sampling_configuration_id', cfg.id)
 
@@ -663,7 +763,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           }
           const { data: inserted, error: insertError } = await supabase.from('sampling_stratification_rules').insert(row).select().single()
           if (insertError) {
-            setSavingSampling(false)
+            setSaving(false)
             if (insertError.code === '23505') return flash('Only one fallback rule is allowed per group.', false)
             return flash(insertError.message, false)
           }
@@ -673,10 +773,44 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       }
     }
 
-    setSavingSampling(false)
-    await loadSamplingConfig()
+    for (const ev of evaluators) {
+      const rule = assignmentRules[ev.id]
+      const hasContent = rule && (rule.maxCases !== '' || rule.groups.some(g => g.conditions.length > 0))
+      if (!hasContent) {
+        if (rule?.settingId) await supabase.from('evaluator_assignment_settings').delete().eq('id', rule.settingId)
+        continue
+      }
+      const { data: setting, error: settingError } = await supabase
+        .from('evaluator_assignment_settings')
+        .upsert({
+          ...(rule.settingId ? { id: rule.settingId } : {}),
+          queue_id: queue.id, user_id: ev.id,
+          priority: parseInt(rule.priority) || 0,
+          max_cases_per_cycle: rule.maxCases === '' ? null : parseInt(rule.maxCases),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'queue_id,user_id' })
+        .select().single()
+      if (settingError) { setSaving(false); return flash(settingError.message, false) }
+
+      await supabase.from('evaluator_assignment_groups').delete().eq('assignment_setting_id', setting.id)
+      let groupPosition = 0
+      for (const g of rule.groups) {
+        if (g.conditions.length === 0) continue
+        const { data: insertedGroup, error: groupError } = await supabase
+          .from('evaluator_assignment_groups')
+          .insert({ assignment_setting_id: setting.id, position: groupPosition++ })
+          .select().single()
+        if (groupError) { setSaving(false); return flash(groupError.message, false) }
+        const condRows = g.conditions.map((c, i) => ({ group_id: insertedGroup.id, dimension: c.dimension, value: c.value, position: i }))
+        const { error: condError } = await supabase.from('evaluator_assignment_conditions').insert(condRows)
+        if (condError) { setSaving(false); return flash(condError.message, false) }
+      }
+    }
+
+    setSaving(false)
+    await Promise.all([loadSamplingConfig(), loadAssignmentSettings()])
     await onMappingSaved()
-    flash('Sampling configuration saved')
+    flash('Queue settings saved')
   }
 
   const smallLabel = { fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }
@@ -834,15 +968,16 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
         </div>
       </div>
 
-      <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button className="btn btn-primary btn-sm" onClick={saveMapping} disabled={savingMapping}>{savingMapping ? 'Saving…' : 'Save Mapping'}</button>
-        {queue.scorecard_id && <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: 'var(--danger)' }} onClick={clearMapping} disabled={savingMapping}>Clear</button>}
-        {queue.scorecard_id && queue.market_value && (
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-            Currently: {scorecardById(queue.scorecard_id)?.name || 'Unknown scorecard'} › {queue.market_value}
-          </span>
-        )}
-      </div>
+      {queue.scorecard_id && (
+        <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: 'var(--danger)' }} onClick={clearMapping} disabled={saving}>Clear Mapping</button>
+          {queue.market_value && (
+            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+              Currently: {scorecardById(queue.scorecard_id)?.name || 'Unknown scorecard'} › {queue.market_value}
+            </span>
+          )}
+        </div>
+      )}
 
       <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
@@ -899,7 +1034,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           </div>
         </div>
 
-        <div style={{ marginBottom: 18 }}>
+        <div>
           <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Capture Days (whose handled cases get pulled in)</label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {WEEKDAYS.map(d => (
@@ -913,9 +1048,110 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
             ))}
           </div>
         </div>
+      </div>
 
-        <button className="btn btn-primary btn-sm" onClick={saveSamplingConfig} disabled={savingSampling}>
-          {savingSampling ? 'Saving…' : 'Save Sampling Configuration'}
+      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+          Evaluator Assignment Rules
+        </div>
+
+        {evaluators.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+            No evaluators are assigned to this queue yet — assign them in User Management first.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {evaluators.map(ev => {
+              const rule = assignmentRules[ev.id] || { priority: 0, maxCases: '', groups: [] }
+              return (
+                <div key={ev.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, flexWrap: 'wrap', gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{ev.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{ev.email}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 16 }}>
+                      <div>
+                        <label style={smallLabel}>Priority<InfoTooltip text="When more than one evaluator's rules match the same case, whoever has the lower priority number wins." /></label>
+                        <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }}
+                          value={rule.priority} onChange={e => updatePriority(ev.id, e.target.value)} />
+                      </div>
+                      <div>
+                        <label style={smallLabel}>Max Cases / Cycle<InfoTooltip text="Advisory only — if a matching rule would push this evaluator over the cap, they still get the case. It's flagged as an overage on their screen rather than reassigned elsewhere." /></label>
+                        <input type="number" className="input" style={{ width: 90, height: 30, fontSize: 12 }} min={1}
+                          value={rule.maxCases} placeholder="No cap" onChange={e => updateMaxCases(ev.id, e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {rule.groups.length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: 8 }}>
+                      No conditions set — this evaluator won't receive automatic assignments.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 8 }}>
+                      {rule.groups.map((g, gi) => (
+                        <div key={g._localId}>
+                          {gi > 0 && <div style={{ fontSize: 10, color: 'var(--text-secondary)', fontWeight: 700, margin: '6px 0' }}>OR</div>}
+                          <div style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+                            {g.conditions.length === 0 ? (
+                              <div style={{ fontSize: 11, color: 'var(--danger)', marginBottom: 6 }}>Empty group — add at least one condition or remove it.</div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {g.conditions.map((c, ci) => (
+                                  <div key={c._localId} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    {ci > 0 && <span style={{ fontSize: 10, color: 'var(--text-secondary)', fontWeight: 700, alignSelf: 'center' }}>AND</span>}
+                                    <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={c.dimension}
+                                      onChange={e => updateCondition(ev.id, g._localId, c._localId, 'dimension', e.target.value)}>
+                                      <option value="">Select…</option>
+                                      {DIMENSIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                                    </select>
+                                    {c.dimension === 'channel' ? (
+                                      <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={c.value}
+                                        onChange={e => updateCondition(ev.id, g._localId, c._localId, 'value', e.target.value)}>
+                                        <option value="">Select…</option>
+                                        <option value="chat">Chat</option>
+                                        <option value="email">Email</option>
+                                        <option value="phone">Phone</option>
+                                        <option value="whatsapp">WhatsApp</option>
+                                        <option value="social">Social Media</option>
+                                      </select>
+                                    ) : (
+                                      <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={c.value}
+                                        onChange={e => updateCondition(ev.id, g._localId, c._localId, 'value', e.target.value)}
+                                        placeholder="e.g. Account" />
+                                    )}
+                                    <button onClick={() => removeCondition(ev.id, g._localId, c._localId)}
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 11 }}>Remove</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addCondition(ev.id, g._localId)}>+ Add Condition (AND)</button>
+                              <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: 'var(--danger)' }} onClick={() => removeGroup(ev.id, g._localId)}>Remove Group</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addGroup(ev.id)}>+ Add OR-Group</button>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {incompleteAssignmentCount > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 8 }}>
+            {incompleteAssignmentCount} condition(s)/group(s) outlined above need attention before saving.
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
+        <button className="btn btn-primary btn-sm" onClick={saveQueueSettings} disabled={saving}>
+          {saving ? 'Saving…' : 'Save Queue Settings'}
         </button>
       </div>
     </div>
