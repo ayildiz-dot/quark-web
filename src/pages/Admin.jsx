@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
@@ -18,6 +18,59 @@ function ConfirmModal({ message, onYes, onNo }) {
           <button className="btn btn-ghost" style={{ minWidth: 80 }} onClick={onNo}>No</button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Row Menu (kebab menu for rare/destructive actions) ────────────────────────
+function RowMenu({ isActive, onToggleActive, onDelete, activeLabel = 'Deactivate', inactiveLabel = 'Activate' }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  const itemStyle = {
+    display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+    fontSize: 12, background: 'none', border: 'none', cursor: 'pointer',
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="btn btn-ghost btn-sm"
+        style={{ padding: '4px 9px', fontSize: 15, lineHeight: 1, color: 'var(--text-secondary)' }}
+        title="More actions">
+        ⋮
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 60, minWidth: 150,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden',
+        }}>
+          <button
+            style={{ ...itemStyle, color: isActive ? 'var(--danger)' : 'var(--success)' }}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            onClick={() => { setOpen(false); onToggleActive() }}>
+            {isActive ? activeLabel : inactiveLabel}
+          </button>
+          {!isActive && onDelete && (
+            <button
+              style={{ ...itemStyle, color: 'var(--danger)', borderTop: '1px solid var(--border)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+              onClick={() => { setOpen(false); onDelete() }}>
+              Delete
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -483,7 +536,7 @@ function InfoTooltip({ text }) {
 }
 
 // ─── Queue Settings panel (top-level component — preserves its own state across re-renders) ───
-function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved }) {
+function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved, onToggleActive, onDelete }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
   const [market, setMarket] = useState(queue.market_value || '')
 
@@ -1154,6 +1207,20 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           {saving ? 'Saving…' : 'Save Queue Settings'}
         </button>
       </div>
+
+      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--danger)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
+          Danger Zone
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className={`btn btn-sm ${queue.is_active ? 'btn-danger' : 'btn-success'}`} onClick={onToggleActive}>
+            {queue.is_active ? 'Deactivate Queue' : 'Activate Queue'}
+          </button>
+          {!queue.is_active && (
+            <button className="btn btn-sm btn-danger" onClick={onDelete}>Delete Queue</button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -1198,8 +1265,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
             </select>
             <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
             <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ws.id, 'workspace', ws.name)}>Rename</button>
-            <button className={`btn btn-sm ${ws.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleWs(ws)}>{ws.is_active ? 'Deactivate' : 'Activate'}</button>
-            {!ws.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteWs(ws)}>Delete</button>}
+            <RowMenu isActive={ws.is_active} onToggleActive={() => toggleWs(ws)} onDelete={() => deleteWs(ws)} />
           </div>
         )}
       </div>
@@ -1240,8 +1306,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
                       <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
-                      <button className={`btn btn-sm ${hub.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleHub(hub)}>{hub.is_active ? 'Deactivate' : 'Activate'}</button>
-                      {!hub.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteHub(hub)}>Delete</button>}
+                      <RowMenu isActive={hub.is_active} onToggleActive={() => toggleHub(hub)} onDelete={() => deleteHub(hub)} />
                     </div>
                   )}
                 </div>
@@ -1289,14 +1354,13 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                                 <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: mapOpen ? 'var(--accent)' : undefined, border: mapOpen ? '1px solid var(--accent)44' : undefined }}
                                   onClick={() => setExpandedS(e => ({ ...e, [q.id]: !mapOpen }))}>⚙ Queue Settings</button>
                                 <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
-                                <button className={`btn btn-sm ${q.is_active ? 'btn-danger' : 'btn-success'}`} style={{ fontSize: 12 }} onClick={() => toggleQueue(q)}>{q.is_active ? 'Deactivate' : 'Activate'}</button>
-                                {!q.is_active && <button className="btn btn-sm btn-danger" style={{ fontSize: 12 }} onClick={() => deleteQueue(q)}>Delete</button>}
                               </div>
                             )}
                           </div>
                           {mapOpen && (
                             <QueueMappingPanel queue={q} hub={hub} ws={ws} scorecards={scorecards} scMarkets={scMarkets}
-                              profile={profile} flash={flash} onMappingSaved={reloadAll} />
+                              profile={profile} flash={flash} onMappingSaved={reloadAll}
+                              onToggleActive={() => toggleQueue(q)} onDelete={() => deleteQueue(q)} />
                           )}
                         </div>
                       )
