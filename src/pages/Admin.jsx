@@ -516,7 +516,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const [globalMin, setGlobalMin]           = useState('')
   const [savingSampling, setSavingSampling] = useState(false)
 
-  const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+  const WEEKDAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
 
   useEffect(() => { loadSamplingConfig() }, [])
 
@@ -607,6 +607,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 
     setSavingSampling(false)
     await loadSamplingConfig()
+    await onMappingSaved()
     flash('Sampling configuration saved')
   }
 
@@ -786,7 +787,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 }
 
 // ─── Workspace card (top-level component — preserves its own state across re-renders) ───
-function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, ui, actions }) {
+function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, ui, actions, samplingByQueue }) {
   const { expanded, setExpanded, expandedH, setExpandedH, expandedS, setExpandedS, adding, addName, setAddName, editing, editName, setEditName } = ui
   const { isAdding, isEditing, startAdd, cancelAdd, confirmAdd, startEdit, cancelEdit, confirmEdit, toggleWs, toggleHub, toggleQueue, deleteWs, deleteHub, deleteQueue, setWorkspaceDivision, scorecardById, reloadAll } = actions
 
@@ -902,6 +903,13 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                                     {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}
                                   </span>
                                 )}
+                                {samplingByQueue[q.id] && (
+                                  <span title={`Sampling configuration set (${samplingByQueue[q.id]} cycle)`}
+                                    style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                    backgroundColor: '#8b5cf622', color: '#8b5cf6', border: '1px solid #8b5cf644' }}>
+                                    🎯 Sampling · {samplingByQueue[q.id] === 'weekly' ? 'Weekly' : 'Daily'}
+                                  </span>
+                                )}
                               </div>
                             )}
                             {!isEditing(q.id) && (
@@ -953,18 +961,23 @@ function GovernanceTab({ profile, flash }) {
   const [editing,    setEditing]    = useState(null)
   const [editName,   setEditName]   = useState('')
   const [confirm,    setConfirm]    = useState(null)
+  const [samplingByQueue, setSamplingByQueue] = useState({})
 
   useEffect(() => { loadAll() }, [])
 
   const loadAll = async () => {
-    const [{ data: ws }, { data: divs }, { data: sc }] = await Promise.all([
+    const [{ data: ws }, { data: divs }, { data: sc }, { data: sampCfgs }] = await Promise.all([
       supabase.from('workspaces').select('*, hubs(*, queues(*))').order('position'),
       supabase.from('divisions').select('id, name, is_active, position').order('position'),
       supabase.from('scorecards').select('id, name, type, is_published').eq('is_published', true).order('name'),
+      supabase.from('sampling_configurations').select('queue_id, cycle_frequency'),
     ])
     setWorkspaces(ws || [])
     setDivisions(divs || [])
     setScorecards(sc || [])
+    const sbq = {}
+    ;(sampCfgs || []).forEach(row => { sbq[row.queue_id] = row.cycle_frequency })
+    setSamplingByQueue(sbq)
     const scIds = (sc || []).map(x => x.id)
     if (scIds.length) {
       const { data: mf } = await supabase
@@ -1107,7 +1120,7 @@ function GovernanceTab({ profile, flash }) {
                 ? <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 0 8px 28px' }}>No workspaces in this division.</div>
                 : <div style={{ paddingLeft: 4 }}>{wsList.map(ws => (
                     <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets}
-                      profile={profile} flash={flash} ui={ui} actions={actions} />
+                      profile={profile} flash={flash} ui={ui} actions={actions} samplingByQueue={samplingByQueue} />
                   ))}</div>
             )}
           </div>
@@ -1130,7 +1143,7 @@ function GovernanceTab({ profile, flash }) {
           {(expandedDiv['__none__'] ?? true) && (
             <div style={{ paddingLeft: 4 }}>{unassignedWs.map(ws => (
               <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets}
-                profile={profile} flash={flash} ui={ui} actions={actions} />
+                profile={profile} flash={flash} ui={ui} actions={actions} samplingByQueue={samplingByQueue} />
             ))}</div>
           )}
         </div>
