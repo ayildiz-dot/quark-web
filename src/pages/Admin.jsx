@@ -514,9 +514,16 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const [runDay, setRunDay]                 = useState('monday')
   const [captureDays, setCaptureDays]       = useState([])
   const [globalMin, setGlobalMin]           = useState('')
+  const [minTotalCases, setMinTotalCases]   = useState('')
+  const [maxTotalCases, setMaxTotalCases]   = useState('')
   const [savingSampling, setSavingSampling] = useState(false)
 
   const WEEKDAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
+  const DIMENSIONS = [
+    { value: 'category', label: 'Category' },
+    { value: 'subcategory', label: 'Subcategory' },
+    { value: 'channel', label: 'Channel' },
+  ]
 
   useEffect(() => { loadSamplingConfig() }, [])
 
@@ -528,6 +535,8 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       setRunDay(cfg.run_day || 'monday')
       setCaptureDays(cfg.capture_days || [])
       setGlobalMin(cfg.global_min_cases_per_agent ?? '')
+      setMinTotalCases(cfg.min_total_cases ?? '')
+      setMaxTotalCases(cfg.max_total_cases ?? '')
       const { data: rules } = await supabase.from('sampling_stratification_rules').select('*').eq('sampling_configuration_id', cfg.id).order('position')
       setSamplingRules((rules || []).map(r => ({ ...r, _localId: r.id })))
     } else {
@@ -536,41 +545,76 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       setRunDay('monday')
       setCaptureDays([])
       setGlobalMin('')
+      setMinTotalCases('')
+      setMaxTotalCases('')
       setSamplingRules([])
     }
   }
 
   const toggleCaptureDay = (day) => setCaptureDays(d => d.includes(day) ? d.filter(x => x !== day) : [...d, day])
 
-  const addRule = () => {
+  const siblingsOf = (parentLocalId) => samplingRules.filter(r => (r.parent_id || null) === (parentLocalId || null))
+  const groupDimension  = (parentLocalId) => siblingsOf(parentLocalId)[0]?.dimension || ''
+  const groupSizingMode = (parentLocalId) => siblingsOf(parentLocalId)[0]?.sizing_mode || 'percentage'
+
+  const addNode = (parentLocalId, isFallback) => {
+    const siblings = siblingsOf(parentLocalId)
+    if (isFallback && siblings.some(r => r.is_fallback)) return flash('This group already has a fallback rule.', false)
+    const dimension = siblings.length > 0 ? groupDimension(parentLocalId) : ''
+    const sizingMode = siblings.length > 0 ? groupSizingMode(parentLocalId) : 'percentage'
     setSamplingRules(rs => [...rs, {
       _localId: 'new-' + Date.now() + '-' + Math.random(),
-      category: '', subcategory: '', channel: '', percentage: 10, min_cases_per_agent: '', is_fallback: false, position: rs.length
+      parent_id: parentLocalId || null,
+      dimension, value: isFallback ? null : '',
+      sizing_mode: sizingMode, sizing_value: sizingMode === 'percentage' ? 10 : 20,
+      min_cases_per_agent: '', is_fallback: isFallback, position: rs.length,
     }])
   }
 
-  const addFallbackRule = () => {
-    if (samplingRules.some(r => r.is_fallback)) return flash('Only one fallback rule is allowed per queue.', false)
-    setSamplingRules(rs => [...rs, {
-      _localId: 'new-' + Date.now(),
-      category: null, subcategory: null, channel: '', percentage: 5, min_cases_per_agent: '', is_fallback: true, position: rs.length
-    }])
+  const updateNode = (localId, field, value) => {
+    setSamplingRules(rs => {
+      const node = rs.find(r => r._localId === localId)
+      if (!node) return rs
+      if (field === 'dimension') {
+        const parentKey = node.parent_id || null
+        return rs.map(r => ((r.parent_id || null) === parentKey) ? { ...r, dimension: value, value: r.is_fallback ? null : '' } : r)
+      }
+      if (field === 'sizing_mode') {
+        const parentKey = node.parent_id || null
+        return rs.map(r => ((r.parent_id || null) === parentKey) ? { ...r, sizing_mode: value } : r)
+      }
+      return rs.map(r => r._localId === localId ? { ...r, [field]: value } : r)
+    })
   }
 
-  const updateRule = (localId, field, value) => setSamplingRules(rs => rs.map(r => r._localId === localId ? { ...r, [field]: value } : r))
-  const removeRule = (localId) => setSamplingRules(rs => rs.filter(r => r._localId !== localId))
+  const removeNode = (localId) => {
+    setSamplingRules(rs => {
+      const toRemove = new Set([localId])
+      let changed = true
+      while (changed) {
+        changed = false
+        rs.forEach(r => { if (r.parent_id && toRemove.has(r.parent_id) && !toRemove.has(r._localId)) { toRemove.add(r._localId); changed = true } })
+      }
+      return rs.filter(r => !toRemove.has(r._localId))
+    })
+  }
 
-  const incompleteRuleCount = samplingRules.filter(r => !r.is_fallback && (!r.category || !r.percentage)).length
+  const hasChildren = (localId) => samplingRules.some(r => r.parent_id === localId)
+
+  const incompleteRuleCount = samplingRules.filter(r => !r.dimension || !r.sizing_value || (!r.is_fallback && !r.value)).length
 
   const saveSamplingConfig = async () => {
     if (cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
     if (captureDays.length === 0) return flash('Select at least one capture day.', false)
-    if (incompleteRuleCount > 0) return flash(`${incompleteRuleCount} rule(s) are missing a category or percentage — fill them in or remove them.`, false)
+    if (incompleteRuleCount > 0) return flash(incompleteRuleCount + ' rule(s) are missing a dimension, value, or sizing amount — fill them in or remove them.', false)
+    if (minTotalCases !== '' && maxTotalCases !== '' && parseInt(minTotalCases) > parseInt(maxTotalCases)) return flash('Min Total Cases cannot exceed Max Total Cases.', false)
 
     setSavingSampling(true)
     const payload = {
       queue_id: queue.id,
       global_min_cases_per_agent: globalMin === '' ? null : parseInt(globalMin),
+      min_total_cases: minTotalCases === '' ? null : parseInt(minTotalCases),
+      max_total_cases: maxTotalCases === '' ? null : parseInt(maxTotalCases),
       cycle_frequency: cycleFrequency,
       run_day: cycleFrequency === 'weekly' ? runDay : null,
       capture_days: captureDays,
@@ -587,21 +631,35 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
     await supabase.from('sampling_stratification_rules').delete().eq('sampling_configuration_id', cfg.id)
 
     if (samplingRules.length > 0) {
-      const rowsToInsert = samplingRules.map((r, i) => ({
-        sampling_configuration_id: cfg.id,
-        category: r.is_fallback ? null : (r.category || null),
-        subcategory: r.is_fallback ? null : (r.subcategory || null),
-        channel: r.channel || null,
-        percentage: parseFloat(r.percentage) || 0,
-        min_cases_per_agent: (r.min_cases_per_agent === '' || r.min_cases_per_agent == null) ? null : parseInt(r.min_cases_per_agent),
-        is_fallback: r.is_fallback,
-        position: i,
-      }))
-      const { error: rulesError } = await supabase.from('sampling_stratification_rules').insert(rowsToInsert)
-      if (rulesError) {
-        setSavingSampling(false)
-        if (rulesError.code === '23505') return flash('Only one fallback rule is allowed per queue.', false)
-        return flash(rulesError.message, false)
+      const localIdToDbId = {}
+      let remaining = [...samplingRules]
+      let position = 0
+      let guard = 0
+      while (remaining.length > 0 && guard < 50) {
+        guard++
+        const ready = remaining.filter(r => !r.parent_id || localIdToDbId[r.parent_id])
+        if (ready.length === 0) break
+        for (const r of ready) {
+          const row = {
+            sampling_configuration_id: cfg.id,
+            parent_id: r.parent_id ? localIdToDbId[r.parent_id] : null,
+            dimension: r.dimension,
+            value: r.is_fallback ? null : (r.value || null),
+            sizing_mode: r.sizing_mode,
+            sizing_value: parseFloat(r.sizing_value) || 0,
+            min_cases_per_agent: hasChildren(r._localId) ? null : ((r.min_cases_per_agent === '' || r.min_cases_per_agent == null) ? null : parseInt(r.min_cases_per_agent)),
+            is_fallback: r.is_fallback,
+            position: position++,
+          }
+          const { data: inserted, error: insertError } = await supabase.from('sampling_stratification_rules').insert(row).select().single()
+          if (insertError) {
+            setSavingSampling(false)
+            if (insertError.code === '23505') return flash('Only one fallback rule is allowed per group.', false)
+            return flash(insertError.message, false)
+          }
+          localIdToDbId[r._localId] = inserted.id
+        }
+        remaining = remaining.filter(r => !ready.includes(r))
       }
     }
 
@@ -609,6 +667,97 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
     await loadSamplingConfig()
     await onMappingSaved()
     flash('Sampling configuration saved')
+  }
+
+  const smallLabel = { fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }
+
+  const renderAddToolbar = (parentLocalId) => {
+    const hasFallback = siblingsOf(parentLocalId).some(r => r.is_fallback)
+    return (
+      <div style={{ display: 'flex', gap: 12, marginTop: 4, marginBottom: 8 }}>
+        <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addNode(parentLocalId, false)}>
+          {parentLocalId ? '+ Add Subconfiguration' : '+ Add Rule'}
+        </button>
+        {!hasFallback && (
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addNode(parentLocalId, true)}>
+            {parentLocalId ? '+ Add Fallback Subconfiguration' : '+ Add Fallback Rule'}
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  const renderNode = (r, depth) => {
+    const children = siblingsOf(r._localId)
+    const isLeaf = children.length === 0
+    const incomplete = !r.dimension || !r.sizing_value || (!r.is_fallback && !r.value)
+    return (
+      <div key={r._localId} style={{ marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
+          backgroundColor: 'var(--surface)', border: '1px solid ' + (incomplete ? 'var(--danger)' : 'var(--border)'), borderRadius: 8, padding: '10px 12px' }}>
+          <div>
+            <label style={smallLabel}>Dimension</label>
+            <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.dimension}
+              onChange={e => updateNode(r._localId, 'dimension', e.target.value)}>
+              <option value="">Select…</option>
+              {DIMENSIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+          </div>
+          {r.is_fallback ? (
+            <div style={{ fontSize: 12, fontWeight: 600, minWidth: 160, padding: '0 0 6px' }}>
+              Fallback (remaining {r.dimension || 'values'})
+            </div>
+          ) : (
+            <div>
+              <label style={smallLabel}>Value</label>
+              {r.dimension === 'channel' ? (
+                <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.value || ''}
+                  onChange={e => updateNode(r._localId, 'value', e.target.value)}>
+                  <option value="">Select…</option>
+                  <option value="chat">Chat</option>
+                  <option value="email">Email</option>
+                  <option value="phone">Phone</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="social">Social Media</option>
+                </select>
+              ) : (
+                <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={r.value || ''}
+                  onChange={e => updateNode(r._localId, 'value', e.target.value)}
+                  placeholder={r.dimension === 'subcategory' ? 'e.g. Account Closure' : 'e.g. Account'} />
+              )}
+            </div>
+          )}
+          <div>
+            <label style={smallLabel}>Sizing</label>
+            <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.sizing_mode}
+              onChange={e => updateNode(r._localId, 'sizing_mode', e.target.value)}>
+              <option value="percentage">Percentage</option>
+              <option value="fixed_count">Fixed Count</option>
+            </select>
+          </div>
+          <div>
+            <label style={smallLabel}>{r.sizing_mode === 'fixed_count' ? 'Case Count' : (depth === 0 ? '% of population' : "% of parent's budget")}</label>
+            <input type="number" className="input" style={{ width: 90, height: 30, fontSize: 12 }} min={0}
+              step={r.sizing_mode === 'percentage' ? '0.01' : '1'}
+              value={r.sizing_value} onChange={e => updateNode(r._localId, 'sizing_value', e.target.value)} />
+          </div>
+          {isLeaf && (
+            <div>
+              <label style={smallLabel}>Min / Agent</label>
+              <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={0}
+                value={r.min_cases_per_agent ?? ''} placeholder="—"
+                onChange={e => updateNode(r._localId, 'min_cases_per_agent', e.target.value)} />
+            </div>
+          )}
+          <button onClick={() => removeNode(r._localId)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 12, height: 30 }}>Remove</button>
+        </div>
+        <div style={{ marginLeft: 24, marginTop: 6 }}>
+          {children.map(c => renderNode(c, depth + 1))}
+          {renderAddToolbar(r._localId)}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -670,7 +819,26 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           Sampling Configuration
         </div>
 
-        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 18 }}>
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: 8 }}>Stratification Rules</label>
+
+          {siblingsOf(null).length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: 8 }}>
+              No stratification rules yet — leaving this empty means a fully randomized sample will be drawn from this queue's market-filtered population once the Echo integration provides case data.
+            </div>
+          ) : (
+            <div>{siblingsOf(null).map(r => renderNode(r, 0))}</div>
+          )}
+          {renderAddToolbar(null)}
+
+          {incompleteRuleCount > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>
+              {incompleteRuleCount} rule(s) outlined in red are missing a dimension, value, or sizing amount.
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 18, paddingTop: 16, borderTop: '1px dashed var(--border)' }}>
           <div>
             <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Cycle Frequency</label>
             <select className="select select-sm" value={cycleFrequency} onChange={e => setCycleFrequency(e.target.value)}>
@@ -689,7 +857,15 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           <div>
             <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Global Minimum Cases / Agent</label>
             <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={globalMin} placeholder="None" onChange={e => setGlobalMin(e.target.value)} />
-            <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 3, maxWidth: 180 }}>Applies across the whole sample, on top of any per-rule minimums below.</div>
+            <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 3, maxWidth: 180 }}>Applies across the whole sample, on top of any per-rule minimums above.</div>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Min Total Cases</label>
+            <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={minTotalCases} placeholder="No floor" onChange={e => setMinTotalCases(e.target.value)} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Max Total Cases</label>
+            <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={maxTotalCases} placeholder="No ceiling" onChange={e => setMaxTotalCases(e.target.value)} />
           </div>
         </div>
 
@@ -706,76 +882,6 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
               </button>
             ))}
           </div>
-        </div>
-
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <label style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Stratification Rules</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addRule}>+ Add Rule</button>
-              <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={addFallbackRule}>+ Add Fallback Rule</button>
-            </div>
-          </div>
-
-          {samplingRules.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>No stratification rules yet.</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {samplingRules.map(r => {
-                const incomplete = !r.is_fallback && (!r.category || !r.percentage)
-                return (
-                <div key={r._localId} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end',
-                  backgroundColor: 'var(--surface)', border: '1px solid ' + (incomplete ? 'var(--danger)' : 'var(--border)'), borderRadius: 8, padding: '10px 12px' }}>
-                  {r.is_fallback ? (
-                    <div style={{ fontSize: 12, fontWeight: 600, minWidth: 140 }}>Fallback (all remaining categories)</div>
-                  ) : (
-                    <>
-                      <div>
-                        <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Category</label>
-                        <input className="input" style={{ width: 130, height: 30, fontSize: 12 }} value={r.category || ''}
-                          onChange={e => updateRule(r._localId, 'category', e.target.value)} placeholder="e.g. Account" />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Subcategory</label>
-                        <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={r.subcategory || ''}
-                          onChange={e => updateRule(r._localId, 'subcategory', e.target.value)} placeholder="All subcategories" />
-                      </div>
-                    </>
-                  )}
-                  <div>
-                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Channel</label>
-                    <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.channel || ''}
-                      onChange={e => updateRule(r._localId, 'channel', e.target.value)}>
-                      <option value="">All Channels</option>
-                      <option value="chat">Chat</option>
-                      <option value="email">Email</option>
-                      <option value="phone">Phone</option>
-                      <option value="whatsapp">WhatsApp</option>
-                      <option value="social">Social Media</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Percentage</label>
-                    <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={1} max={100} step="0.01"
-                      value={r.percentage} onChange={e => updateRule(r._localId, 'percentage', e.target.value)} />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }}>Min / Agent</label>
-                    <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={0}
-                      value={r.min_cases_per_agent ?? ''} placeholder="—"
-                      onChange={e => updateRule(r._localId, 'min_cases_per_agent', e.target.value)} />
-                  </div>
-                  <button onClick={() => removeRule(r._localId)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger)', fontSize: 12, height: 30 }}>Remove</button>
-                </div>
-              )})}
-            </div>
-          )}
-          {incompleteRuleCount > 0 && (
-            <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 8 }}>
-              {incompleteRuleCount} rule(s) outlined in red need a category and percentage before saving.
-            </div>
-          )}
         </div>
 
         <button className="btn btn-primary btn-sm" onClick={saveSamplingConfig} disabled={savingSampling}>
