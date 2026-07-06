@@ -575,7 +575,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       _localId: 'new-' + Date.now() + '-' + Math.random(),
       parent_id: parentLocalId || null,
       dimension, value: isFallback ? null : '',
-      sizing_mode: sizingMode, sizing_value: sizingMode === 'percentage' ? 10 : 20,
+      sizing_mode: sizingMode, sizing_value: sizingMode === 'percentage' ? 10 : sizingMode === 'moe' ? 3 : 20,
       min_cases_per_agent: '', is_fallback: isFallback, position: rs.length,
     }])
   }
@@ -590,7 +590,8 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       }
       if (field === 'sizing_mode') {
         const parentKey = node.parent_id || null
-        return rs.map(r => ((r.parent_id || null) === parentKey) ? { ...r, sizing_mode: value } : r)
+        const defaultVal = value === 'moe' ? 3 : value === 'percentage' ? 10 : 20
+        return rs.map(r => ((r.parent_id || null) === parentKey) ? { ...r, sizing_mode: value, sizing_value: defaultVal } : r)
       }
       return rs.map(r => r._localId === localId ? { ...r, [field]: value } : r)
     })
@@ -745,14 +746,31 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
               onChange={e => updateNode(r._localId, 'sizing_mode', e.target.value)}>
               <option value="percentage">Percentage</option>
               <option value="fixed_count">Fixed Count</option>
+              <option value="moe">Margin of Error</option>
             </select>
           </div>
           <div>
-            <label style={smallLabel}>{r.sizing_mode === 'fixed_count' ? 'Case Count' : (depth === 0 ? '% of population' : "% of parent's budget")}</label>
-            <input type="number" className="input" style={{ width: 90, height: 30, fontSize: 12 }} min={0}
-              step={r.sizing_mode === 'percentage' ? '0.01' : '1'}
-              value={r.sizing_value} onChange={e => updateNode(r._localId, 'sizing_value', e.target.value)} />
+            <label style={smallLabel}>{r.sizing_mode === 'fixed_count' ? 'Case Count' : r.sizing_mode === 'moe' ? 'Margin of Error' : (depth === 0 ? '% of population' : "% of parent's budget")}</label>
+            {r.sizing_mode === 'moe' ? (
+              <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.sizing_value}
+                onChange={e => updateNode(r._localId, 'sizing_value', e.target.value)}>
+                <option value="1">±1%</option>
+                <option value="2">±2%</option>
+                <option value="3">±3%</option>
+                <option value="4">±4%</option>
+                <option value="5">±5%</option>
+              </select>
+            ) : (
+              <input type="number" className="input" style={{ width: 90, height: 30, fontSize: 12 }} min={0}
+                step={r.sizing_mode === 'percentage' ? '0.01' : '1'}
+                value={r.sizing_value} onChange={e => updateNode(r._localId, 'sizing_value', e.target.value)} />
+            )}
           </div>
+          {r.sizing_mode === 'moe' && (
+            <div style={{ width: '100%', fontSize: 10, color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: -2 }}>
+              Confidence level is set to 95% by default.
+            </div>
+          )}
           {isLeaf && (
             <div>
               <label style={smallLabel}>Min / Agent<InfoTooltip text="Within this rule's own slice, guarantees every agent who appears in it has at least this many cases (or all of their cases, if they handled fewer)." /></label>
