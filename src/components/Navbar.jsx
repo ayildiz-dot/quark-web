@@ -5,11 +5,11 @@ import { supabase } from '../lib/supabase'
 
 const SCHEMES = [
   { key: 'default',  label: 'Default',  swatch: '#3b82f6' },
-  { key: 'midnight', label: 'Midnight', swatch: '#6366f1' },
+  { key: 'midnight', label: 'Midnight', swatch: '#5865f2' },
   { key: 'forest',   label: 'Forest',   swatch: '#10b981' },
-  { key: 'slate',    label: 'Slate',    swatch: '#64748b' },
+  { key: 'slate',    label: 'Slate',    swatch: '#7c94b3' },
   { key: 'plum',     label: 'Plum',     swatch: '#a855f7' },
-  { key: 'crimson',  label: 'Crimson',  swatch: '#ef4444' },
+  { key: 'crimson',  label: 'Berry',    swatch: '#d6409f' },
 ]
 
 export default function Navbar() {
