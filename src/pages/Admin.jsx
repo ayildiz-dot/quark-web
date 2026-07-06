@@ -473,6 +473,15 @@ function EditInputInline({ value, onChange, onSave, onCancel, placeholder }) {
   )
 }
 
+function InfoTooltip({ text }) {
+  return (
+    <span className="info-tip">
+      <span className="info-tip-icon">?</span>
+      <span className="info-tip-bubble">{text}</span>
+    </span>
+  )
+}
+
 // ─── Queue Settings panel (top-level component — preserves its own state across re-renders) ───
 function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
@@ -679,9 +688,12 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           {parentLocalId ? '+ Add Subconfiguration' : '+ Add Rule'}
         </button>
         {!hasFallback && (
-          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addNode(parentLocalId, true)}>
-            {parentLocalId ? '+ Add Fallback Subconfiguration' : '+ Add Fallback Rule'}
-          </button>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addNode(parentLocalId, true)}>
+              {parentLocalId ? '+ Add Fallback Subconfiguration' : '+ Add Fallback Rule'}
+            </button>
+            <InfoTooltip text="Catches whatever isn't claimed by the named rules in this group (e.g. any category not explicitly listed). Sized the same way as its siblings — percentage or fixed count." />
+          </span>
         )}
       </div>
     )
@@ -743,7 +755,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           </div>
           {isLeaf && (
             <div>
-              <label style={smallLabel}>Min / Agent</label>
+              <label style={smallLabel}>Min / Agent<InfoTooltip text="Within this rule's own slice, guarantees every agent who appears in it has at least this many cases (or all of their cases, if they handled fewer)." /></label>
               <input type="number" className="input" style={{ width: 70, height: 30, fontSize: 12 }} min={0}
                 value={r.min_cases_per_agent ?? ''} placeholder="—"
                 onChange={e => updateNode(r._localId, 'min_cases_per_agent', e.target.value)} />
@@ -855,16 +867,16 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
             </div>
           )}
           <div>
-            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Global Minimum Cases / Agent</label>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Global Minimum Cases / Agent<InfoTooltip text="Guarantees every agent has at least this many cases across the ENTIRE sample, combining all rules. Tops up from pools they already qualify for if anyone falls short." /></label>
             <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={globalMin} placeholder="None" onChange={e => setGlobalMin(e.target.value)} />
             <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 3, maxWidth: 180 }}>Applies across the whole sample, on top of any per-rule minimums above.</div>
           </div>
           <div>
-            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Min Total Cases</label>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Min Total Cases<InfoTooltip text="The sample must contain at least this many cases in total. If the rules produce fewer, you'll get a warning — nothing is auto-added to close the gap." /></label>
             <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={minTotalCases} placeholder="No floor" onChange={e => setMinTotalCases(e.target.value)} />
           </div>
           <div>
-            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Max Total Cases</label>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Max Total Cases<InfoTooltip text="The sample won't exceed this many cases in total. If the rules would produce more, the excess is trimmed proportionally, never breaking a rule's own Min / Agent floor." /></label>
             <input type="number" className="input" style={{ width: 90, height: 30 }} min={0} value={maxTotalCases} placeholder="No ceiling" onChange={e => setMaxTotalCases(e.target.value)} />
           </div>
         </div>
