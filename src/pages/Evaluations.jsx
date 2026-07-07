@@ -302,16 +302,24 @@ export default function Evaluations() {
     return 'var(--danger)'
   }
 
-  // An evaluation is editable for 72h after submission, by its author or an admin/owner.
-  const within72h = (submittedAt) => {
+  // Edit windows differ by scorecard type:
+  // - Quality: author OR admin/owner, within 72 hours of submission.
+  // - DSAT (Vendor and KG spot-check alike): admin/owner ONLY, within 1 month —
+  //   regular evaluators have no edit rights on DSAT submissions at all, since
+  //   duplicate-ticket corrections and Controllability corrections on DSAT rows
+  //   need to go through an admin/owner rather than the original author.
+  const withinWindow = (submittedAt, hours) => {
     if (!submittedAt) return false
     const ms = Date.now() - new Date(submittedAt).getTime()
-    return ms < 72 * 60 * 60 * 1000
+    return ms < hours * 60 * 60 * 1000
   }
   const canEdit = (ev) => {
     const privileged = ['admin', 'owner'].includes(profile?.role)
     const isAuthor = ev.evaluator_id === profile?.id
-    return within72h(ev.submitted_at) && (isAuthor || privileged)
+    if (ev.evaluation_type === 'dsat') {
+      return privileged && withinWindow(ev.submitted_at, 24 * 30)
+    }
+    return withinWindow(ev.submitted_at, 72) && (isAuthor || privileged)
   }
 
   // Toggle pill button — ticked + grayed when active
