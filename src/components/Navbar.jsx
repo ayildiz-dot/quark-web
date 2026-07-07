@@ -82,7 +82,15 @@ export default function Navbar() {
   return (
     <nav className="navbar">
       <div className="navbar-brand">
-        <span className="brand-icon">⬡</span>
+        <span className="brand-icon"><svg width="22" height="22" viewBox="0 0 90 90" style={{ flexShrink: 0 }}>
+          <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(0 45 45)" />
+          <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(60 45 45)" />
+          <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(120 45 45)" />
+          <circle cx="45" cy="45" r="11" fill="#d85a30" />
+          <circle cx="45" cy="7" r="5" fill="#3b82f6" />
+          <circle cx="7" cy="64" r="5" fill="#10b981" />
+          <circle cx="83" cy="64" r="5" fill="#f59e0b" />
+        </svg></span>
         <span className="brand-name">Quark</span>
         <span className="brand-sub">Kaizen Gaming · QC</span>
       </div>
