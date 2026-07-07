@@ -125,6 +125,21 @@ export default function Scorecards() {
     flash('Scorecard deleted')
   }
 
+  const [duplicatingId, setDuplicatingId] = useState(null)
+
+  const duplicateScorecard = async (id) => {
+    setDuplicatingId(id)
+    const { data: newId, error } = await supabase.rpc('duplicate_scorecard', {
+      source_id: id,
+      actor_id: profile.id,
+    })
+    setDuplicatingId(null)
+    if (error) return flash('Duplicate failed: ' + error.message, false)
+    await loadScorecards()
+    flash('Scorecard duplicated as a draft — remember to review and publish it separately.')
+    navigate(`/scorecards/${newId}/edit`)
+  }
+
   if (loading) return <div className="page"><div className="spinner" /></div>
 
   return (
@@ -232,6 +247,11 @@ export default function Scorecards() {
                       <button className="btn btn-sm btn-ghost"
                         onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>
                         Edit
+                      </button>
+                      <button className="btn btn-sm btn-ghost"
+                        disabled={duplicatingId === sc.id}
+                        onClick={() => duplicateScorecard(sc.id)}>
+                        {duplicatingId === sc.id ? 'Duplicating…' : 'Duplicate'}
                       </button>
                       <button className="btn btn-sm btn-ghost"
                         style={{ color: 'var(--danger)' }}
