@@ -473,7 +473,12 @@ export default function EvaluationForm() {
             scorecard_version: selectedScorecard.version || 1,
             submitted_at: new Date().toISOString()
           })
-          if (evalError) throw evalError
+          if (evalError) {
+            if (evalError.code === '23505' && evalError.message?.includes('evaluations_dsat_ticket_unique')) {
+              throw new Error('This ticket has already been evaluated on this scorecard. Go to Evaluations → find the existing evaluation → Edit (available for 72 hours after submission) to make changes.')
+            }
+            throw evalError
+          }
         }
       } else {
         const { score, failed_critical } = calculateScore()
