@@ -1735,6 +1735,21 @@ function ScorecardsTab({ profile, flash }) {
     async () => { closeConfirm(); await supabase.from('scorecards').delete().eq('id', sc.id); await loadAll(); flash('Scorecard deleted') }
   )
 
+  const [duplicatingId, setDuplicatingId] = useState(null)
+
+  const duplicateScorecard = async (sc) => {
+    setDuplicatingId(sc.id)
+    const { data: newId, error } = await supabase.rpc('duplicate_scorecard', {
+      source_id: sc.id,
+      actor_id: profile.id,
+    })
+    setDuplicatingId(null)
+    if (error) return flash('Duplicate failed: ' + error.message, false)
+    await loadAll()
+    flash('Scorecard duplicated as a draft — remember to review and publish it separately.')
+    navigate(`/scorecards/${newId}/edit`)
+  }
+
   const published = scorecards.filter(s => s.is_published)
   const drafts    = scorecards.filter(s => !s.is_published)
 
@@ -1782,6 +1797,9 @@ function ScorecardsTab({ profile, flash }) {
                 <td>
                   <div className="action-group">
                     <button className="btn btn-sm btn-ghost" onClick={() => navigate(`/scorecards/${sc.id}/edit`)}>Edit</button>
+                    <button className="btn btn-sm btn-ghost" disabled={duplicatingId === sc.id} onClick={() => duplicateScorecard(sc)}>
+                      {duplicatingId === sc.id ? 'Duplicating…' : 'Duplicate'}
+                    </button>
                     <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
                   </div>
                 </td>
