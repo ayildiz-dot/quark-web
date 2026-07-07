@@ -583,7 +583,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       setSamplingConfig(cfg)
       setCycleFrequency(cfg.cycle_frequency)
       setRunDay(cfg.run_day || 'monday')
-      setCaptureDays(cfg.capture_days || [])
+      setCaptureDays(cfg.cycle_frequency === 'daily' ? [] : (cfg.capture_days || []))
       setGlobalMin(cfg.global_min_cases_per_agent ?? '')
       setMinTotalCases(cfg.min_total_cases ?? '')
       setMaxTotalCases(cfg.max_total_cases ?? '')
@@ -758,7 +758,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
     if (!scId)   return flash('Select a scorecard for this queue.', false)
     if (!market) return flash('Select or enter a market for this queue.', false)
     if (cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
-    if (captureDays.length === 0) return flash('Select at least one capture day.', false)
+    if (cycleFrequency === 'weekly' && captureDays.length === 0) return flash('Select at least one capture day.', false)
     if (incompleteRuleCount > 0) return flash(incompleteRuleCount + ' stratification rule(s) are missing a dimension, value, or sizing amount — fill them in or remove them.', false)
     if (minTotalCases !== '' && maxTotalCases !== '' && parseInt(minTotalCases) > parseInt(maxTotalCases)) return flash('Min Total Cases cannot exceed Max Total Cases.', false)
     if (incompleteAssignmentCount > 0) return flash(incompleteAssignmentCount + ' assignment condition(s) are incomplete or empty — fill them in or remove the group.', false)
@@ -1059,7 +1059,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
         <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', marginBottom: 18, paddingTop: 16, borderTop: '1px dashed var(--border)' }}>
           <div>
             <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 4 }}>Cycle Frequency</label>
-            <select className="select select-sm" value={cycleFrequency} onChange={e => setCycleFrequency(e.target.value)}>
+            <select className="select select-sm" value={cycleFrequency} onChange={e => { const v = e.target.value; setCycleFrequency(v); if (v === 'daily') setCaptureDays([]) }}>
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
             </select>
@@ -1087,20 +1087,29 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           </div>
         </div>
 
-        <div>
-          <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Capture Days (whose handled cases get pulled in)</label>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {WEEKDAYS.map(d => (
-              <button key={d} type="button" onClick={() => toggleCaptureDay(d)} className="btn btn-sm"
-                style={{ fontSize: 11, padding: '4px 10px',
-                  backgroundColor: captureDays.includes(d) ? 'var(--accent)' : 'var(--surface)',
-                  color: captureDays.includes(d) ? '#fff' : 'var(--text-secondary)',
-                  border: '1px solid ' + (captureDays.includes(d) ? 'var(--accent)' : 'var(--border)') }}>
-                {d.slice(0,3).charAt(0).toUpperCase() + d.slice(1,3)}
-              </button>
-            ))}
+        {cycleFrequency === 'weekly' ? (
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Capture Days (whose handled cases get pulled in)</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {WEEKDAYS.map(d => (
+                <button key={d} type="button" onClick={() => toggleCaptureDay(d)} className="btn btn-sm"
+                  style={{ fontSize: 11, padding: '4px 10px',
+                    backgroundColor: captureDays.includes(d) ? 'var(--accent)' : 'var(--surface)',
+                    color: captureDays.includes(d) ? '#fff' : 'var(--text-secondary)',
+                    border: '1px solid ' + (captureDays.includes(d) ? 'var(--accent)' : 'var(--border)') }}>
+                  {d.slice(0,3).charAt(0).toUpperCase() + d.slice(1,3)}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Capture Window</label>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 12px', maxWidth: 320 }}>
+              Daily cycles always capture the previous day's cases (Day-1). No selection needed.
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
