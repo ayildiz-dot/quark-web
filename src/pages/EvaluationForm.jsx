@@ -523,9 +523,41 @@ export default function EvaluationForm() {
     return { score: Math.round((earnedWeight / totalWeight) * 100), failed_critical: false }
   }
 
-  const submitEvaluation = async () => {
+  // Copies the Vendor's walked answer chain onto this (KG) scorecard's own
+  // dsatAnswers, matching by question title / option label (IDs differ between
+  // scorecards but titles and labels are shared by convention). Then submits
+  // immediately, mirroring the Vendor's full path.
+  const submitFullyAligned = async () => {
+    if (!vendorChain.length) return
+    const newDsatAnswers = { ...dsatAnswers }
+    const visitedSectionIds = []
+    let currentSection = [...dsatSections].sort((a, b) => a.position - b.position)[0]
+    for (const step of vendorChain) {
+      if (!currentSection) break
+      visitedSectionIds.push(currentSection.id)
+      const q = dsatQuestions.find(q => q.section_id === currentSection.id && q.title === step.questionTitle)
+      if (!q) break
+      newDsatAnswers[q.id] = { value: step.answerValue }
+      const opt = dsatOptions.find(o => o.question_id === q.id && o.label === step.answerValue)
+      currentSection = opt?.jump_to_section_id ? dsatSections.find(s => s.id === opt.jump_to_section_id) : null
+    }
+    setDsatAnswers(newDsatAnswers)
+    setDsatSectionHistory(visitedSectionIds.slice(0, -1))
+    setDsatCurrentSectionId(visitedSectionIds[visitedSectionIds.length - 1] || dsatCurrentSectionId)
+    submitEvaluation({ dsatAnswersOverride: newDsatAnswers, visitedSectionIdsOverride: visitedSectionIds })
+  }
+
+  const submitEvaluation = async (opts = {}) => {
+    const effectiveDsatAnswers = opts.dsatAnswersOverride || dsatAnswers
+    const effectiveVisitedIds = opts.visitedSectionIdsOverride || null
+
     if (!metaValid()) return flash('Please fill in all required metadata fields.', false)
-    if (!questionsValid()) return flash('Please answer all required questions before submitting.', false)
+    if (selectedScorecard?.is_spot_check) {
+      if (vendorLookupState === 'not_found') return flash('No Vendor DSAT evaluation was found for this Ticket ID. A spot-check cannot be submitted until the Vendor has evaluated this ticket.', false)
+      if (vendorLookupState === 'conflict') return flash('This Ticket ID matches more than one Vendor DSAT evaluation, which should not happen. Please contact an admin to resolve this before submitting.', false)
+      if (vendorLookupState !== 'found') return flash('Please enter a valid Ticket ID and wait for the Vendor evaluation lookup to complete.', false)
+    }
+    if (!opts.dsatAnswersOverride && !questionsValid()) return flash('Please answer all required questions before submitting.', false)
     if (selectedScorecard.type !== 'dsat' && !overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
     leavingRef.current = true
     setSubmitting(true)
@@ -559,10 +591,10 @@ export default function EvaluationForm() {
       const resolvedWorkspaceId = matches[0].workspace_id
 
       if (selectedScorecard.type === 'dsat') {
-        const visitedSectionIds = new Set([...dsatSectionHistory, dsatCurrentSectionId])
+        const visitedSectionIds = new Set(effectiveVisitedIds || [...dsatSectionHistory, dsatCurrentSectionId])
         const visitedQuestions = dsatQuestions.filter(q => visitedSectionIds.has(q.section_id))
         const dsatPayload = visitedQuestions.map(q => ({
-          field_id: q.id, label: q.title, value: dsatAnswers[q.id]?.value || ''
+          field_id: q.id, label: q.title, value: effectiveDsatAnswers[q.id]?.value || ''
         }))
         if (editingEvalId) {
           // EDIT: update the existing row. Freeze evaluator_id + submitted_at; stamp last_edit_date.
@@ -852,7 +884,7 @@ export default function EvaluationForm() {
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               {answered}/{total} answered
             </span>
-            <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}>
+            <button className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}>
               {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
             </button>
           </div>
@@ -903,8 +935,47 @@ export default function EvaluationForm() {
                 setDsatCurrentSectionId(prev)
               }
             }
+            const isFirstSection = currentSection.position === Math.min(...dsatSections.map(s => s.position))
+            const showVendorBanner = selectedScorecard.is_spot_check && !editingEvalId && isFirstSection && vendorLookupState === 'found'
             return (
               <div>
+                {showVendorBanner && (
+                  <div style={{
+                    marginBottom: 20, padding: '14px 16px', borderRadius: 8,
+                    background: 'var(--bg-secondary)', border: '1px solid var(--border)'
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)',
+                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                      Vendor's Evaluation
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 12 }}>
+                      {vendorChain.map((step, i) => (
+                        <React.Fragment key={i}>
+                          {i > 0 && <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>→</span>}
+                          <span style={{
+                            fontSize: 12, fontWeight: 500, padding: '3px 9px', borderRadius: 6,
+                            background: 'var(--accent-light)', color: 'var(--accent)'
+                          }}>
+                            {step.answerValue}
+                          </span>
+                        </React.Fragment>
+                      ))}
+                      {vendorChain.length === 0 && (
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
+                          No answers recorded on the Vendor's evaluation.
+                        </span>
+                      )}
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                      <input type="checkbox" checked={fullyAligned}
+                        onChange={e => {
+                          setFullyAligned(e.target.checked)
+                          if (e.target.checked) submitFullyAligned()
+                        }} />
+                      I fully align with the BPO's evaluation
+                    </label>
+                  </div>
+                )}
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>
                   Section: <strong style={{ color: 'var(--text-primary)' }}>{currentSection.title}</strong>
                 </div>
@@ -962,7 +1033,7 @@ export default function EvaluationForm() {
                 </div>
                 {isLastSection && (
                   <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
-                    <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
+                    <button className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}
                       style={{ marginRight: 12 }}>
                       {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
                     </button>
@@ -1010,7 +1081,7 @@ export default function EvaluationForm() {
                   onChange={e => setOverallComment(e.target.value)}
                   style={{ resize: 'vertical', fontSize: 13 }} />
               </div>
-              <button className="btn btn-primary" onClick={submitEvaluation} disabled={submitting}
+              <button className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}
                 style={{ marginRight: 12 }}>
                 {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
               </button>
