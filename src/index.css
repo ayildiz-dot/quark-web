@@ -230,16 +230,16 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: va
 /* Each scheme overrides sidebar background + accent, in both dark and light. */
 
 /* Midnight — electric indigo */
-[data-scheme="midnight"] { --accent: #5865f2; --accent-hover: #4752c4; --accent-light: #262a5e; --sidebar-bg: #1b1e3d; }
-[data-theme="light"][data-scheme="midnight"] { --accent: #4752c4; --accent-hover: #3c45a5; --accent-light: #e0e3ff; --sidebar-bg: #f0f1ff; }
+[data-scheme="midnight"] { --accent: #7c6fd6; --accent-hover: #6355c4; --accent-light: #26215c; --sidebar-bg: #1e1626; }
+[data-theme="light"][data-scheme="midnight"] { --accent: #6355c4; --accent-hover: #4f3fa8; --accent-light: #ece9fc; --sidebar-bg: #f5f3ff; }
 
 /* Forest */
 [data-scheme="forest"] { --accent: #10b981; --accent-hover: #059669; --accent-light: #064e3b; --sidebar-bg: #14332b; }
 [data-theme="light"][data-scheme="forest"] { --accent: #059669; --accent-hover: #047857; --accent-light: #d1fae5; --sidebar-bg: #ecfdf5; }
 
 /* Slate — muted steel gray-blue */
-[data-scheme="slate"] { --accent: #7c94b3; --accent-hover: #6482a8; --accent-light: #263242; --sidebar-bg: #1e2632; }
-[data-theme="light"][data-scheme="slate"] { --accent: #51677f; --accent-hover: #435566; --accent-light: #e2e8f0; --sidebar-bg: #f8fafc; }
+[data-scheme="slate"] { --accent: #d85a30; --accent-hover: #b8481f; --accent-light: #4a1b0c; --sidebar-bg: #241a10; }
+[data-theme="light"][data-scheme="slate"] { --accent: #b8481f; --accent-hover: #963a19; --accent-light: #faece7; --sidebar-bg: #fdf5f2; }
 
 /* Plum */
 [data-scheme="plum"] { --accent: #a855f7; --accent-hover: #9333ea; --accent-light: #4c1d95; --sidebar-bg: #2e1065; }
