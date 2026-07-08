@@ -23,7 +23,7 @@ function ConfirmModal({ message, onYes, onNo }) {
 }
 
 // ─── Row Menu (kebab menu for rare/destructive actions) ────────────────────────
-function RowMenu({ isActive, onToggleActive, onDelete, activeLabel = 'Deactivate', inactiveLabel = 'Activate' }) {
+function RowMenu({ isActive, onToggleActive, onDelete, activeLabel = 'Deactivate', inactiveLabel = 'Activate', extraContent }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -49,10 +49,15 @@ function RowMenu({ isActive, onToggleActive, onDelete, activeLabel = 'Deactivate
       </button>
       {open && (
         <div style={{
-          position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 60, minWidth: 150,
+          position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 60, minWidth: 180,
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', overflow: 'hidden',
         }}>
+          {extraContent && (
+            <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+              {extraContent}
+            </div>
+          )}
           <button
             style={{ ...itemStyle, color: isActive ? 'var(--danger)' : 'var(--success)' }}
             onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
@@ -548,9 +553,10 @@ function EditIconButton({ onClick, title = 'Rename' }) {
         background: 'none', border: 'none', cursor: 'pointer', padding: 2,
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
         color: hover ? 'var(--accent)' : 'var(--text-tertiary)',
+        fontSize: 13, lineHeight: 1,
         transition: 'color .15s', flexShrink: 0,
       }}>
-      <i className="ti ti-pencil" style={{ fontSize: 13 }} />
+      ✎
     </button>
   )
 }
@@ -1340,6 +1346,8 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
           style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 13, width: 20, flexShrink: 0 }}>
           {wsExpanded ? '▾' : '▸'}
         </button>
+        <span title={ws.is_active ? 'Active' : 'Inactive'}
+          style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: ws.is_active ? '#22c55e' : '#64748b' }} />
         {isEditing(ws.id) ? (
           <div style={{ flex: 1 }}>
             <EditInputInline value={editName} onChange={setEditName} onSave={confirmEdit} onCancel={cancelEdit} placeholder="Workspace name" />
@@ -1348,22 +1356,23 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 14 }}>{ws.name}</span>
             <EditIconButton onClick={() => startEdit(ws.id, 'workspace', ws.name)} />
-            <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
-              backgroundColor: ws.is_active ? '#22c55e22' : '#64748b22', color: ws.is_active ? '#22c55e' : '#94a3b8' }}>
-              {ws.is_active ? 'Active' : 'Inactive'}
-            </span>
           </div>
         )}
         {!isEditing(ws.id) && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <select className="select select-sm" value={ws.division_id || ''}
-              onChange={e => setWorkspaceDivision(ws.id, e.target.value)}
-              title="Division" style={{ height: 28, fontSize: 12, maxWidth: 170 }}>
-              <option value="">No division</option>
-              {divisions.map(d => <option key={d.id} value={d.id}>{d.name}{d.is_active ? '' : ' (inactive)'}</option>)}
-            </select>
             <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
-            <RowMenu isActive={ws.is_active} onToggleActive={() => toggleWs(ws)} onDelete={() => deleteWs(ws)} />
+            <RowMenu isActive={ws.is_active} onToggleActive={() => toggleWs(ws)} onDelete={() => deleteWs(ws)}
+              extraContent={
+                <div>
+                  <label style={{ fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Division</label>
+                  <select className="select select-sm" value={ws.division_id || ''}
+                    onChange={e => setWorkspaceDivision(ws.id, e.target.value)}
+                    style={{ width: '100%', fontSize: 12 }}>
+                    <option value="">No division</option>
+                    {divisions.map(d => <option key={d.id} value={d.id}>{d.name}{d.is_active ? '' : ' (inactive)'}</option>)}
+                  </select>
+                </div>
+              } />
           </div>
         )}
       </div>
@@ -1387,6 +1396,8 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                     style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--text-secondary)', fontSize: 12, width: 16, flexShrink: 0 }}>
                     {hubExpanded ? '▾' : '▸'}
                   </button>
+                  <span title={hub.is_active ? 'Active' : 'Inactive'}
+                    style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: hub.is_active ? '#22c55e' : '#64748b' }} />
                   {isEditing(hub.id) ? (
                     <div style={{ flex: 1 }}>
                       <EditInputInline value={editName} onChange={setEditName} onSave={confirmEdit} onCancel={cancelEdit} placeholder="Hub name" />
@@ -1395,10 +1406,6 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 13, fontWeight: 500 }}>{hub.name}</span>
                       <EditIconButton onClick={() => startEdit(hub.id, 'hub', hub.name)} />
-                      <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
-                        backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
-                        {hub.is_active ? 'Active' : 'Inactive'}
-                      </span>
                     </div>
                   )}
                   {!isEditing(hub.id) && (
@@ -1445,16 +1452,16 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                                 </span>
                                 <span>
                                   {q.manual_sampling ? (
-                                    <span title="Manual sampling ingestion is active for this queue"
-                                      style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                                      backgroundColor: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b44' }}>
-                                      ✋ Manual Sampling
+                                    <span style={{ fontSize: 11, color: 'var(--text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                      ✋ Manual
+                                      <InfoTooltip text="This queue runs on manual evaluation submission — evaluators pick and submit cases directly. No automatic sampling schedule applies." />
                                     </span>
                                   ) : samplingByQueue[q.id] && (
-                                    <span title={`Sampling configuration set (${samplingByQueue[q.id]} cycle)`}
-                                      style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                                      backgroundColor: '#8b5cf622', color: '#8b5cf6', border: '1px solid #8b5cf644' }}>
-                                      🎯 Sampling · {samplingByQueue[q.id] === 'weekly' ? 'Weekly' : 'Daily'}
+                                    <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                      backgroundColor: '#8b5cf622', color: '#8b5cf6', border: '1px solid #8b5cf644',
+                                      display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                      🎯 {samplingByQueue[q.id] === 'weekly' ? 'Weekly' : 'Daily'} Cycle
+                                      <InfoTooltip text={`This queue automatically pulls a stratified sample of cases on a ${samplingByQueue[q.id]} cycle, based on its configured sampling rules.`} />
                                     </span>
                                   )}
                                 </span>
@@ -1587,7 +1594,7 @@ function GovernanceTab({ profile, flash }) {
     } else {
       let hubLen = 0
       for (const ws of workspaces) { const hub = ws.hubs?.find(h => h.id === adding.parentId); if (hub) { hubLen = hub.queues?.length || 0; break } }
-      const { error } = await supabase.from('queues').insert({ name, hub_id: adding.parentId, is_active: true, position: hubLen })
+      const { error } = await supabase.from('queues').insert({ name, hub_id: adding.parentId, is_active: true, position: hubLen, manual_sampling: true })
       if (error) return flash(error.message, false)
     }
     cancelAdd(); await loadAll(); flash('Created successfully')
@@ -1679,10 +1686,8 @@ function GovernanceTab({ profile, flash }) {
                 {open ? '▾' : '▸'}
               </button>
               <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '0.02em' }}>{div.name}</span>
-              <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
-                backgroundColor: div.is_active ? '#22c55e22' : '#64748b22', color: div.is_active ? '#22c55e' : '#94a3b8' }}>
-                {div.is_active ? 'Active' : 'Inactive'}
-              </span>
+              <span title={div.is_active ? 'Active' : 'Inactive'}
+                style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, backgroundColor: div.is_active ? '#22c55e' : '#64748b' }} />
               <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 'auto' }}>
                 {wsList.length} workspace{wsList.length === 1 ? '' : 's'}
               </span>
