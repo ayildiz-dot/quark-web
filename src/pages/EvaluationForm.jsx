@@ -267,6 +267,7 @@ export default function EvaluationForm() {
       .select('id, scorecard_id, hub_id, workspace_id, market_value, is_active, hubs(name)')
       .not('scorecard_id', 'is', null)
       .not('market_value', 'is', null)
+      .is('deleted_at', null)
     let list = (queues || []).map(q => ({
       id: q.id,
       scorecard_id: q.scorecard_id,
