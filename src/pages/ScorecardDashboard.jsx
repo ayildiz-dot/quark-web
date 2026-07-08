@@ -558,10 +558,10 @@ function extractThemesSC(comments) {
   return Object.entries(freq)
     .filter(([, n]) => n >= 2)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
+    .slice(0, 4)
     .map(([w]) => w)
 }
-function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActive }) {
+function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActive, evals, agentData, weeklyData }) {
   if (!anyActive) {
     return (
       <div style={{
@@ -578,57 +578,159 @@ function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActi
   const isDsat = scorecard.type === 'dsat'
   const n = filteredEvals.length
   if (n === 0) return null
-  let text
+
+  const threshold = scorecard.pass_threshold ?? 90
+  const computeRate = (evArr) => {
+    const len = evArr.length
+    if (!len) return 0
+    if (isDsat) return Math.round(evArr.filter(isControllable).length / len * 100)
+    return Math.round(evArr.filter(e => (e.score ?? 0) >= threshold).length / len * 100)
+  }
+
+  const lines = []
+
+  // ── 1. Core metrics + baseline comparison ──
   if (isDsat) {
     const ctrl = filteredEvals.filter(isControllable).length
     const ctrlRate = Math.round((ctrl / n) * 100)
-    const checked = alignmentVendorEvals.filter(e => e.deviation_source_evaluation_id != null)
-    const aligned = checked.filter(e => !e.is_deviated).length
-    const alignRate = checked.length ? Math.round((aligned / checked.length) * 100) : null
-    const devCtrl = alignmentVendorEvals.filter(e => {
-      const effective = e.deviated_controllability ?? (isControllable(e) ? 'Controllable' : 'Non-Controllable')
-      return effective === 'Controllable'
-    }).length
-    const devCtrlRate = alignmentVendorEvals.length ? Math.round((devCtrl / alignmentVendorEvals.length) * 100) : null
+    let baseStr = ''
+    if (evals && evals.length > 0 && evals.length !== n) {
+      const baseCtrl = evals.filter(isControllable).length
+      const baseRate = Math.round((baseCtrl / evals.length) * 100)
+      const delta = ctrlRate - baseRate
+      baseStr = ' (' + (delta >= 0 ? '+' : '') + delta + 'pp vs overall average of ' + baseRate + '%)'
+    }
     const perfNote = ctrlRate >= 80 ? 'Controllability is healthy.'
       : ctrlRate >= 60 ? 'Controllability is moderate — review uncontrollable cases.'
-      : 'Controllability is low — investigation recommended.'
-    const alignPart = alignRate != null ? ' Spot-check alignment: ' + alignRate + '%.' : ''
-    const devPart = devCtrlRate != null ? ' Deviated controllability: ' + devCtrlRate + '%.' : ''
-    const comments = filteredEvals.map(e => e.overall_comment).filter(Boolean)
-    const themes = extractThemesSC(comments)
-    const themePart = themes.length ? ' Top topics in evaluator comments: ' + themes.join(', ') + '.' : ''
-    text = n + ' DSAT evaluation' + (n !== 1 ? 's' : '') + ' match the current filters. Controllability rate is ' + ctrlRate + '% (' + ctrl + ' of ' + n + ' controllable). ' + perfNote + alignPart + devPart + themePart
+      : 'Controllability is critically low — immediate review recommended.'
+    let coreText = n + ' DSAT evaluation' + (n !== 1 ? 's' : '') + ' in the filtered view. Controllability: ' + ctrlRate + '% (' + ctrl + ' of ' + n + ')' + baseStr + '. ' + perfNote
+    const checked = alignmentVendorEvals.filter(e => e.deviation_source_evaluation_id != null)
+    if (checked.length) {
+      const aligned = checked.filter(e => !e.is_deviated).length
+      const alignRate = Math.round((aligned / checked.length) * 100)
+      const devCtrl = alignmentVendorEvals.filter(e => {
+        const eff = e.deviated_controllability ?? (isControllable(e) ? 'Controllable' : 'Non-Controllable')
+        return eff === 'Controllable'
+      }).length
+      const devRate = alignmentVendorEvals.length ? Math.round((devCtrl / alignmentVendorEvals.length) * 100) : null
+      coreText += ' Spot-check alignment: ' + alignRate + '%' + (devRate != null ? ', deviated controllability: ' + devRate + '%.' : '.')
+    }
+    lines.push({ text: coreText, type: 'primary' })
   } else {
-    const threshold = scorecard.pass_threshold ?? 90
     let passed = 0, scoreSum = 0
     for (const ev of filteredEvals) {
-      const score = ev.score ?? 0
-      scoreSum += score
-      if (score >= threshold) passed++
+      const s = ev.score ?? 0; scoreSum += s
+      if (s >= threshold) passed++
     }
     const avgScore = Math.round(scoreSum / n)
     const passRate = Math.round((passed / n) * 100)
     const failed = n - passed
+    let baseStr = ''
+    if (evals && evals.length > 0 && evals.length !== n) {
+      let baseSum = 0
+      for (const ev of evals) baseSum += (ev.score ?? 0)
+      const baseAvg = Math.round(baseSum / evals.length)
+      const delta = avgScore - baseAvg
+      baseStr = ' (' + (delta >= 0 ? '+' : '') + delta + 'pp vs overall average of ' + baseAvg + '%)'
+    }
     const perfNote = passRate >= 90 ? 'Performance is strong.'
       : passRate >= 75 ? 'Performance is on track but has room for improvement.'
       : 'Pass rate is below target — coaching opportunities likely.'
-    const comments = filteredEvals.map(e => e.overall_comment).filter(Boolean)
-    const themes = extractThemesSC(comments)
-    const themePart = themes.length ? ' Top topics in evaluator comments: ' + themes.join(', ') + '.' : ''
-    text = n + ' quality evaluation' + (n !== 1 ? 's' : '') + ' match the current filters. Average score is ' + avgScore + '% with a ' + passRate + '% pass rate (' + passed + ' passed, ' + failed + ' failed). ' + perfNote + themePart
+    lines.push({ text: n + ' quality evaluation' + (n !== 1 ? 's' : '') + ' in the filtered view. Average score: ' + avgScore + '%' + baseStr + ', pass rate: ' + passRate + '% (' + passed + ' passed, ' + failed + ' failed). ' + perfNote, type: 'primary' })
   }
+
+  // ── 2. Weekly trend ──
+  if (weeklyData && weeklyData.length >= 2) {
+    const best = weeklyData.reduce((a, b) => a.rate >= b.rate ? a : b)
+    const latest = weeklyData[weeklyData.length - 1]
+    const prev = weeklyData[weeklyData.length - 2]
+    const wowDelta = latest.rate - prev.rate
+    let trendText = 'Weekly trend: '
+    if (best.weekLabel !== latest.weekLabel) {
+      trendText += 'Peak was ' + best.weekLabel + ' (' + best.rate + '%, ' + best.count + ' eval' + (best.count !== 1 ? 's' : '') + '). '
+    }
+    trendText += 'Most recent week (' + latest.weekLabel + '): ' + latest.rate + '% (' + latest.count + ' eval' + (latest.count !== 1 ? 's' : '') + ') — ' + (wowDelta >= 0 ? '+' : '') + wowDelta + 'pp vs prior week (' + prev.weekLabel + ', ' + prev.rate + '%).'
+    lines.push({ text: trendText, type: 'primary' })
+  }
+
+  // ── 3. Agent outliers ──
+  if (agentData && agentData.length >= 2) {
+    const top = agentData[0]
+    const bottom = agentData[agentData.length - 1]
+    const fmt = a => a && a.includes('@') ? a.split('@')[0] : (a || 'Unknown').slice(0, 20)
+    const metric = isDsat ? 'controllability' : 'avg score'
+    let agentText = 'Agent performance: ' + fmt(top.agent) + ' leads at ' + top.value + '% ' + metric + ' (' + top.count + ' case' + (top.count !== 1 ? 's' : '') + ').'
+    if (bottom.agent !== top.agent && bottom.value !== top.value) {
+      agentText += ' Watch list: ' + fmt(bottom.agent) + ' at ' + bottom.value + '% (' + bottom.count + ' case' + (bottom.count !== 1 ? 's' : '') + ').'
+    }
+    lines.push({ text: agentText, type: 'primary' })
+  }
+
+  // ── 4. Comment themes ──
+  const themes = extractThemesSC(filteredEvals.map(e => e.overall_comment).filter(Boolean))
+  if (themes.length) {
+    lines.push({ text: 'Recurring topics in evaluator comments: ' + themes.join(', ') + '.', type: 'primary' })
+  }
+
+  // ── 5. Category / Subcategory (auto-populates once Echo is live) ──
+  const hasCategory = filteredEvals.some(e => getMetaValue(e, 'Category'))
+  if (hasCategory) {
+    const catMap = new Map()
+    for (const ev of filteredEvals) {
+      const cat = getMetaValue(ev, 'Category'); if (!cat) continue
+      if (!catMap.has(cat)) catMap.set(cat, [])
+      catMap.get(cat).push(ev)
+    }
+    const metric = isDsat ? 'controllability' : 'pass rate'
+    const catRates = [...catMap.entries()]
+      .map(([cat, evs]) => ({ cat, rate: computeRate(evs), n: evs.length, evs }))
+      .sort((a, b) => b.n - a.n).slice(0, 3)
+    let catText = 'Top categories (' + metric + '): ' + catRates.map(c => c.cat + ' — ' + c.rate + '% (' + c.n + ' eval' + (c.n !== 1 ? 's' : '') + ')').join('; ') + '.'
+    const topCat = catRates[0]
+    if (topCat) {
+      const subMap = new Map()
+      for (const ev of topCat.evs) {
+        const sub = getMetaValue(ev, 'Subcategory'); if (!sub) continue
+        if (!subMap.has(sub)) subMap.set(sub, [])
+        subMap.get(sub).push(ev)
+      }
+      const subRates = [...subMap.entries()]
+        .map(([sub, evs]) => ({ sub, rate: computeRate(evs), n: evs.length }))
+        .sort((a, b) => b.n - a.n).slice(0, 3)
+      if (subRates.length) {
+        catText += ' Under ' + topCat.cat + ': ' + subRates.map(s => s.sub + ' (' + s.rate + '%)').join(', ') + '.'
+      }
+    }
+    lines.push({ text: catText, type: 'primary' })
+  } else {
+    lines.push({ text: 'Category & subcategory breakdown not yet available — will auto-populate once Echo integration is active.', type: 'muted' })
+  }
+
+  // ── 6. Sample size warning ──
+  if (n < 20) {
+    lines.push({ text: 'Note: based on only ' + n + ' evaluation' + (n !== 1 ? 's' : '') + ' — treat these figures as directional, not statistically definitive.', type: 'warning' })
+  }
+
   return (
     <div style={{
       background: 'var(--bg-surface)', border: '1px solid var(--border)',
       borderLeft: '4px solid var(--accent)', borderRadius: 'var(--radius-lg)',
-      padding: '14px 20px', marginBottom: 20,
+      padding: '16px 20px', marginBottom: 20,
     }}>
       <div style={{
         fontSize: 11, fontWeight: 700, color: 'var(--accent)',
-        textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6,
+        textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10,
       }}>Summary</div>
-      <p style={{ fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.65, margin: 0 }}>{text}</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+        {lines.map((line, i) => (
+          <p key={i} style={{
+            fontSize: 13.5, lineHeight: 1.65, margin: 0,
+            color: line.type === 'muted' ? 'var(--text-secondary)'
+                 : line.type === 'warning' ? '#f59e0b'
+                 : 'var(--text-primary)',
+          }}>{line.text}</p>
+        ))}
+      </div>
     </div>
   )
 }
@@ -962,6 +1064,9 @@ export default function ScorecardDashboard() {
         filteredEvals={filteredEvals}
         alignmentVendorEvals={alignmentVendorEvals}
         anyActive={anyActive}
+        evals={evals}
+        agentData={agentData}
+        weeklyData={weeklyData}
       />
 
       {filteredEvals.length === 0 && (
