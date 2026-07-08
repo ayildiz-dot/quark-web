@@ -39,7 +39,7 @@ export default function ScorecardHistory() {
 
   const flash = (text, ok = true) => {
     setMsg({ text, ok })
-    setTimeout(() => setMsg(null), 4000)
+    if (ok) setTimeout(() => setMsg(null), 4000)
   }
 
   const loadVersion = async (entry) => {
@@ -112,7 +112,7 @@ export default function ScorecardHistory() {
         </div>
       </div>
 
-      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
 
       {history.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 48, color: 'var(--text-secondary)' }}>

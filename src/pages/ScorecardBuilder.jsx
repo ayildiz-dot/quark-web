@@ -134,7 +134,7 @@ export default function ScorecardBuilder() {
 
   const flash = (text, ok = true) => {
     setMsg({ text, ok })
-    setTimeout(() => setMsg(null), 3000)
+    if (ok) setTimeout(() => setMsg(null), 3000)
   }
 
   const isPublishedRef = React.useRef(false)
@@ -589,7 +589,7 @@ export default function ScorecardBuilder() {
         </div>
       </div>
 
-      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}>{msg.text}</div>}
+      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
 
       {showVersionModal && (
         <div className="modal-backdrop" onClick={() => { setShowVersionModal(false); setPendingSave(false) }}>

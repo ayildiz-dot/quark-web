@@ -64,7 +64,7 @@ export default function Navbar() {
       redirectTo: 'https://quark-iota.vercel.app/reset-password'
     })
     setFlash(error ? { ok: false, text: error.message } : { ok: true, text: 'Password reset link sent to your email.' })
-    setTimeout(() => setFlash(null), 4000)
+    if (!error) setTimeout(() => setFlash(null), 4000)
   }
 
   const isActive = (path) => location.pathname.startsWith(path)
@@ -186,8 +186,13 @@ export default function Navbar() {
             {flash && (
               <div style={{ fontSize: 12, marginBottom: 10, padding: '6px 10px', borderRadius: 6,
                 background: flash.ok ? 'var(--success-light)' : 'var(--danger-light)',
-                color: flash.ok ? 'var(--success)' : 'var(--danger)' }}>
-                {flash.text}
+                color: flash.ok ? 'var(--success)' : 'var(--danger)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <span>{flash.text}</span>
+                <button onClick={() => setFlash(null)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 13, lineHeight: 1, padding: 0 }}>
+                  ✕
+                </button>
               </div>
             )}
 
