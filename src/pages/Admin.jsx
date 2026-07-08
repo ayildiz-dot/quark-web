@@ -1463,7 +1463,15 @@ function GovernanceTab({ profile, flash }) {
       supabase.from('scorecards').select('id, name, type, is_published').eq('is_published', true).order('name'),
       supabase.from('sampling_configurations').select('queue_id, cycle_frequency'),
     ])
-    setWorkspaces(ws || [])
+    const activeWs = (ws || [])
+      .filter(w => !w.deleted_at)
+      .map(w => ({
+        ...w,
+        hubs: (w.hubs || [])
+          .filter(h => !h.deleted_at)
+          .map(h => ({ ...h, queues: (h.queues || []).filter(q => !q.deleted_at) }))
+      }))
+    setWorkspaces(activeWs)
     setDivisions(divs || [])
     setScorecards(sc || [])
     const sbq = {}
@@ -1492,9 +1500,9 @@ function GovernanceTab({ profile, flash }) {
   const toggleWs    = (ws)  => ask(ws.is_active  ? `Deactivate "${ws.name}" workspace?`  : `Activate "${ws.name}" workspace?`,  async () => { closeConfirm(); await supabase.from('workspaces').update({ is_active: !ws.is_active  }).eq('id', ws.id);  await loadAll(); flash(`Workspace ${ws.is_active  ? 'deactivated' : 'activated'}`) })
   const toggleHub   = (hub) => ask(hub.is_active ? `Deactivate "${hub.name}" hub?`        : `Activate "${hub.name}" hub?`,        async () => { closeConfirm(); await supabase.from('hubs').update({ is_active: !hub.is_active }).eq('id', hub.id); await loadAll(); flash(`Hub ${hub.is_active ? 'deactivated' : 'activated'}`) })
   const toggleQueue = (q)   => ask(q.is_active   ? `Deactivate "${q.name}" queue?`        : `Activate "${q.name}" queue?`,        async () => { closeConfirm(); await supabase.from('queues').update({ is_active: !q.is_active   }).eq('id', q.id);   await loadAll(); flash(`Queue ${q.is_active   ? 'deactivated' : 'activated'}`) })
-  const deleteWs    = (ws)  => ask(`Permanently delete "${ws.name}"? All hubs and queues inside will also be deleted.`,  async () => { closeConfirm(); const { error } = await supabase.from('workspaces').delete().eq('id', ws.id); if (error) return flash(error.message, false); await loadAll(); flash('Workspace deleted') })
-  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); const { error } = await supabase.from('hubs').delete().eq('id', hub.id); if (error) return flash(error.message, false); await loadAll(); flash('Hub deleted') })
-  const deleteQueue = (q)   => ask(`Permanently delete "${q.name}"? This cannot be undone.`,                             async () => { closeConfirm(); const { error } = await supabase.from('queues').delete().eq('id', q.id); if (error) return flash(error.message, false); await loadAll(); flash('Queue deleted') })
+  const deleteWs    = (ws)  => ask(`Permanently delete "${ws.name}"? All hubs and queues inside will also be deleted.`,  async () => { closeConfirm(); const { error } = await supabase.from('workspaces').update({ deleted_at: new Date().toISOString() }).eq('id', ws.id); if (error) return flash(error.message, false); await loadAll(); flash('Workspace deleted') })
+  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); const { error } = await supabase.from('hubs').update({ deleted_at: new Date().toISOString() }).eq('id', hub.id); if (error) return flash(error.message, false); await loadAll(); flash('Hub deleted') })
+  const deleteQueue = (q)   => ask(`Permanently delete "${q.name}"? This cannot be undone.`,                             async () => { closeConfirm(); const { error } = await supabase.from('queues').update({ deleted_at: new Date().toISOString() }).eq('id', q.id); if (error) return flash(error.message, false); await loadAll(); flash('Queue deleted') })
 
   const setWorkspaceDivision = async (wsId, divisionId) => {
     const { error } = await supabase.from('workspaces').update({ division_id: divisionId || null }).eq('id', wsId)
