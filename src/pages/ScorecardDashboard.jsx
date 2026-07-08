@@ -561,7 +561,7 @@ function extractThemesSC(comments) {
     .slice(0, 4)
     .map(([w]) => w)
 }
-function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActive, evals, agentData, weeklyData }) {
+function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActive, evals, agentData, weeklyData, deviatedWeeklyData }) {
   if (!anyActive) {
     return (
       <div style={{
@@ -579,77 +579,82 @@ function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActi
   const n = filteredEvals.length
   if (n === 0) return null
 
-  const threshold = scorecard.pass_threshold ?? 90
-  const computeRate = (evArr) => {
-    const len = evArr.length
-    if (!len) return 0
-    if (isDsat) return Math.round(evArr.filter(isControllable).length / len * 100)
-    return Math.round(evArr.filter(e => (e.score ?? 0) >= threshold).length / len * 100)
-  }
-
   const lines = []
 
-  // ── 1. Core metrics + baseline comparison ──
+  // ── 1. Core metrics ──
   if (isDsat) {
-    const ctrl = filteredEvals.filter(isControllable).length
-    const ctrlRate = Math.round((ctrl / n) * 100)
-    let baseStr = ''
-    if (evals && evals.length > 0 && evals.length !== n) {
-      const baseCtrl = evals.filter(isControllable).length
-      const baseRate = Math.round((baseCtrl / evals.length) * 100)
-      const delta = ctrlRate - baseRate
-      baseStr = ' (' + (delta >= 0 ? '+' : '') + delta + 'pp vs overall average of ' + baseRate + '%)'
-    }
-    const perfNote = ctrlRate >= 80 ? 'Controllability is healthy.'
-      : ctrlRate >= 60 ? 'Controllability is moderate — review uncontrollable cases.'
-      : 'Controllability is critically low — immediate review recommended.'
-    let coreText = n + ' DSAT evaluation' + (n !== 1 ? 's' : '') + ' in the filtered view. Controllability: ' + ctrlRate + '% (' + ctrl + ' of ' + n + ')' + baseStr + '. ' + perfNote
-    const checked = alignmentVendorEvals.filter(e => e.deviation_source_evaluation_id != null)
-    if (checked.length) {
-      const aligned = checked.filter(e => !e.is_deviated).length
-      const alignRate = Math.round((aligned / checked.length) * 100)
+    // Eval count + scope note
+    let countText = n + ' DSAT evaluation' + (n !== 1 ? 's' : '') + ' in the filtered view'
+    if (evals && evals.length > 0 && evals.length !== n) countText += ' (' + n + ' of ' + evals.length + ' total)'
+    lines.push({ text: countText + '.', type: 'primary' })
+
+    // Deviated controllability — official metric, target <=20%
+    if (alignmentVendorEvals.length > 0) {
       const devCtrl = alignmentVendorEvals.filter(e => {
         const eff = e.deviated_controllability ?? (isControllable(e) ? 'Controllable' : 'Non-Controllable')
         return eff === 'Controllable'
       }).length
-      const devRate = alignmentVendorEvals.length ? Math.round((devCtrl / alignmentVendorEvals.length) * 100) : null
-      coreText += ' Spot-check alignment: ' + alignRate + '%' + (devRate != null ? ', deviated controllability: ' + devRate + '%.' : '.')
+      const devRate = Math.round((devCtrl / alignmentVendorEvals.length) * 100)
+      const onTarget = devRate <= 20
+      const gap = Math.abs(devRate - 20)
+      const note = onTarget
+        ? 'on target (<=20%).'
+        : 'out of target — ' + gap + 'pp above the 20% threshold. Review controllable DSAT drivers.'
+      lines.push({
+        text: 'Deviated controllability: ' + devRate + '% (' + devCtrl + ' of ' + alignmentVendorEvals.length + ' controllable) — ' + note,
+        type: onTarget ? 'success' : 'warning',
+      })
     }
-    lines.push({ text: coreText, type: 'primary' })
+
+    // Alignment rate — target >=98%
+    const checked = alignmentVendorEvals.filter(e => e.deviation_source_evaluation_id != null)
+    if (checked.length > 0) {
+      const aligned = checked.filter(e => !e.is_deviated).length
+      const alignRate = Math.round((aligned / checked.length) * 100)
+      const onTarget = alignRate >= 98
+      const gap = Math.abs(alignRate - 98)
+      const note = onTarget
+        ? 'on target (>=98%) — KG and vendor assessments are well aligned.'
+        : 'out of target — ' + gap + 'pp below the 98% threshold. Review discrepant spot-checks.'
+      lines.push({
+        text: 'Alignment rate: ' + alignRate + '% (' + aligned + ' of ' + checked.length + ' spot-checks aligned) — ' + note,
+        type: onTarget ? 'success' : 'warning',
+      })
+    }
   } else {
-    let passed = 0, scoreSum = 0
-    for (const ev of filteredEvals) {
-      const s = ev.score ?? 0; scoreSum += s
-      if (s >= threshold) passed++
-    }
+    // Quality score — target >=90%
+    let scoreSum = 0
+    for (const ev of filteredEvals) scoreSum += (ev.score ?? 0)
     const avgScore = Math.round(scoreSum / n)
-    const passRate = Math.round((passed / n) * 100)
-    const failed = n - passed
-    let baseStr = ''
+    const onTarget = avgScore >= 90
+    const gap = Math.abs(avgScore - 90)
+    let scoreText = n + ' quality evaluation' + (n !== 1 ? 's' : '') + ' in the filtered view. Quality score: ' + avgScore + '%'
     if (evals && evals.length > 0 && evals.length !== n) {
       let baseSum = 0
       for (const ev of evals) baseSum += (ev.score ?? 0)
       const baseAvg = Math.round(baseSum / evals.length)
       const delta = avgScore - baseAvg
-      baseStr = ' (' + (delta >= 0 ? '+' : '') + delta + 'pp vs overall average of ' + baseAvg + '%)'
+      scoreText += ' (' + (delta >= 0 ? '+' : '') + delta + 'pp vs overall avg of ' + baseAvg + '%)'
     }
-    const perfNote = passRate >= 90 ? 'Performance is strong.'
-      : passRate >= 75 ? 'Performance is on track but has room for improvement.'
-      : 'Pass rate is below target — coaching opportunities likely.'
-    lines.push({ text: n + ' quality evaluation' + (n !== 1 ? 's' : '') + ' in the filtered view. Average score: ' + avgScore + '%' + baseStr + ', pass rate: ' + passRate + '% (' + passed + ' passed, ' + failed + ' failed). ' + perfNote, type: 'primary' })
+    const note = onTarget
+      ? 'on target (>=90%).'
+      : 'out of target — ' + gap + 'pp below the 90% threshold. Quality coaching recommended.'
+    lines.push({ text: scoreText + ' — ' + note, type: onTarget ? 'success' : 'warning' })
   }
 
-  // ── 2. Weekly trend ──
-  if (weeklyData && weeklyData.length >= 2) {
-    const best = weeklyData.reduce((a, b) => a.rate >= b.rate ? a : b)
-    const latest = weeklyData[weeklyData.length - 1]
-    const prev = weeklyData[weeklyData.length - 2]
+  // ── 2. Weekly trend — DSAT uses deviatedWeeklyData, Quality uses weeklyData ──
+  const trendData = isDsat ? (deviatedWeeklyData || []) : (weeklyData || [])
+  const trendLabel = isDsat ? 'deviated controllability' : 'quality score'
+  if (trendData.length >= 2) {
+    const best = trendData.reduce((a, b) => a.rate >= b.rate ? a : b)
+    const latest = trendData[trendData.length - 1]
+    const prev = trendData[trendData.length - 2]
     const wowDelta = latest.rate - prev.rate
-    let trendText = 'Weekly trend: '
+    let trendText = 'Weekly ' + trendLabel + ' trend: '
     if (best.weekLabel !== latest.weekLabel) {
       trendText += 'Peak was ' + best.weekLabel + ' (' + best.rate + '%, ' + best.count + ' eval' + (best.count !== 1 ? 's' : '') + '). '
     }
-    trendText += 'Most recent week (' + latest.weekLabel + '): ' + latest.rate + '% (' + latest.count + ' eval' + (latest.count !== 1 ? 's' : '') + ') — ' + (wowDelta >= 0 ? '+' : '') + wowDelta + 'pp vs prior week (' + prev.weekLabel + ', ' + prev.rate + '%).'
+    trendText += 'Most recent (' + latest.weekLabel + '): ' + latest.rate + '% (' + latest.count + ' eval' + (latest.count !== 1 ? 's' : '') + ') — ' + (wowDelta >= 0 ? '+' : '') + wowDelta + 'pp vs prior week (' + prev.weekLabel + ', ' + prev.rate + '%).'
     lines.push({ text: trendText, type: 'primary' })
   }
 
@@ -658,7 +663,7 @@ function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActi
     const top = agentData[0]
     const bottom = agentData[agentData.length - 1]
     const fmt = a => a && a.includes('@') ? a.split('@')[0] : (a || 'Unknown').slice(0, 20)
-    const metric = isDsat ? 'controllability' : 'avg score'
+    const metric = isDsat ? 'controllability' : 'quality score'
     let agentText = 'Agent performance: ' + fmt(top.agent) + ' leads at ' + top.value + '% ' + metric + ' (' + top.count + ' case' + (top.count !== 1 ? 's' : '') + ').'
     if (bottom.agent !== top.agent && bottom.value !== top.value) {
       agentText += ' Watch list: ' + fmt(bottom.agent) + ' at ' + bottom.value + '% (' + bottom.count + ' case' + (bottom.count !== 1 ? 's' : '') + ').'
@@ -672,7 +677,7 @@ function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActi
     lines.push({ text: 'Recurring topics in evaluator comments: ' + themes.join(', ') + '.', type: 'primary' })
   }
 
-  // ── 5. Category / Subcategory (auto-populates once Echo is live) ──
+  // ── 5. Category / Subcategory — volume-based, auto-populates once Echo is active ──
   const hasCategory = filteredEvals.some(e => getMetaValue(e, 'Category'))
   if (hasCategory) {
     const catMap = new Map()
@@ -681,12 +686,11 @@ function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActi
       if (!catMap.has(cat)) catMap.set(cat, [])
       catMap.get(cat).push(ev)
     }
-    const metric = isDsat ? 'controllability' : 'pass rate'
-    const catRates = [...catMap.entries()]
-      .map(([cat, evs]) => ({ cat, rate: computeRate(evs), n: evs.length, evs }))
+    const catRanked = [...catMap.entries()]
+      .map(([cat, evs]) => ({ cat, n: evs.length, evs }))
       .sort((a, b) => b.n - a.n).slice(0, 3)
-    let catText = 'Top categories (' + metric + '): ' + catRates.map(c => c.cat + ' — ' + c.rate + '% (' + c.n + ' eval' + (c.n !== 1 ? 's' : '') + ')').join('; ') + '.'
-    const topCat = catRates[0]
+    let catText = 'Top categories by volume: ' + catRanked.map(c => c.cat + ' (' + c.n + ' eval' + (c.n !== 1 ? 's' : '') + ')').join('; ') + '.'
+    const topCat = catRanked[0]
     if (topCat) {
       const subMap = new Map()
       for (const ev of topCat.evs) {
@@ -694,11 +698,11 @@ function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActi
         if (!subMap.has(sub)) subMap.set(sub, [])
         subMap.get(sub).push(ev)
       }
-      const subRates = [...subMap.entries()]
-        .map(([sub, evs]) => ({ sub, rate: computeRate(evs), n: evs.length }))
+      const subRanked = [...subMap.entries()]
+        .map(([sub, evs]) => ({ sub, n: evs.length }))
         .sort((a, b) => b.n - a.n).slice(0, 3)
-      if (subRates.length) {
-        catText += ' Under ' + topCat.cat + ': ' + subRates.map(s => s.sub + ' (' + s.rate + '%)').join(', ') + '.'
+      if (subRanked.length) {
+        catText += ' Under ' + topCat.cat + ': ' + subRanked.map(s => s.sub + ' (' + s.n + ' eval' + (s.n !== 1 ? 's' : '') + ')').join(', ') + '.'
       }
     }
     lines.push({ text: catText, type: 'primary' })
@@ -727,6 +731,7 @@ function SummaryBubble({ scorecard, filteredEvals, alignmentVendorEvals, anyActi
             fontSize: 13.5, lineHeight: 1.65, margin: 0,
             color: line.type === 'muted' ? 'var(--text-secondary)'
                  : line.type === 'warning' ? '#f59e0b'
+                 : line.type === 'success' ? 'var(--success)'
                  : 'var(--text-primary)',
           }}>{line.text}</p>
         ))}
@@ -1067,6 +1072,7 @@ export default function ScorecardDashboard() {
         evals={evals}
         agentData={agentData}
         weeklyData={weeklyData}
+        deviatedWeeklyData={deviatedWeeklyData}
       />
 
       {filteredEvals.length === 0 && (
