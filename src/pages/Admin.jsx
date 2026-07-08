@@ -1525,7 +1525,10 @@ function GovernanceTab({ profile, flash }) {
     } else if (adding.type === 'hub') {
       const ws = workspaces.find(w => w.id === adding.parentId)
       const { error } = await supabase.from('hubs').insert({ name, workspace_id: adding.parentId, is_active: true, position: ws?.hubs?.length || 0 })
-      if (error) return flash(error.message, false)
+      if (error) {
+        if (error.code === '23505') return flash('A hub with this name already exists. Hub names must be unique across all workspaces.', false)
+        return flash(error.message, false)
+      }
     } else {
       let hubLen = 0
       for (const ws of workspaces) { const hub = ws.hubs?.find(h => h.id === adding.parentId); if (hub) { hubLen = hub.queues?.length || 0; break } }
@@ -1540,7 +1543,10 @@ function GovernanceTab({ profile, flash }) {
     if (!name) return flash('Name is required.', false)
     const table = editing.level === 'workspace' ? 'workspaces' : editing.level === 'hub' ? 'hubs' : 'queues'
     const { error } = await supabase.from(table).update({ name }).eq('id', editing.id)
-    if (error) return flash(error.message, false)
+    if (error) {
+      if (error.code === '23505' && editing.level === 'hub') return flash('A hub with this name already exists. Hub names must be unique across all workspaces.', false)
+      return flash(error.message, false)
+    }
     cancelEdit(); await loadAll(); flash('Renamed successfully')
   }
 
