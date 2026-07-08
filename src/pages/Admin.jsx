@@ -535,6 +535,55 @@ function InfoTooltip({ text }) {
   )
 }
 
+// ─── Small inline pencil-icon edit trigger (replaces text "Rename" buttons) ───
+function EditIconButton({ onClick, title = 'Rename' }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={title}
+      style={{
+        background: 'none', border: 'none', cursor: 'pointer', padding: 2,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        color: hover ? 'var(--accent)' : 'var(--text-tertiary)',
+        transition: 'color .15s', flexShrink: 0,
+      }}>
+      <i className="ti ti-pencil" style={{ fontSize: 13 }} />
+    </button>
+  )
+}
+
+// ─── Floating "back to top" button — appears once the page is scrolled down ───
+function ScrollToTopButton() {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setVisible(window.scrollY > 400)
+    window.addEventListener('scroll', onScroll)
+    onScroll()
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
+  if (!visible) return null
+  return (
+    <button
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      title="Back to top"
+      style={{
+        position: 'fixed', bottom: 28, right: 28, zIndex: 500,
+        width: 40, height: 40, borderRadius: '50%', border: '1px solid var(--border)',
+        background: 'var(--bg-surface)', color: 'var(--accent)', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 16, boxShadow: 'var(--shadow)', transition: 'transform .15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)' }}
+      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)' }}
+    >
+      ↑
+    </button>
+  )
+}
+
 // ─── Queue Settings panel (top-level component — preserves its own state across re-renders) ───
 function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved, onToggleActive, onDelete }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
@@ -1298,6 +1347,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
         ) : (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 14 }}>{ws.name}</span>
+            <EditIconButton onClick={() => startEdit(ws.id, 'workspace', ws.name)} />
             <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
               backgroundColor: ws.is_active ? '#22c55e22' : '#64748b22', color: ws.is_active ? '#22c55e' : '#94a3b8' }}>
               {ws.is_active ? 'Active' : 'Inactive'}
@@ -1313,7 +1363,6 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
               {divisions.map(d => <option key={d.id} value={d.id}>{d.name}{d.is_active ? '' : ' (inactive)'}</option>)}
             </select>
             <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => startEdit(ws.id, 'workspace', ws.name)}>Rename</button>
             <RowMenu isActive={ws.is_active} onToggleActive={() => toggleWs(ws)} onDelete={() => deleteWs(ws)} />
           </div>
         )}
@@ -1345,6 +1394,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                   ) : (
                     <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: 13, fontWeight: 500 }}>{hub.name}</span>
+                      <EditIconButton onClick={() => startEdit(hub.id, 'hub', hub.name)} />
                       <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 10, fontWeight: 600,
                         backgroundColor: hub.is_active ? '#22c55e22' : '#64748b22', color: hub.is_active ? '#22c55e' : '#94a3b8' }}>
                         {hub.is_active ? 'Active' : 'Inactive'}
@@ -1354,7 +1404,6 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                   {!isEditing(hub.id) && (
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startAdd('queue', hub.id)}>+ Queue</button>
-                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(hub.id, 'hub', hub.name)}>Rename</button>
                       <RowMenu isActive={hub.is_active} onToggleActive={() => toggleHub(hub)} onDelete={() => deleteHub(hub)} />
                     </div>
                   )}
@@ -1381,34 +1430,40 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                                 <EditInputInline value={editName} onChange={setEditName} onSave={confirmEdit} onCancel={cancelEdit} placeholder="Queue name" />
                               </div>
                             ) : (
-                              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{q.name}</span>
-                                {mapped && (
-                                  <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                                    backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
-                                    {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}
-                                  </span>
-                                )}
-                                {q.manual_sampling ? (
-                                  <span title="Manual sampling ingestion is active for this queue"
-                                    style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                                    backgroundColor: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b44' }}>
-                                    ✋ Manual Sampling
-                                  </span>
-                                ) : samplingByQueue[q.id] && (
-                                  <span title={`Sampling configuration set (${samplingByQueue[q.id]} cycle)`}
-                                    style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
-                                    backgroundColor: '#8b5cf622', color: '#8b5cf6', border: '1px solid #8b5cf644' }}>
-                                    🎯 Sampling · {samplingByQueue[q.id] === 'weekly' ? 'Weekly' : 'Daily'}
-                                  </span>
-                                )}
+                              <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '220px 240px 190px', gap: 8, alignItems: 'center' }}>
+                                <span style={{ fontSize: 13, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{q.name}</span>
+                                  <EditIconButton onClick={() => startEdit(q.id, 'queue', q.name)} />
+                                </span>
+                                <span>
+                                  {mapped && (
+                                    <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                      backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
+                                      {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}
+                                    </span>
+                                  )}
+                                </span>
+                                <span>
+                                  {q.manual_sampling ? (
+                                    <span title="Manual sampling ingestion is active for this queue"
+                                      style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                      backgroundColor: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b44' }}>
+                                      ✋ Manual Sampling
+                                    </span>
+                                  ) : samplingByQueue[q.id] && (
+                                    <span title={`Sampling configuration set (${samplingByQueue[q.id]} cycle)`}
+                                      style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
+                                      backgroundColor: '#8b5cf622', color: '#8b5cf6', border: '1px solid #8b5cf644' }}>
+                                      🎯 Sampling · {samplingByQueue[q.id] === 'weekly' ? 'Weekly' : 'Daily'}
+                                    </span>
+                                  )}
+                                </span>
                               </div>
                             )}
                             {!isEditing(q.id) && (
                               <div style={{ display: 'flex', gap: 6 }}>
                                 <button className="btn btn-ghost btn-sm" style={{ fontSize: 12, color: mapOpen ? 'var(--accent)' : undefined, border: mapOpen ? '1px solid var(--accent)44' : undefined }}
                                   onClick={() => setExpandedS(e => ({ ...e, [q.id]: !mapOpen }))}>⚙ Queue Settings</button>
-                                <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={() => startEdit(q.id, 'queue', q.name)}>Rename</button>
                               </div>
                             )}
                           </div>
@@ -1554,14 +1609,25 @@ function GovernanceTab({ profile, flash }) {
   const isEditing = (id) => editing?.id === id
 
   const expandAllDivisions = () => {
-    const next = { __none__: true }
-    divisions.forEach(d => { next[d.id] = true })
-    setExpandedDiv(next)
+    const nextDiv = { __none__: true }
+    divisions.forEach(d => { nextDiv[d.id] = true })
+    setExpandedDiv(nextDiv)
+    const nextWs = {}
+    const nextHub = {}
+    workspaces.forEach(w => {
+      nextWs[w.id] = true
+      ;(w.hubs || []).forEach(h => { nextHub[h.id] = true })
+    })
+    setExpanded(nextWs)
+    setExpandedH(nextHub)
   }
   const collapseAllDivisions = () => {
-    const next = { __none__: false }
-    divisions.forEach(d => { next[d.id] = false })
-    setExpandedDiv(next)
+    const nextDiv = { __none__: false }
+    divisions.forEach(d => { nextDiv[d.id] = false })
+    setExpandedDiv(nextDiv)
+    const nextWs = {}
+    workspaces.forEach(w => { nextWs[w.id] = false })
+    setExpanded(nextWs)
   }
 
   const wsByDivision = (divId) => workspaces.filter(w => (w.division_id || null) === divId)
@@ -1580,10 +1646,11 @@ function GovernanceTab({ profile, flash }) {
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>Grouped by division · manage workspaces, hubs, and queues · map each queue to a scorecard + market</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={expandAllDivisions}>Expand all</button>
-          <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={collapseAllDivisions}>Collapse all</button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={expandAllDivisions} title="Expand every division, workspace, and hub">Expand all</button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 12 }} onClick={collapseAllDivisions} title="Collapse every division and workspace">Collapse all</button>
           <button className="btn btn-primary btn-sm" onClick={() => startAdd('workspace')}>+ Add Workspace</button>
         </div>
+        <ScrollToTopButton />
       </div>
 
       {isAdding('workspace', null) && (
