@@ -1120,6 +1120,8 @@ function CalibrationAdmin() {
 export default function Calibration() {
   const { profile } = useAuth()
   const isAdmin = ['admin', 'owner'].includes(profile?.role)
+  const isKgUser = profile?.email?.endsWith('@kaizengaming.com')
+  const canManage = isAdmin || isKgUser
   const [tab, setTab]                = useState('sessions')
   const [scoringSession, setScoring] = useState(null)
   const [refreshKey, setRefreshKey]  = useState(0)
@@ -1133,7 +1135,7 @@ export default function Calibration() {
         </div>
       </div>
 
-      {isAdmin && (
+      {canManage && (
         <div style={{ display: 'flex', marginBottom: 28, borderBottom: '1px solid var(--border)' }}>
           {[['sessions', 'My Sessions'], ['admin', 'Manage Sessions']].map(([key, label]) => (
             <button key={key}
@@ -1161,7 +1163,7 @@ export default function Calibration() {
             />
           : <CalibrationHome key={refreshKey} onScore={s => setScoring(s)} />
       )}
-      {tab === 'admin' && isAdmin && <CalibrationAdmin />}
+      {tab === 'admin' && canManage && <CalibrationAdmin />}
     </div>
   )
 }
