@@ -1289,11 +1289,20 @@ function CalibrationInsights() {
   const [filterEvaluator, setFilterEvaluator] = useState('')
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
+  const [metaOptions, setMetaOptions] = useState({ bpo: [], hub: [], market: [] })
 
   useEffect(() => { if (profile) load() }, [profile])
 
   async function load() {
     setLoading(true)
+
+    // BPO/HUB/Market filter choices come from the shared metadata list (the same one
+    // used on the New Session form), not just from sessions that already have results —
+    // so a newly added BPO/HUB/Market shows up as a filter option right away, even
+    // before any session using it has been evaluated.
+    const { data: metaRows } = await supabase.from('calibration_metadata_options').select('category, name')
+    const metaByCategory = cat => [...new Set((metaRows || []).filter(o => o.category === cat).map(o => o.name))].sort()
+    setMetaOptions({ bpo: metaByCategory('bpo'), hub: metaByCategory('hub'), market: metaByCategory('market') })
     // Same visibility rule as Manage Sessions: admins/owners see every session;
     // everyone else only sees sessions where they were the Gauge.
     const isPrivileged = ['admin', 'owner'].includes(profile?.role)
@@ -1367,11 +1376,13 @@ function CalibrationInsights() {
   const tdStyle = { padding: '10px 16px' }
   const filterSelectStyle = { padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13 }
 
-  // Filter dropdown options come from the data itself, so a filter never points at
-  // an empty result set.
-  const bpoOptions = [...new Set(rows.map(r => r.bpo).filter(Boolean))].sort()
-  const hubOptions = [...new Set(rows.map(r => r.hub).filter(Boolean))].sort()
-  const marketOptions = [...new Set(rows.map(r => r.market).filter(Boolean))].sort()
+  // BPO/HUB/Market options come from the shared metadata list loaded above, so they
+  // show up as filters as soon as they exist — even before any session using them has
+  // been evaluated. Scorecard/Gauge/Evaluator options are derived from the data itself,
+  // since those only make sense once there's actually something to filter.
+  const bpoOptions = metaOptions.bpo
+  const hubOptions = metaOptions.hub
+  const marketOptions = metaOptions.market
   const scorecardOptions = [...new Set(rows.map(r => r.scorecardName).filter(Boolean))].sort()
   const gaugeOptions = [...new Set(rows.map(r => r.gaugeName).filter(Boolean))].sort()
   const evaluatorOptions = [...new Set(rows.map(r => r.evaluatorName).filter(Boolean))].sort()
