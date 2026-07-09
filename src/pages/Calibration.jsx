@@ -724,6 +724,7 @@ function CalibrationAdmin() {
   const [bpoOptions, setBpoOptions]       = useState([])
   const [hubOptions, setHubOptions]       = useState([])
   const [marketOptions, setMarketOptions] = useState([])
+  const [metadataLoadError, setMetadataLoadError] = useState(null)
 
   useEffect(() => { if (profile) loadResults() }, [profile])
 
@@ -796,7 +797,13 @@ function CalibrationAdmin() {
   useEffect(() => { if (profile) loadMetadataOptions() }, [profile])
 
   async function loadMetadataOptions() {
-    const { data } = await supabase.from('calibration_metadata_options').select('category, name').order('name')
+    const { data, error } = await supabase.from('calibration_metadata_options').select('category, name').order('name')
+    if (error) {
+      console.error('Failed to load BPO/HUB/Market options:', error)
+      setMetadataLoadError(error.message)
+      return
+    }
+    setMetadataLoadError(null)
     const byCategory = cat => (data || []).filter(o => o.category === cat).map(o => o.name)
     setBpoOptions(byCategory('bpo'))
     setHubOptions(byCategory('hub'))
@@ -1234,6 +1241,11 @@ function CalibrationAdmin() {
                   </select>
                 </div>
               </div>
+              {metadataLoadError && (
+                <div style={{ fontSize: 11, color: '#dc2626' }}>
+                  Couldn't load the saved BPO/HUB/Market lists ({metadataLoadError}). Values you type here will still save on this session — reload the page and try again to get the full dropdown lists back.
+                </div>
+              )}
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
                   Participants
