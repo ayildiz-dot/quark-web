@@ -879,7 +879,11 @@ function CalibrationAdmin() {
               {sessions.map(s => {
                 const gaugeUser = users.find(u => u.id === s.gauge_user_id)
                 return (
-                  <tr key={s.id} style={{ borderBottom: '1px solid var(--border)', background: selected?.id === s.id ? 'var(--bg-secondary)' : 'transparent' }}>
+                  <tr key={s.id} style={{
+                    borderBottom: '1px solid var(--border)',
+                    background: selected?.id === s.id ? 'rgba(37,99,235,0.08)' : 'transparent',
+                    borderLeft: selected?.id === s.id ? '3px solid #2563eb' : '3px solid transparent',
+                  }}>
                     <td style={{ ...tdStyle, fontWeight: 500 }}>{s.title}</td>
                     <td style={tdStyle}><TypeBadge type={s.type} /></td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
@@ -1153,7 +1157,6 @@ export default function Calibration() {
       <div className="page-header" style={{ marginBottom: 20 }}>
         <div>
           <h1>Calibration</h1>
-          <p className="page-sub">COPC calibration sessions and certifications</p>
         </div>
       </div>
 
