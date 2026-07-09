@@ -484,6 +484,10 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
       setError(`${unanswered.length} question${unanswered.length > 1 ? 's' : ''} still need an answer.`)
       return
     }
+    if (!overallComment.trim()) {
+      setError('Please add an overall comment before submitting.')
+      return
+    }
     setError('')
     setSubmitting(true)
 
@@ -656,10 +660,12 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Overall Comment</div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+          Overall Comment <span style={{ color: '#dc2626' }}>*</span>
+        </div>
         <textarea
           ref={commentRef}
-          placeholder="Optional overall comment on this calibration…"
+          placeholder="Add an overall comment for this calibration…"
           value={overallComment}
           onChange={e => setComment(e.target.value)}
           style={{
@@ -796,10 +802,22 @@ function CalibrationAdmin() {
     const partIds = (parts || []).map(p => p.evaluator_id)
     const partUsers = (users || []).filter(u => partIds.includes(u.id))
     const gaugeUser = (users || []).find(u => u.id === session.gauge_user_id)
+
+    // Session-wide delta/calibration-rate summary, computed from every participant
+    // who has actually been scored ('evaluated') — pending submissions don't count yet.
+    const evaluatedSubs = (subs || []).filter(s => !s.is_gauge && s.status === 'evaluated')
+    const avgDelta = evaluatedSubs.length > 0
+      ? evaluatedSubs.reduce((sum, s) => sum + (s.delta || 0), 0) / evaluatedSubs.length
+      : null
+    const calibratedCount = evaluatedSubs.filter(s => s.is_calibrated).length
+
     setDetail({
       participants: partUsers.map(u => ({ ...u, sub: subMap[u.id] || null })),
       gaugeUser,
       gaugeSub: subMap[session.gauge_user_id] || null,
+      avgDelta,
+      calibratedCount,
+      evaluatedCount: evaluatedSubs.length,
     })
   }
 
@@ -971,6 +989,34 @@ function CalibrationAdmin() {
             <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading…</div>
           ) : (
             <>
+              {detail.evaluatedCount > 0 && (
+                <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                  <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: detail.avgDelta <= 0.10 ? '#16a34a' : '#dc2626' }}>
+                      {(detail.avgDelta * 100).toFixed(1)}%
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
+                      Overall Delta
+                    </div>
+                  </div>
+                  <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
+                    <div style={{ fontSize: 22, fontWeight: 700 }}>
+                      {detail.calibratedCount}/{detail.evaluatedCount}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
+                      Calibrated
+                    </div>
+                  </div>
+                  <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: detail.calibratedCount === detail.evaluatedCount ? '#16a34a' : '#dc2626' }}>
+                      {Math.round((detail.calibratedCount / detail.evaluatedCount) * 100)}%
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
+                      Calibration Rate
+                    </div>
+                  </div>
+                </div>
+              )}
               <div style={{ marginBottom: 20 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
                   Gauge
@@ -1153,6 +1199,230 @@ function CalibrationAdmin() {
   )
 }
 
+// ── CalibrationInsights (BI overview) ────────────────────────────────────────
+
+function CalibrationInsights() {
+  const { profile } = useAuth()
+  const [loading, setLoading] = useState(true)
+  const [sessionStats, setSessionStats] = useState([])
+  const [evaluatorStats, setEvaluatorStats] = useState([])
+
+  useEffect(() => { if (profile) load() }, [profile])
+
+  async function load() {
+    setLoading(true)
+    // Same visibility rule as Manage Sessions: admins/owners see every session;
+    // everyone else only sees sessions where they were the Gauge.
+    const isPrivileged = ['admin', 'owner'].includes(profile?.role)
+    let sessionIdsFilter = null
+    if (!isPrivileged) {
+      const { data: myGaugeSessions } = await supabase
+        .from('calibration_sessions')
+        .select('id')
+        .eq('gauge_user_id', profile?.id)
+      sessionIdsFilter = (myGaugeSessions || []).map(s => s.id)
+      if (sessionIdsFilter.length === 0) {
+        setSessionStats([]); setEvaluatorStats([]); setLoading(false); return
+      }
+    }
+
+    let subsQuery = supabase
+      .from('calibration_submissions')
+      .select('evaluator_id, session_id, is_calibrated, delta, status')
+      .eq('status', 'evaluated')
+      .eq('is_gauge', false)
+    if (sessionIdsFilter) subsQuery = subsQuery.in('session_id', sessionIdsFilter)
+    const { data: subs } = await subsQuery
+
+    if (!subs || subs.length === 0) {
+      setSessionStats([]); setEvaluatorStats([]); setLoading(false); return
+    }
+
+    const sessionIds = [...new Set(subs.map(s => s.session_id))]
+    const evaluatorIds = [...new Set(subs.map(s => s.evaluator_id))]
+
+    const [{ data: sessionsData }, { data: usersData }] = await Promise.all([
+      supabase.from('calibration_sessions').select('id, title, type, session_date, scorecard_id, gauge_user_id').in('id', sessionIds),
+      supabase.from('users').select('id, name, email').in('id', evaluatorIds),
+    ])
+    const scorecardIds = [...new Set((sessionsData || []).map(s => s.scorecard_id).filter(Boolean))]
+    const { data: scorecardsData } = scorecardIds.length > 0
+      ? await supabase.from('scorecards').select('id, name').in('id', scorecardIds)
+      : { data: [] }
+    const scorecardMap = Object.fromEntries((scorecardsData || []).map(s => [s.id, s]))
+    const sessionMap = Object.fromEntries((sessionsData || []).map(s => [s.id, s]))
+    const userMap = Object.fromEntries((usersData || []).map(u => [u.id, u]))
+
+    // Per-session aggregation: overall delta + calibration rate for each session.
+    const bySession = {}
+    for (const sub of subs) {
+      (bySession[sub.session_id] ||= []).push(sub)
+    }
+    const sessionRows = Object.entries(bySession).map(([sessionId, rows]) => {
+      const s = sessionMap[sessionId]
+      const avgDelta = rows.reduce((sum, r) => sum + (r.delta || 0), 0) / rows.length
+      const calibratedCount = rows.filter(r => r.is_calibrated).length
+      return {
+        id: sessionId,
+        title: s?.title || 'Unknown session',
+        scorecardName: scorecardMap[s?.scorecard_id]?.name || (s?.type || '').toUpperCase(),
+        type: s?.type,
+        date: s?.session_date,
+        gaugeName: userMap[s?.gauge_user_id]?.name || userMap[s?.gauge_user_id]?.email || '—',
+        avgDelta,
+        calibratedCount,
+        total: rows.length,
+      }
+    }).sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+
+    // Per-evaluator aggregation: who's trending well vs who needs attention.
+    const byEvaluator = {}
+    for (const sub of subs) {
+      (byEvaluator[sub.evaluator_id] ||= []).push(sub)
+    }
+    const evaluatorRows = Object.entries(byEvaluator).map(([evalId, rows]) => {
+      const avgDelta = rows.reduce((sum, r) => sum + (r.delta || 0), 0) / rows.length
+      const calibratedCount = rows.filter(r => r.is_calibrated).length
+      const withDates = rows
+        .map(r => ({ ...r, date: sessionMap[r.session_id]?.session_date }))
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+      let consecutiveFailures = 0
+      for (const r of withDates) {
+        if (r.is_calibrated) break
+        consecutiveFailures++
+      }
+      return {
+        id: evalId,
+        name: userMap[evalId]?.name || userMap[evalId]?.email || 'Unknown',
+        sessions: rows.length,
+        calibratedCount,
+        avgDelta,
+        consecutiveFailures,
+      }
+    }).sort((a, b) => b.avgDelta - a.avgDelta)
+
+    setSessionStats(sessionRows)
+    setEvaluatorStats(evaluatorRows)
+    setLoading(false)
+  }
+
+  if (loading) return (
+    <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>Loading insights…</div>
+  )
+
+  const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
+  const tdStyle = { padding: '10px 16px' }
+
+  if (sessionStats.length === 0) return (
+    <div className="card" style={{ textAlign: 'center', padding: 36, color: 'var(--text-secondary)', fontSize: 14 }}>
+      No completed calibration results yet.
+    </div>
+  )
+
+  const totalSessions = sessionStats.length
+  const totalEvaluations = sessionStats.reduce((sum, s) => sum + s.total, 0)
+  const totalCalibrated = sessionStats.reduce((sum, s) => sum + s.calibratedCount, 0)
+  const overallRate = totalEvaluations > 0 ? Math.round((totalCalibrated / totalEvaluations) * 100) : 0
+  const overallAvgDelta = totalEvaluations > 0
+    ? sessionStats.reduce((sum, s) => sum + s.avgDelta * s.total, 0) / totalEvaluations
+    : 0
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
+        <div className="card" style={{ flex: 1, minWidth: 160, textAlign: 'center', padding: '18px 16px' }}>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{totalSessions}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>Sessions</div>
+        </div>
+        <div className="card" style={{ flex: 1, minWidth: 160, textAlign: 'center', padding: '18px 16px' }}>
+          <div style={{ fontSize: 26, fontWeight: 700 }}>{totalEvaluations}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>Evaluations Scored</div>
+        </div>
+        <div className="card" style={{ flex: 1, minWidth: 160, textAlign: 'center', padding: '18px 16px' }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: overallRate >= 70 ? '#16a34a' : '#dc2626' }}>{overallRate}%</div>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>Calibration Rate</div>
+        </div>
+        <div className="card" style={{ flex: 1, minWidth: 160, textAlign: 'center', padding: '18px 16px' }}>
+          <div style={{ fontSize: 26, fontWeight: 700, color: overallAvgDelta <= 0.10 ? '#16a34a' : '#dc2626' }}>{(overallAvgDelta * 100).toFixed(1)}%</div>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>Avg Delta</div>
+        </div>
+      </div>
+
+      <section style={{ marginBottom: 28 }}>
+        <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Sessions Overview
+        </h2>
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                <th style={thStyle}>Session</th>
+                <th style={thStyle}>Scorecard</th>
+                <th style={thStyle}>Date</th>
+                <th style={thStyle}>Gauge</th>
+                <th style={thStyle}>Overall Delta</th>
+                <th style={thStyle}>Calibration Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessionStats.map(s => (
+                <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{s.title}</td>
+                  <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.scorecardName}</td>
+                  <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.date ? new Date(s.date).toLocaleDateString() : '—'}</td>
+                  <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.gaugeName}</td>
+                  <td style={{ ...tdStyle, color: s.avgDelta <= 0.10 ? '#16a34a' : '#dc2626', fontWeight: 600 }}>{(s.avgDelta * 100).toFixed(1)}%</td>
+                  <td style={tdStyle}>{s.calibratedCount}/{s.total} ({Math.round((s.calibratedCount / s.total) * 100)}%)</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          Evaluator Performance
+        </h2>
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                <th style={thStyle}>Evaluator</th>
+                <th style={thStyle}>Sessions</th>
+                <th style={thStyle}>Calibration Rate</th>
+                <th style={thStyle}>Avg Delta</th>
+                <th style={thStyle}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {evaluatorStats.map(e => (
+                <tr key={e.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{e.name}</td>
+                  <td style={tdStyle}>{e.sessions}</td>
+                  <td style={tdStyle}>{e.calibratedCount}/{e.sessions} ({Math.round((e.calibratedCount / e.sessions) * 100)}%)</td>
+                  <td style={{ ...tdStyle, color: e.avgDelta <= 0.10 ? '#16a34a' : '#dc2626', fontWeight: 600 }}>{(e.avgDelta * 100).toFixed(1)}%</td>
+                  <td style={tdStyle}>
+                    {e.consecutiveFailures >= 3 ? (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#dc2626', background: 'rgba(220,38,38,0.1)', padding: '2px 8px', borderRadius: 10 }}>
+                        Needs attention
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#16a34a', background: 'rgba(22,163,74,0.1)', padding: '2px 8px', borderRadius: 10 }}>
+                        On track
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 // ── Root shell ────────────────────────────────────────────────────────────────
 
 export default function Calibration() {
@@ -1174,7 +1444,7 @@ export default function Calibration() {
 
       {canManage && (
         <div style={{ display: 'flex', marginBottom: 28, borderBottom: '1px solid var(--border)' }}>
-          {[['sessions', 'My Sessions'], ['admin', 'Manage Sessions']].map(([key, label]) => (
+          {[['sessions', 'My Sessions'], ['admin', 'Manage Sessions'], ['insights', 'Insights']].map(([key, label]) => (
             <button key={key}
               onClick={() => { setTab(key); setScoring(null) }}
               style={{
@@ -1201,6 +1471,7 @@ export default function Calibration() {
           : <CalibrationHome key={refreshKey} onScore={s => setScoring(s)} />
       )}
       {tab === 'admin' && canManage && <CalibrationAdmin />}
+      {tab === 'insights' && canManage && <CalibrationInsights />}
     </div>
   )
 }
