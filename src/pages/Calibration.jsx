@@ -48,11 +48,40 @@ function CalibrationHome({ onScore }) {
   async function load() {
     setLoading(true)
 
-    const { data: certsData } = await supabase
-      .from('calibration_certifications')
-      .select('*')
+    // Append-only history, one row per (evaluator, scorecard, session). Status per
+    // scorecard is derived below from the ordered history — never a single mutable
+    // row, so different scorecards of the same type (e.g. per-division Quality
+    // scorecards) never overwrite or mix into each other.
+    const { data: certHistory } = await supabase
+      .from('calibration_certification_history')
+      .select('scorecard_id, is_calibrated, delta, recorded_at')
       .eq('evaluator_id', uid)
-    setCerts(certsData || [])
+      .order('recorded_at', { ascending: false })
+
+    const scorecardIds = [...new Set((certHistory || []).map(h => h.scorecard_id))]
+    let scorecardMap = {}
+    if (scorecardIds.length > 0) {
+      const { data: scs } = await supabase.from('scorecards').select('id, name, type').in('id', scorecardIds)
+      scorecardMap = Object.fromEntries((scs || []).map(s => [s.id, s]))
+    }
+
+    const derivedCerts = scorecardIds.map(scId => {
+      const rows = (certHistory || []).filter(h => h.scorecard_id === scId) // already sorted newest first
+      const latest = rows[0]
+      let consecutiveFailures = 0
+      for (const r of rows) {
+        if (r.is_calibrated) break
+        consecutiveFailures++
+      }
+      const lastPass = rows.find(r => r.is_calibrated)
+      return {
+        scorecard: scorecardMap[scId],
+        isActive: !!latest?.is_calibrated,
+        consecutiveFailures,
+        lastCalibratedAt: lastPass?.recorded_at || null,
+      }
+    })
+    setCerts(derivedCerts)
 
     const { data: parts } = await supabase
       .from('calibration_participants')
@@ -129,37 +158,31 @@ function CalibrationHome({ onScore }) {
     setLoading(false)
   }
 
-  function CertCard({ type, label }) {
-    const cert = certs.find(c => c.scorecard_type === type)
+  function CertCard({ cert }) {
+    const label = cert.scorecard?.name || 'Unknown scorecard'
     return (
       <div style={{ flex: 1, ...cardStyle, textAlign: 'center' }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           {label}
         </div>
-        {!cert ? (
-          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No calibration data yet</div>
-        ) : (
-          <>
-            <div style={{
-              display: 'inline-block', padding: '4px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700,
-              backgroundColor: cert.is_active ? '#16a34a22' : '#dc262622',
-              color: cert.is_active ? '#16a34a' : '#dc2626',
-              border: `1px solid ${cert.is_active ? '#16a34a44' : '#dc262644'}`,
-              marginBottom: 8,
-            }}>
-              {cert.is_active ? '✓ Certified' : '✗ Not Certified'}
-            </div>
-            {cert.last_calibrated_at && (
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                Last calibrated: {new Date(cert.last_calibrated_at).toLocaleDateString()}
-              </div>
-            )}
-            {!cert.is_active && cert.consecutive_failures >= 3 && (
-              <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>
-                Recertification required · {cert.consecutive_failures} consecutive failures
-              </div>
-            )}
-          </>
+        <div style={{
+          display: 'inline-block', padding: '4px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700,
+          backgroundColor: cert.isActive ? '#16a34a22' : '#dc262622',
+          color: cert.isActive ? '#16a34a' : '#dc2626',
+          border: `1px solid ${cert.isActive ? '#16a34a44' : '#dc262644'}`,
+          marginBottom: 8,
+        }}>
+          {cert.isActive ? '✓ Certified' : '✗ Not Certified'}
+        </div>
+        {cert.lastCalibratedAt && (
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            Last calibrated: {new Date(cert.lastCalibratedAt).toLocaleDateString()}
+          </div>
+        )}
+        {!cert.isActive && cert.consecutiveFailures >= 3 && (
+          <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>
+            Recertification required · {cert.consecutiveFailures} consecutive failures
+          </div>
         )}
       </div>
     )
@@ -178,9 +201,12 @@ function CalibrationHome({ onScore }) {
         <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Certification Status
         </h2>
-        <div style={{ display: 'flex', gap: 16 }}>
-          <CertCard type="dsat"    label="DSAT" />
-          <CertCard type="quality" label="Quality" />
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+          {certs.length === 0 ? (
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No calibration data yet</div>
+          ) : (
+            certs.map(cert => <CertCard key={cert.scorecard?.id || Math.random()} cert={cert} />)
+          )}
         </div>
       </section>
 
@@ -377,30 +403,16 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
       .update({ delta, is_calibrated: isCalibrated, status: 'evaluated' })
       .eq('id', evalSubId)
 
-    const { data: cert } = await supabase.from('calibration_certifications')
-      .select('*').eq('evaluator_id', evalId).eq('scorecard_type', session.type).maybeSingle()
-
-    if (!cert) {
-      await supabase.from('calibration_certifications').insert({
-        evaluator_id: evalId,
-        scorecard_type: session.type,
-        is_active: isCalibrated,
-        consecutive_failures: isCalibrated ? 0 : 1,
-        last_calibrated_at: isCalibrated ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
-      })
-    } else {
-      const newFails = isCalibrated ? 0 : (cert.consecutive_failures || 0) + 1
-      const nowRevoked = newFails >= 3
-      await supabase.from('calibration_certifications').update({
-        is_active: isCalibrated && !nowRevoked,
-        consecutive_failures: newFails,
-        last_calibrated_at: isCalibrated ? new Date().toISOString() : cert.last_calibrated_at,
-        revoked_at: nowRevoked && !cert.revoked_at ? new Date().toISOString() : cert.revoked_at,
-        revocation_reason: nowRevoked && !cert.revoked_at ? '3 consecutive calibration failures' : cert.revocation_reason,
-        updated_at: new Date().toISOString(),
-      }).eq('id', cert.id)
-    }
+    // Append-only: every result is recorded and tagged to this specific scorecard_id,
+    // never overwritten. Current certification status is derived from this history
+    // in CalibrationHome, not stored/cached here — see calibration_certification_history.
+    await supabase.from('calibration_certification_history').insert({
+      evaluator_id: evalId,
+      scorecard_id: session.scorecard_id,
+      session_id: session.id,
+      is_calibrated: isCalibrated,
+      delta,
+    })
   }
 
   async function runDeltaForAll(gaugeSubId, gaugeScore) {
