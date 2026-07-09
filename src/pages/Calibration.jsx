@@ -692,6 +692,7 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
 // ── CalibrationAdmin (Step 8) ────────────────────────────────────────────────
 
 function CalibrationAdmin() {
+  const { profile } = useAuth()
   const [sessions, setSessions]     = useState([])
   const [scorecards, setScorecards] = useState([])
   const [users, setUsers]           = useState([])
@@ -703,15 +704,31 @@ function CalibrationAdmin() {
   const [allResults, setAllResults]  = useState([])
   const [loadingResults, setLR]     = useState(false)
 
-  useEffect(() => { loadResults() }, [])
+  useEffect(() => { if (profile) loadResults() }, [profile])
 
   async function loadResults() {
     setLR(true)
-    const { data: subs } = await supabase
+    // Admins/owners see every evaluator's results. Everyone else (any @kaizengaming.com
+    // user, now that Manage Sessions is open to all of them) only sees results for
+    // sessions where THEY are the Gauge — never other people's calibrations.
+    const isPrivileged = ['admin', 'owner'].includes(profile?.role)
+    let gaugeSessionIds = null
+    if (!isPrivileged) {
+      const { data: myGaugeSessions } = await supabase
+        .from('calibration_sessions')
+        .select('id')
+        .eq('gauge_user_id', profile?.id)
+      gaugeSessionIds = (myGaugeSessions || []).map(s => s.id)
+      if (gaugeSessionIds.length === 0) { setAllResults([]); setLR(false); return }
+    }
+
+    let resultsQuery = supabase
       .from('calibration_submissions')
       .select('evaluator_id, session_id, status, overall_score, is_calibrated, delta, submitted_at')
       .eq('status', 'evaluated')
       .eq('is_gauge', false)
+    if (gaugeSessionIds) resultsQuery = resultsQuery.in('session_id', gaugeSessionIds)
+    const { data: subs } = await resultsQuery
       .order('submitted_at', { ascending: false })
       .limit(200)
 
@@ -734,12 +751,17 @@ function CalibrationAdmin() {
     participants: [],
   })
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => { if (profile) loadAll() }, [profile])
 
   async function loadAll() {
     setLoading(true)
+    // Same rule as loadResults: admins/owners see every session; everyone else only
+    // sees sessions where they are the Gauge.
+    const isPrivileged = ['admin', 'owner'].includes(profile?.role)
+    let sessionsQuery = supabase.from('calibration_sessions').select('*').order('created_at', { ascending: false })
+    if (!isPrivileged) sessionsQuery = sessionsQuery.eq('gauge_user_id', profile?.id)
     const [{ data: sess }, { data: scs }, { data: us }] = await Promise.all([
-      supabase.from('calibration_sessions').select('*').order('created_at', { ascending: false }),
+      sessionsQuery,
       supabase.from('scorecards').select('id, name, type').eq('is_calibration', true).eq('is_published', true).order('name'),
       supabase.from('users').select('id, name, email').ilike('email', '%@kaizengaming.com').order('email'),
     ])
