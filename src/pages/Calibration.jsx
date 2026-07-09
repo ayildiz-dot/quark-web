@@ -1284,6 +1284,11 @@ function CalibrationInsights() {
   const [filterBpo, setFilterBpo] = useState('')
   const [filterHub, setFilterHub] = useState('')
   const [filterMarket, setFilterMarket] = useState('')
+  const [filterScorecard, setFilterScorecard] = useState('')
+  const [filterGauge, setFilterGauge] = useState('')
+  const [filterEvaluator, setFilterEvaluator] = useState('')
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo, setFilterDateTo] = useState('')
 
   useEffect(() => { if (profile) load() }, [profile])
 
@@ -1367,11 +1372,19 @@ function CalibrationInsights() {
   const bpoOptions = [...new Set(rows.map(r => r.bpo).filter(Boolean))].sort()
   const hubOptions = [...new Set(rows.map(r => r.hub).filter(Boolean))].sort()
   const marketOptions = [...new Set(rows.map(r => r.market).filter(Boolean))].sort()
+  const scorecardOptions = [...new Set(rows.map(r => r.scorecardName).filter(Boolean))].sort()
+  const gaugeOptions = [...new Set(rows.map(r => r.gaugeName).filter(Boolean))].sort()
+  const evaluatorOptions = [...new Set(rows.map(r => r.evaluatorName).filter(Boolean))].sort()
 
   const filteredRows = rows.filter(r =>
     (!filterBpo || r.bpo === filterBpo) &&
     (!filterHub || r.hub === filterHub) &&
-    (!filterMarket || r.market === filterMarket)
+    (!filterMarket || r.market === filterMarket) &&
+    (!filterScorecard || r.scorecardName === filterScorecard) &&
+    (!filterGauge || r.gaugeName === filterGauge) &&
+    (!filterEvaluator || r.evaluatorName === filterEvaluator) &&
+    (!filterDateFrom || (r.sessionDate && r.sessionDate >= filterDateFrom)) &&
+    (!filterDateTo || (r.sessionDate && r.sessionDate <= filterDateTo))
   )
 
   // Per-session aggregation, computed from the filtered rows.
@@ -1431,9 +1444,27 @@ function CalibrationInsights() {
 
   return (
     <div>
-      {(bpoOptions.length > 0 || hubOptions.length > 0 || marketOptions.length > 0) && (
+      {(bpoOptions.length > 0 || hubOptions.length > 0 || marketOptions.length > 0 || scorecardOptions.length > 0 || gaugeOptions.length > 0 || evaluatorOptions.length > 0) && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
+          {scorecardOptions.length > 0 && (
+            <select style={filterSelectStyle} value={filterScorecard} onChange={e => setFilterScorecard(e.target.value)}>
+              <option value="">All Scorecards</option>
+              {scorecardOptions.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          )}
+          {gaugeOptions.length > 0 && (
+            <select style={filterSelectStyle} value={filterGauge} onChange={e => setFilterGauge(e.target.value)}>
+              <option value="">All Gauges</option>
+              {gaugeOptions.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          )}
+          {evaluatorOptions.length > 0 && (
+            <select style={filterSelectStyle} value={filterEvaluator} onChange={e => setFilterEvaluator(e.target.value)}>
+              <option value="">All Evaluators</option>
+              {evaluatorOptions.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          )}
           {bpoOptions.length > 0 && (
             <select style={filterSelectStyle} value={filterBpo} onChange={e => setFilterBpo(e.target.value)}>
               <option value="">All BPOs</option>
@@ -1452,8 +1483,16 @@ function CalibrationInsights() {
               {marketOptions.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
           )}
-          {(filterBpo || filterHub || filterMarket) && (
-            <button className="btn btn-ghost btn-sm" onClick={() => { setFilterBpo(''); setFilterHub(''); setFilterMarket('') }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>from</span>
+          <input type="date" style={filterSelectStyle} value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} />
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>to</span>
+          <input type="date" style={filterSelectStyle} value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} />
+          {(filterBpo || filterHub || filterMarket || filterScorecard || filterGauge || filterEvaluator || filterDateFrom || filterDateTo) && (
+            <button className="btn btn-ghost btn-sm" onClick={() => {
+              setFilterBpo(''); setFilterHub(''); setFilterMarket('')
+              setFilterScorecard(''); setFilterGauge(''); setFilterEvaluator('')
+              setFilterDateFrom(''); setFilterDateTo('')
+            }}>
               Clear filters
             </button>
           )}
