@@ -4,13 +4,6 @@ import { supabase } from '../lib/supabase'
 
 // ── Shared ───────────────────────────────────────────────────────────────────
 
-const cardStyle = {
-  background: 'var(--bg-card, #fff)',
-  border: '1px solid var(--border)',
-  borderRadius: 12,
-  padding: '16px 20px',
-}
-
 function TypeBadge({ type }) {
   const isDsat = type === 'dsat'
   return (
@@ -51,14 +44,27 @@ function CalibrationHome({ onScore }) {
     // Append-only history, one row per (evaluator, scorecard, session). Status per
     // scorecard is derived below from the ordered history — never a single mutable
     // row, so different scorecards of the same type (e.g. per-division Quality
-    // scorecards) never overwrite or mix into each other.
+    // scorecards) never overwrite or mix into each other. Only RELEASED sessions count
+    // toward the displayed status — otherwise a freshly-scored result would show up here
+    // before the evaluator is meant to see it, ahead of "Release Results" in Manage Sessions.
     const { data: certHistory } = await supabase
       .from('calibration_certification_history')
-      .select('scorecard_id, is_calibrated, delta, recorded_at')
+      .select('scorecard_id, session_id, is_calibrated, delta, recorded_at')
       .eq('evaluator_id', uid)
       .order('recorded_at', { ascending: false })
 
-    const scorecardIds = [...new Set((certHistory || []).map(h => h.scorecard_id))]
+    const historySessionIds = [...new Set((certHistory || []).map(h => h.session_id))]
+    let releasedSessionIds = new Set()
+    if (historySessionIds.length > 0) {
+      const { data: histSessions } = await supabase
+        .from('calibration_sessions')
+        .select('id, results_released')
+        .in('id', historySessionIds)
+      releasedSessionIds = new Set((histSessions || []).filter(s => s.results_released).map(s => s.id))
+    }
+    const releasedHistory = (certHistory || []).filter(h => releasedSessionIds.has(h.session_id))
+
+    const scorecardIds = [...new Set(releasedHistory.map(h => h.scorecard_id))]
     let scorecardMap = {}
     if (scorecardIds.length > 0) {
       const { data: scs } = await supabase.from('scorecards').select('id, name, type').in('id', scorecardIds)
@@ -66,7 +72,7 @@ function CalibrationHome({ onScore }) {
     }
 
     const derivedCerts = scorecardIds.map(scId => {
-      const rows = (certHistory || []).filter(h => h.scorecard_id === scId) // already sorted newest first
+      const rows = releasedHistory.filter(h => h.scorecard_id === scId) // already sorted newest first
       const latest = rows[0]
       let consecutiveFailures = 0
       for (const r of rows) {
@@ -161,16 +167,17 @@ function CalibrationHome({ onScore }) {
   function CertCard({ cert }) {
     const label = cert.scorecard?.name || 'Unknown scorecard'
     return (
-      <div style={{ flex: 1, ...cardStyle, textAlign: 'center' }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+      <div className="card" style={{ flex: 1, minWidth: 220, textAlign: 'center' }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           {label}
         </div>
         <div style={{
-          display: 'inline-block', padding: '4px 16px', borderRadius: 20, fontSize: 13, fontWeight: 700,
-          backgroundColor: cert.isActive ? '#16a34a22' : '#dc262622',
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '6px 18px', borderRadius: 20, fontSize: 13, fontWeight: 700,
+          backgroundColor: cert.isActive ? 'rgba(22,163,74,0.14)' : 'rgba(220,38,38,0.14)',
           color: cert.isActive ? '#16a34a' : '#dc2626',
-          border: `1px solid ${cert.isActive ? '#16a34a44' : '#dc262644'}`,
-          marginBottom: 8,
+          border: `1px solid ${cert.isActive ? 'rgba(22,163,74,0.35)' : 'rgba(220,38,38,0.35)'}`,
+          marginBottom: 10,
         }}>
           {cert.isActive ? '✓ Certified' : '✗ Not Certified'}
         </div>
@@ -180,7 +187,10 @@ function CalibrationHome({ onScore }) {
           </div>
         )}
         {!cert.isActive && cert.consecutiveFailures >= 3 && (
-          <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>
+          <div style={{
+            fontSize: 11, color: '#dc2626', marginTop: 10, padding: '6px 10px',
+            background: 'rgba(220,38,38,0.1)', borderRadius: 6, fontWeight: 500,
+          }}>
             Recertification required · {cert.consecutiveFailures} consecutive failures
           </div>
         )}
@@ -203,7 +213,9 @@ function CalibrationHome({ onScore }) {
         </h2>
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
           {certs.length === 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No calibration data yet</div>
+            <div className="card" style={{ textAlign: 'center', padding: 36, color: 'var(--text-secondary)', fontSize: 14, width: '100%' }}>
+              No calibration data yet
+            </div>
           ) : (
             certs.map(cert => <CertCard key={cert.scorecard?.id || Math.random()} cert={cert} />)
           )}
