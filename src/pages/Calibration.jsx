@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../App'
 import { supabase } from '../lib/supabase'
 
@@ -300,6 +300,8 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
   const [submitting, setSubmitting]   = useState(false)
   const [existingSub, setExistingSub] = useState(null)
   const [error, setError]             = useState('')
+  const [showLgtmConfirm, setShowLgtmConfirm] = useState(false)
+  const commentRef = useRef(null)
 
   useEffect(() => { if (uid && session?.id) load() }, [uid, session?.id])
 
@@ -422,6 +424,21 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
     }
   }
 
+  // "Looks Good to Me" — bulk-marks every attribute as Pass, then jumps
+  // straight to the Overall Comment field. Hidden for DSAT-type sessions.
+  function applyLgtm() {
+    setAnswers(prev => {
+      const next = { ...prev }
+      for (const q of questions) next[q.id] = 'pass'
+      return next
+    })
+    setShowLgtmConfirm(false)
+    setTimeout(() => {
+      commentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      commentRef.current?.focus()
+    }, 50)
+  }
+
   // ── Submit handler ─────────────────────────────────────────────────────────
 
   async function handleSubmit() {
@@ -528,6 +545,23 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
                 </span>
               )}
             </div>
+            {session.type !== 'dsat' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowLgtmConfirm(true)}
+                  style={{ fontWeight: 600 }}>
+                  LGTM
+                </button>
+                <span
+                  title='Clicking this button will mark all the attributes as "Pass" and will take you directly to the comments section.'
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 16, height: 16, borderRadius: '50%', fontSize: 11, fontWeight: 700,
+                    border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'help'
+                  }}>
+                  ?
+                </span>
+              </div>
+            )}
           </div>
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 2 }}>
@@ -586,6 +620,7 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Overall Comment</div>
         <textarea
+          ref={commentRef}
           placeholder="Optional overall comment on this calibration…"
           value={overallComment}
           onChange={e => setComment(e.target.value)}
@@ -607,6 +642,23 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
           {submitting ? 'Submitting…' : isGauge ? 'Submit as Gauge' : 'Submit Scoring'}
         </button>
       </div>
+
+      {showLgtmConfirm && (
+        <div className="modal-backdrop" onClick={() => setShowLgtmConfirm(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
+            <div className="modal-body" style={{ padding: '32px 28px' }}>
+              <h2 style={{ marginBottom: 12, fontSize: 17 }}>Mark all as Pass?</h2>
+              <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>
+                This will mark every attribute on this scorecard as "Pass" and take you to the comments section. Any existing answers will be overwritten.
+              </p>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                <button className="btn btn-ghost" onClick={() => setShowLgtmConfirm(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={applyLgtm}>Yes, mark all Pass</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

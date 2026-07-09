@@ -18,6 +18,7 @@ export default function EvaluationForm() {
   const [msg, setMsg] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [overallComment, setOverallComment] = useState('')
+  const [showLgtmConfirm, setShowLgtmConfirm] = useState(false)
   const [dsatSections,         setDsatSections]         = useState([])
   const [dsatQuestions,        setDsatQuestions]        = useState([])
   const [dsatOptions,          setDsatOptions]          = useState([])
@@ -48,6 +49,7 @@ export default function EvaluationForm() {
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
   const draftIdRef = useRef(null)
+  const overallCommentRef = useRef(null)
   const leavingRef = useRef(false)
   const debounceRef = useRef(null)
 
@@ -366,6 +368,25 @@ export default function EvaluationForm() {
     draftIdRef.current = null
     setLastSaved(null)
     setStep('metadata')
+  }
+
+  // "Looks Good to Me" — bulk-marks every quality question as Pass, then jumps
+  // straight to the Overall Comment field. Quality + Calibration scorecards only
+  // (never DSAT, which has no per-question Pass/Fail scoring in this form).
+  const applyLgtm = () => {
+    setAnswers(prev => {
+      const next = {}
+      for (const q of questions) {
+        next[q.id] = { ...prev[q.id], score: 'pass' }
+      }
+      return next
+    })
+    setShowLgtmConfirm(false)
+    triggerAutoSave()
+    setTimeout(() => {
+      overallCommentRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      overallCommentRef.current?.focus()
+    }, 50)
   }
 
   const flash = (text, ok = true) => {
@@ -915,6 +936,23 @@ export default function EvaluationForm() {
               onClick={() => setStep('metadata')}>← Back</button>
             <h1>{selectedScorecard.name}</h1>
             <p className="page-sub">Step 2 of 2 — {isDsat ? 'Complete the DSAT form' : 'Score each question'}</p>
+            {!isDsat && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowLgtmConfirm(true)}
+                  style={{ fontWeight: 600 }}>
+                  LGTM
+                </button>
+                <span
+                  title='Clicking this button will mark all the attributes as "Pass" and will take you directly to the comments section.'
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    width: 16, height: 16, borderRadius: '50%', fontSize: 11, fontWeight: 700,
+                    border: '1px solid var(--border)', color: 'var(--text-secondary)', cursor: 'help'
+                  }}>
+                  ?
+                </span>
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             {!editingEvalId && <DraftSaveButton />}
@@ -933,6 +971,22 @@ export default function EvaluationForm() {
           }} />
         </div>
         {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
+        {showLgtmConfirm && (
+          <div className="modal-backdrop" onClick={() => setShowLgtmConfirm(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
+              <div className="modal-body" style={{ padding: '32px 28px' }}>
+                <h2 style={{ marginBottom: 12, fontSize: 17 }}>Mark all as Pass?</h2>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>
+                  This will mark every attribute on this scorecard as "Pass" and take you to the comments section. Any existing answers will be overwritten.
+                </p>
+                <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+                  <button className="btn btn-ghost" onClick={() => setShowLgtmConfirm(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={applyLgtm}>Yes, mark all Pass</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {isDsat ? (
           (() => {
@@ -1113,6 +1167,7 @@ export default function EvaluationForm() {
                   Overall Comment <span style={{ color: 'var(--danger)' }}>*</span>
                 </label>
                 <textarea className="input" rows={4}
+                  ref={overallCommentRef}
                   placeholder="Add an overall comment for this evaluation…"
                   value={overallComment}
                   onChange={e => setOverallComment(e.target.value)}
