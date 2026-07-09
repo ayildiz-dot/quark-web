@@ -106,6 +106,13 @@ export default function Navbar() {
           <i className="ti ti-clipboard-check" aria-hidden="true" />
           Evaluations
         </button>
+        {profile?.email?.endsWith('@kaizengaming.com') && (
+          <button className={`nav-item ${isActive('/calibration') ? 'active' : ''}`}
+            onClick={() => safeNavigate('/calibration')}>
+            <i className="ti ti-target" aria-hidden="true" />
+            Calibration
+          </button>
+        )}
         {['admin', 'owner'].includes(profile?.role) && (
           <button className={`nav-item ${isActive('/admin') ? 'active' : ''}`}
             onClick={() => safeNavigate('/admin')}>

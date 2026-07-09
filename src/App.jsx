@@ -14,6 +14,7 @@ import ScorecardHistory from './pages/ScorecardHistory'
 import ResetPassword from './pages/ResetPassword'
 import { usePresence } from './hooks/usePresence'
 import DuckLoader from './components/DuckLoader'
+import Calibration from './pages/Calibration'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -48,6 +49,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
   usePresence(user)
 
   const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
+  const isKgUser = profile?.email?.endsWith('@kaizengaming.com')
 
   const handleLeave = () => {
     setUnsavedChanges(false)
@@ -98,6 +100,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
             <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
             <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
             <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
+                <Route path="/calibration" element={isKgUser ? <Calibration /> : <Navigate to="/dashboard" replace />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>
