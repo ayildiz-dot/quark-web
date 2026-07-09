@@ -120,7 +120,7 @@ function CalibrationHome({ onScore }) {
       const rsIds = results.map(r => r.session_id)
       const { data: rsSessions } = await supabase
         .from('calibration_sessions')
-        .select('id, title, type, session_date')
+        .select('id, title, type, session_date, results_released')
         .in('id', rsIds)
       const rsMap = Object.fromEntries((rsSessions || []).map(s => [s.id, s]))
       setPast(results.map(r => ({ ...r, session: rsMap[r.session_id] })))
