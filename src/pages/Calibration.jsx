@@ -567,7 +567,8 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  {['pass', 'fail', 'na'].map(opt => (
+                  {q.is_weighted && <span style={{ color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, marginRight: 8, whiteSpace: 'nowrap' }}>{q.weight} pts</span>}
+            {['pass', 'fail', 'na'].map(opt => (
                     <button key={opt}
                       onClick={() => setAnswers(prev => ({ ...prev, [q.id]: opt }))}
                       style={{
