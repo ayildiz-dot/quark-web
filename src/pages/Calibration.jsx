@@ -1275,6 +1275,52 @@ function CalibrationAdmin() {
   )
 }
 
+// ── WeeklyDeltaChart (dependency-free inline SVG line chart) ─────────────────
+
+function WeeklyDeltaChart({ data }) {
+  const width = 680
+  const height = 200
+  const marginLeft = 44
+  const marginRight = 16
+  const marginTop = 16
+  const marginBottom = 28
+  const innerWidth = width - marginLeft - marginRight
+  const innerHeight = height - marginTop - marginBottom
+
+  const maxDelta = Math.max(0.15, ...data.map(d => d.avgDelta)) * 1.15
+  const xFor = i => data.length === 1 ? marginLeft + innerWidth / 2 : marginLeft + (i / (data.length - 1)) * innerWidth
+  const yFor = delta => marginTop + innerHeight - (delta / maxDelta) * innerHeight
+
+  const points = data.map((d, i) => `${xFor(i)},${yFor(d.avgDelta)}`).join(' ')
+  const thresholdY = yFor(0.10)
+  const labelStep = Math.max(1, Math.ceil(data.length / 8))
+  const gridValues = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30].filter(v => v <= maxDelta)
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+      {gridValues.map(v => (
+        <g key={v}>
+          <line x1={marginLeft} x2={width - marginRight} y1={yFor(v)} y2={yFor(v)} stroke="var(--border)" strokeWidth="1" />
+          <text x={marginLeft - 8} y={yFor(v) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{Math.round(v * 100)}%</text>
+        </g>
+      ))}
+      <line x1={marginLeft} x2={width - marginRight} y1={thresholdY} y2={thresholdY} stroke="#dc2626" strokeWidth="1" strokeDasharray="4 3" />
+      <text x={width - marginRight} y={thresholdY - 4} textAnchor="end" fontSize="10" fill="#dc2626">10% threshold</text>
+      <polyline points={points} fill="none" stroke="#2563eb" strokeWidth="2" />
+      {data.map((d, i) => (
+        <circle key={d.week} cx={xFor(i)} cy={yFor(d.avgDelta)} r="4" fill={d.avgDelta <= 0.10 ? '#16a34a' : '#dc2626'}>
+          <title>{`Week of ${new Date(d.week).toLocaleDateString()}: ${(d.avgDelta * 100).toFixed(1)}%`}</title>
+        </circle>
+      ))}
+      {data.map((d, i) => (i % labelStep === 0) && (
+        <text key={d.week} x={xFor(i)} y={height - 8} textAnchor="middle" fontSize="10" fill="var(--text-secondary)">
+          {new Date(d.week).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+        </text>
+      ))}
+    </svg>
+  )
+}
+
 // ── CalibrationInsights (BI overview) ────────────────────────────────────────
 
 function CalibrationInsights() {
@@ -1453,8 +1499,78 @@ function CalibrationInsights() {
     ? filteredRows.reduce((sum, r) => sum + (r.delta || 0), 0) / totalEvaluations
     : 0
 
+  // Week-over-week delta trend, computed from the same filtered rows as everything
+  // else on this tab — lets you see if calibration accuracy is improving over time.
+  function weekStart(dateStr) {
+    const d = new Date(dateStr)
+    const day = d.getDay()
+    const diff = (day === 0 ? -6 : 1) - day
+    d.setDate(d.getDate() + diff)
+    d.setHours(0, 0, 0, 0)
+    return d.toISOString().split('T')[0]
+  }
+  const byWeek = {}
+  for (const r of filteredRows) {
+    if (!r.sessionDate) continue
+    ;(byWeek[weekStart(r.sessionDate)] ||= []).push(r)
+  }
+  const weeklyTrend = Object.entries(byWeek)
+    .map(([week, wRows]) => ({
+      week,
+      avgDelta: wRows.reduce((sum, r) => sum + (r.delta || 0), 0) / wRows.length,
+    }))
+    .sort((a, b) => new Date(a.week) - new Date(b.week))
+
+  // Exports exactly what's currently visible on this tab (respecting every active
+  // filter, and — for non-admins — the gauge-only visibility rule from load() above),
+  // so a Gauge can hand over their own slice of the data without needing DB access.
+  function exportToCsv() {
+    const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const lines = []
+    lines.push('Calibration Insights Export')
+    lines.push(`Generated,${esc(new Date().toLocaleString())}`)
+    lines.push('')
+    lines.push('Summary')
+    lines.push('Sessions,Evaluations Scored,Calibration Rate,Avg Delta')
+    lines.push([totalSessions, totalEvaluations, overallRate + '%', (overallAvgDelta * 100).toFixed(1) + '%'].join(','))
+    lines.push('')
+    lines.push('Sessions Overview')
+    lines.push(['Session', 'Scorecard', 'Date', 'BPO', 'HUB', 'Market', 'Gauge', 'Overall Delta', 'Calibrated', 'Total', 'Calibration Rate'].map(esc).join(','))
+    sessionStats.forEach(s => {
+      lines.push([
+        esc(s.title), esc(s.scorecardName), esc(s.date ? new Date(s.date).toLocaleDateString() : ''),
+        esc(s.bpo || ''), esc(s.hub || ''), esc(s.market || ''), esc(s.gaugeName),
+        (s.avgDelta * 100).toFixed(1) + '%', s.calibratedCount, s.total,
+        Math.round((s.calibratedCount / s.total) * 100) + '%',
+      ].join(','))
+    })
+    lines.push('')
+    lines.push('Evaluator Performance')
+    lines.push(['Evaluator', 'Sessions', 'Calibrated', 'Calibration Rate', 'Avg Delta', 'Status'].map(esc).join(','))
+    evaluatorStats.forEach(e => {
+      lines.push([
+        esc(e.name), e.sessions, e.calibratedCount,
+        Math.round((e.calibratedCount / e.sessions) * 100) + '%',
+        (e.avgDelta * 100).toFixed(1) + '%',
+        esc(e.consecutiveFailures >= 3 ? 'Needs attention' : 'On track'),
+      ].join(','))
+    })
+    const csv = lines.join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `calibration-insights-${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button className="btn btn-secondary btn-sm" onClick={exportToCsv}>⬇ Export to Excel</button>
+      </div>
+
       {(bpoOptions.length > 0 || hubOptions.length > 0 || marketOptions.length > 0 || scorecardOptions.length > 0 || gaugeOptions.length > 0 || evaluatorOptions.length > 0) && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
@@ -1534,6 +1650,21 @@ function CalibrationInsights() {
               <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>Avg Delta</div>
             </div>
           </div>
+
+          {weeklyTrend.length >= 2 ? (
+            <section style={{ marginBottom: 28 }}>
+              <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Delta Trend (Week over Week)
+              </h2>
+              <div className="card" style={{ padding: 16 }}>
+                <WeeklyDeltaChart data={weeklyTrend} />
+              </div>
+            </section>
+          ) : weeklyTrend.length === 1 ? (
+            <div className="card" style={{ textAlign: 'center', padding: 20, color: 'var(--text-secondary)', fontSize: 13, marginBottom: 28 }}>
+              Not enough weeks of data yet for a trend line — check back once results span more than one week.
+            </div>
+          ) : null}
 
           <section style={{ marginBottom: 28 }}>
             <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
