@@ -255,6 +255,7 @@ export default function EvaluationForm() {
       .from('scorecards')
       .select('*')
       .eq('is_published', true)
+      .eq('is_calibration', false)
       .order('name')
     setScorecards(data || [])
   }

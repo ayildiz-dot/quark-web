@@ -219,6 +219,7 @@ function ScorecardPicker() {
         .from('scorecards')
         .select('id, name, description, is_published, type, division')
         .eq('is_published', true)
+        .eq('is_calibration', false)
         .eq('division', divisionName)
         .order('type')
         .order('name')

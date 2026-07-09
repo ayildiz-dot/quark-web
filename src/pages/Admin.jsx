@@ -1522,7 +1522,7 @@ function GovernanceTab({ profile, flash }) {
     const [{ data: ws }, { data: divs }, { data: sc }, { data: sampCfgs }] = await Promise.all([
       supabase.from('workspaces').select('*, hubs(*, queues(*))').order('position'),
       supabase.from('divisions').select('id, name, is_active, position').order('position'),
-      supabase.from('scorecards').select('id, name, type, is_published').eq('is_published', true).order('name'),
+      supabase.from('scorecards').select('id, name, type, is_published').eq('is_published', true).eq('is_calibration', false).order('name'),
       supabase.from('sampling_configurations').select('queue_id, cycle_frequency'),
     ])
     const activeWs = (ws || [])
@@ -1871,7 +1871,13 @@ function ScorecardsTab({ profile, flash }) {
           {rows.map(sc => (
             <tr key={sc.id}>
               <td style={{ fontWeight: 500 }}>{sc.name}</td>
-              <td><TypeBadge type={sc.type} /></td>
+              <td style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <TypeBadge type={sc.type} />
+                {sc.is_calibration && (
+                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 6, fontWeight: 600,
+                    backgroundColor: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>Calibration</span>
+                )}
+              </td>
               <td style={{ color: sc.division ? 'var(--text-primary)' : 'var(--danger)', fontSize: 13 }}>
                 {sc.division || 'None'}
               </td>

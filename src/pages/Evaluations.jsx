@@ -95,6 +95,7 @@ export default function Evaluations() {
       .from('scorecards')
       .select('id, name, type')
       .eq('is_published', true)
+      .eq('is_calibration', false)
       .order('name')
     setScorecards(data || [])
   }
