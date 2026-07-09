@@ -65,7 +65,7 @@ function CalibrationHome({ onScore }) {
     if (sessionIds.length > 0) {
       const { data: sessions } = await supabase
         .from('calibration_sessions')
-        .select('id, title, type, session_date, status, gauge_user_id, scorecard_id')
+        .select('id, title, type, session_date, status, gauge_user_id, scorecard_id, scoring_deadline, results_released')
         .in('id', sessionIds)
         .in('status', ['open', 'scoring'])
         .order('session_date', { ascending: false })
@@ -272,9 +272,9 @@ function CalibrationHome({ onScore }) {
                       {r.session?.session_date ? new Date(r.session.session_date).toLocaleDateString() : '—'}
                     </td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
-                      {r.delta != null ? `${(r.delta * 100).toFixed(1)}%` : '—'}
+                      {r.delta != null ? `${(r.results_released ?? r.session?.results_released) ? `${(r.delta * 100).toFixed(1)}%` : '—'}` : '—'}
                     </td>
-                    <td style={tdStyle}><ResultBadge calibrated={r.is_calibrated} /></td>
+                    <td style={tdStyle}>{(r.results_released ?? r.session?.results_released) ? <ResultBadge calibrated={r.is_calibrated} /> : <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>Pending release</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -654,7 +654,7 @@ function CalibrationAdmin() {
     setLR(false)
   }
   const [form, setForm] = useState({
-    title: '', type: 'quality', scorecard_id: '', gauge_user_id: '',
+    title: '', type: 'quality', scoring_deadline: '', scorecard_id: '', gauge_user_id: '',
     case_reference: '', session_date: new Date().toISOString().split('T')[0],
     participants: [],
   })
@@ -714,6 +714,7 @@ function CalibrationAdmin() {
       gauge_user_id: form.gauge_user_id,
       case_reference: form.case_reference || null,
       session_date: form.session_date || null,
+      scoring_deadline: form.scoring_deadline || null,
       status: 'open',
       created_by: user?.id,
     }).select('id').single()
@@ -842,7 +843,14 @@ function CalibrationAdmin() {
                   Mark Completed
                 </button>
               )}
-              <button className="btn btn-ghost btn-sm" onClick={() => { setSelected(null); setDetail(null) }}>✕</button>
+              <button className="btn btn-secondary btn-sm" style={{ marginRight: 8 }}
+              onClick={async () => {
+                await supabase.from('calibration_sessions').update({ results_released: true }).eq('id', selected.id)
+                setSelected(s => ({ ...s, results_released: true }))
+              }}>
+              {selected.results_released ? '✓ Released' : 'Release Results'}
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setSelected(null); setDetail(null) }}>✕</button>
             </div>
           </div>
 
@@ -973,6 +981,11 @@ function CalibrationAdmin() {
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Session Date</label>
                   <input type="date" style={inputStyle} value={form.session_date} onChange={e => setForm(f => ({ ...f, session_date: e.target.value }))} />
+            </div>
+            <div style={{ marginTop: 8 }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Scoring Deadline</label>
+            <input type="date" style={inputStyle} value={form.scoring_deadline}
+              onChange={e => setForm(f => ({ ...f, scoring_deadline: e.target.value }))} />
                 </div>
               </div>
               <div>
