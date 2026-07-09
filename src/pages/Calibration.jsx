@@ -559,11 +559,7 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
                         Critical
                       </span>
                     )}
-                    {q.is_weighted && q.weight && (
-                      <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, fontWeight: 600, backgroundColor: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
-                        w{q.weight}
-                      </span>
-                    )}
+                    
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
