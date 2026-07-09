@@ -173,6 +173,7 @@ export default function ScorecardBuilder() {
         description: scorecard.description,
         pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
         division: division,
+        is_calibration: scorecard.is_calibration || false,
         updated_at: new Date().toISOString()
       }).eq('id', id)
 
@@ -697,6 +698,18 @@ export default function ScorecardBuilder() {
             </span>
           </div>
 
+          <div className="form-field" style={{ marginBottom: 16 }}>
+            <label>Calibration Scorecard</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginTop: 6 }}>
+              <input type="checkbox" checked={!!scorecard.is_calibration}
+                onChange={e => { setScorecard(s => ({ ...s, is_calibration: e.target.checked })); markChanged() }} />
+              <span style={{ fontSize: 13 }}>This scorecard is for calibration sessions only</span>
+            </label>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'block' }}>
+              When enabled, this scorecard will only appear in the Calibration section and not in regular evaluations.
+            </span>
+          </div>
+
           {!isPublished && (
             <button className="btn btn-primary" onClick={async () => {
               if (!division) return flash('Please select a division before saving. Every scorecard must belong to a division.', false)
@@ -704,6 +717,7 @@ export default function ScorecardBuilder() {
                 .update({ name: scorecard.name, description: scorecard.description,
                   pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
                   division: division,
+                  is_calibration: scorecard.is_calibration || false,
                   updated_at: new Date().toISOString() })
                 .eq('id', id)
               if (error) return flash(error.message, false)
