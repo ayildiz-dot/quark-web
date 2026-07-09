@@ -414,6 +414,19 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
       await runDeltaForOne(es.id, es.overall_score, es.evaluator_id, gaugeSubId, gaugeScore)
     }
 
+    await checkSessionCompletion()
+  }
+
+  // Marks the session 'completed' once the Gauge has submitted AND every participant's
+  // submission has reached 'evaluated'. Called from both the Gauge's own submit path
+  // (runDeltaForAll, above) and the regular-evaluator submit path below — previously this
+  // only ran inside runDeltaForAll, so a session where the Gauge submitted before all
+  // participants finished would silently stay stuck on "Scoring" forever.
+  async function checkSessionCompletion() {
+    const { data: gaugeSub } = await supabase.from('calibration_submissions')
+      .select('id').eq('session_id', session.id).eq('is_gauge', true).eq('status', 'submitted').maybeSingle()
+    if (!gaugeSub) return
+
     const { data: allParts } = await supabase.from('calibration_participants')
       .select('evaluator_id').eq('session_id', session.id)
     const { data: evalDone } = await supabase.from('calibration_submissions')
@@ -504,6 +517,7 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
           .maybeSingle()
         if (gaugeSub) {
           await runDeltaForOne(subId, score, uid, gaugeSub.id, gaugeSub.overall_score)
+          await checkSessionCompletion()
         }
       }
 
@@ -715,7 +729,7 @@ function CalibrationAdmin() {
     const [{ data: sess }, { data: scs }, { data: us }] = await Promise.all([
       supabase.from('calibration_sessions').select('*').order('created_at', { ascending: false }),
       supabase.from('scorecards').select('id, name, type').eq('is_calibration', true).eq('is_published', true).order('name'),
-      supabase.from('users').select('id, name, email').order('email'),
+      supabase.from('users').select('id, name, email').ilike('email', '%@kaizengaming.com').order('email'),
     ])
     setSessions(sess || [])
     setScorecards(scs || [])
