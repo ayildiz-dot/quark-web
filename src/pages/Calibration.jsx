@@ -1336,6 +1336,7 @@ function CalibrationInsights() {
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
   const [metaOptions, setMetaOptions] = useState({ bpo: [], hub: [], market: [] })
+  const [questionLabels, setQuestionLabels] = useState([])
 
   useEffect(() => { if (profile) load() }, [profile])
 
@@ -1364,7 +1365,7 @@ function CalibrationInsights() {
 
     let subsQuery = supabase
       .from('calibration_submissions')
-      .select('evaluator_id, session_id, is_calibrated, delta, status')
+      .select('id, evaluator_id, session_id, is_calibrated, delta, status, submitted_at')
       .eq('status', 'evaluated')
       .eq('is_gauge', false)
     if (sessionIdsFilter) subsQuery = subsQuery.in('session_id', sessionIdsFilter)
@@ -1387,6 +1388,25 @@ function CalibrationInsights() {
     const sessionMap = Object.fromEntries((sessionsData || []).map(s => [s.id, s]))
     const userMap = Object.fromEntries((usersData || []).map(u => [u.id, u]))
 
+    // Pull every individual answer for these submissions, so the export can show one
+    // column per attribute (question) alongside each evaluator's selection.
+    const submissionIds = subs.map(s => s.id)
+    const { data: answerRows } = await supabase
+      .from('calibration_answers')
+      .select('submission_id, question_label, answer_value')
+      .in('submission_id', submissionIds)
+
+    const answersBySubmission = {}
+    const labelOrder = []
+    const seenLabels = new Set()
+    for (const a of (answerRows || [])) {
+      (answersBySubmission[a.submission_id] ||= {})[a.question_label] = a.answer_value
+      if (!seenLabels.has(a.question_label)) {
+        seenLabels.add(a.question_label)
+        labelOrder.push(a.question_label)
+      }
+    }
+
     // Flatten into one row per evaluated submission, carrying each session's BPO/HUB/
     // Market along with it so the tables below can be filtered by any of the three.
     const joined = subs.map(sub => {
@@ -1401,9 +1421,11 @@ function CalibrationInsights() {
         bpo: s?.bpo || null,
         hub: s?.hub || null,
         market: s?.market || null,
+        answers: answersBySubmission[sub.id] || {},
       }
     })
 
+    setQuestionLabels(labelOrder)
     setRows(joined)
     setLoading(false)
   }
@@ -1521,46 +1543,36 @@ function CalibrationInsights() {
     }))
     .sort((a, b) => new Date(a.week) - new Date(b.week))
 
-  // Exports exactly what's currently visible on this tab (respecting every active
-  // filter, and — for non-admins — the gauge-only visibility rule from load() above),
-  // so a Gauge can hand over their own slice of the data without needing DB access.
+  // Exports one row per evaluated submission (not an aggregate), respecting every
+  // active filter and — for non-admins — the gauge-only visibility rule from load()
+  // above, so a Gauge can hand over their own raw data without needing DB access.
   function exportToCsv() {
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const lines = []
-    lines.push('Calibration Insights Export')
-    lines.push(`Generated,${esc(new Date().toLocaleString())}`)
-    lines.push('')
-    lines.push('Summary')
-    lines.push('Sessions,Evaluations Scored,Calibration Rate,Avg Delta')
-    lines.push([totalSessions, totalEvaluations, overallRate + '%', (overallAvgDelta * 100).toFixed(1) + '%'].join(','))
-    lines.push('')
-    lines.push('Sessions Overview')
-    lines.push(['Session', 'Scorecard', 'Date', 'BPO', 'HUB', 'Market', 'Gauge', 'Overall Delta', 'Calibrated', 'Total', 'Calibration Rate'].map(esc).join(','))
-    sessionStats.forEach(s => {
-      lines.push([
-        esc(s.title), esc(s.scorecardName), esc(s.date ? new Date(s.date).toLocaleDateString() : ''),
-        esc(s.bpo || ''), esc(s.hub || ''), esc(s.market || ''), esc(s.gaugeName),
-        (s.avgDelta * 100).toFixed(1) + '%', s.calibratedCount, s.total,
-        Math.round((s.calibratedCount / s.total) * 100) + '%',
-      ].join(','))
-    })
-    lines.push('')
-    lines.push('Evaluator Performance')
-    lines.push(['Evaluator', 'Sessions', 'Calibrated', 'Calibration Rate', 'Avg Delta', 'Status'].map(esc).join(','))
-    evaluatorStats.forEach(e => {
-      lines.push([
-        esc(e.name), e.sessions, e.calibratedCount,
-        Math.round((e.calibratedCount / e.sessions) * 100) + '%',
-        (e.avgDelta * 100).toFixed(1) + '%',
-        esc(e.consecutiveFailures >= 3 ? 'Needs attention' : 'On track'),
-      ].join(','))
-    })
+    const headers = ['Submission Date', 'Session', 'Scorecard', 'Evaluator', 'BPO', 'HUB', 'Market', ...questionLabels, 'Delta']
+    const lines = [headers.map(esc).join(',')]
+    filteredRows
+      .slice()
+      .sort((a, b) => new Date(a.submitted_at || 0) - new Date(b.submitted_at || 0))
+      .forEach(r => {
+        const row = [
+          esc(r.submitted_at ? new Date(r.submitted_at).toLocaleString() : ''),
+          esc(r.sessionTitle),
+          esc(r.scorecardName),
+          esc(r.evaluatorName),
+          esc(r.bpo || ''),
+          esc(r.hub || ''),
+          esc(r.market || ''),
+          ...questionLabels.map(label => esc(r.answers?.[label] ?? '')),
+          (r.delta * 100).toFixed(1) + '%',
+        ]
+        lines.push(row.join(','))
+      })
     const csv = lines.join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `calibration-insights-${new Date().toISOString().split('T')[0]}.csv`
+    a.download = `calibration-submissions-${new Date().toISOString().split('T')[0]}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
