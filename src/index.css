@@ -300,3 +300,5 @@ code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: va
   opacity: 1;
   visibility: visible;
 }
+
+table td, table th { vertical-align: middle; }
