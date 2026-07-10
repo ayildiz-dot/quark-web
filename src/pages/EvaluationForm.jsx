@@ -25,6 +25,15 @@ export default function EvaluationForm() {
   // Metadata step; Phase 3 will read this once the evaluator reaches Questions and call the
   // ai-score-suggestion edge function for any question flagged is_ai_attribute.
   const [caseTranscript, setCaseTranscript] = useState('')
+  // Phase 3: aiSuggestions is the permanent record of what the AI said per question
+  // (score + reasoning) — kept even if the evaluator overrides the score, since it's
+  // what gets persisted as ai_suggested_score/ai_reasoning for accuracy tracking later.
+  // aiSuggestedIds is just the "not yet reviewed" set that drives the reminder badge —
+  // it clears the moment the evaluator touches that question, aiSuggestions does not.
+  const [aiSuggestions, setAiSuggestions] = useState({})
+  const [aiSuggestedIds, setAiSuggestedIds] = useState(() => new Set())
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState(null)
   const [dsatSections,         setDsatSections]         = useState([])
   const [dsatQuestions,        setDsatQuestions]        = useState([])
   const [dsatOptions,          setDsatOptions]          = useState([])
@@ -51,6 +60,7 @@ export default function EvaluationForm() {
   const [vendorLookupState, setVendorLookupState] = useState('idle') // idle | loading | found | not_found | conflict
   const [fullyAligned,      setFullyAligned]      = useState(false)
   const lastLookedUpTicket = useRef(null)
+  const aiAutoRunRef = useRef(false)
 
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
@@ -89,6 +99,22 @@ export default function EvaluationForm() {
       if (debounceRef.current) clearTimeout(debounceRef.current)
     }
   }, [])
+
+  // Phase 3: fire the AI attribute suggestions once, the moment the evaluator reaches
+  // Questions on a Quality scorecard that has at least one AI Attribute and a pasted
+  // transcript. Never runs in edit mode (no fresh transcript available for an old case).
+  useEffect(() => {
+    if (
+      step === 'questions' && selectedScorecard?.type === 'quality' &&
+      !editingEvalId && !aiAutoRunRef.current
+    ) {
+      const hasAiQuestions = questions.some(q => q.is_ai_attribute)
+      if (hasAiQuestions && caseTranscript.trim()) {
+        aiAutoRunRef.current = true
+        runAiAttributes()
+      }
+    }
+  }, [step])
 
   // Trigger auto-save 2 seconds after any answer/metadata change
   const triggerAutoSave = () => {
@@ -266,6 +292,48 @@ export default function EvaluationForm() {
       .eq('is_calibration', false)
       .order('name')
     setScorecards(data || [])
+  }
+
+  const runAiAttributes = async () => {
+    const aiQs = questions.filter(q => q.is_ai_attribute)
+    if (aiQs.length === 0 || !caseTranscript.trim()) return
+    setAiLoading(true)
+    setAiError(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-score-suggestion', {
+        body: {
+          transcript: caseTranscript,
+          attributes: aiQs.map(q => ({
+            id: q.id, title: q.title, ai_prompt: q.ai_prompt,
+            is_form_critical: q.is_form_critical, allow_na: q.allow_na,
+          })),
+        },
+      })
+      if (error) throw error
+      if (data?.error) throw new Error(data.error)
+
+      const newSuggestions = {}
+      const newSuggestedIds = new Set()
+      for (const s of (data?.suggestions || [])) {
+        if (!aiQs.some(q => q.id === s.questionId)) continue
+        newSuggestions[s.questionId] = { score: s.score, reasoning: s.comment }
+        newSuggestedIds.add(s.questionId)
+      }
+      setAnswers(prev => {
+        const next = { ...prev }
+        for (const [qId, sug] of Object.entries(newSuggestions)) {
+          next[qId] = { score: sug.score, comment: sug.reasoning }
+        }
+        return next
+      })
+      setAiSuggestions(newSuggestions)
+      setAiSuggestedIds(newSuggestedIds)
+      triggerAutoSave()
+    } catch (e) {
+      setAiError(e.message || 'Could not get AI suggestions right now — please score these manually.')
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   const loadAllowedQueues = async () => {
@@ -705,7 +773,9 @@ export default function EvaluationForm() {
             evaluation_id: editingEvalId,
             question_id: q.id,
             score: answers[q.id]?.score,
-            comment: answers[q.id]?.comment || null
+            comment: answers[q.id]?.comment || null,
+            ai_suggested_score: aiSuggestions[q.id]?.score || null,
+            ai_reasoning: aiSuggestions[q.id]?.reasoning || null,
           }))
           const { error: scErr } = await supabase.from('evaluation_scores').insert(newScoreRows)
           if (scErr) throw scErr
@@ -727,7 +797,9 @@ export default function EvaluationForm() {
             evaluation_id: evaluation.id,
             question_id: q.id,
             score: answers[q.id]?.score,
-            comment: answers[q.id]?.comment || null
+            comment: answers[q.id]?.comment || null,
+            ai_suggested_score: aiSuggestions[q.id]?.score || null,
+            ai_reasoning: aiSuggestions[q.id]?.reasoning || null,
           }))
           const { error: scoresError } = await supabase.from('evaluation_scores').insert(scoreRows)
           if (scoresError) throw scoresError
@@ -1154,10 +1226,38 @@ export default function EvaluationForm() {
           })()
         ) : (
           <>
+            {questions.some(q => q.is_ai_attribute) && (
+              <div className="card" style={{ marginBottom: 20, background: 'var(--bg-secondary)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ fontSize: 13 }}>
+                    {aiLoading
+                      ? '✨ Getting AI suggestions…'
+                      : Object.keys(aiSuggestions).length > 0
+                        ? '✨ AI suggestions applied below — review each before submitting.'
+                        : '✨ This scorecard has AI-assisted attributes.'}
+                  </div>
+                  <button className="btn btn-ghost btn-sm" disabled={aiLoading || !caseTranscript.trim()}
+                    onClick={runAiAttributes}>
+                    {aiLoading ? 'Thinking…' : (Object.keys(aiSuggestions).length > 0 ? '↻ Re-run AI Suggestions' : 'Get AI Suggestions')}
+                  </button>
+                </div>
+                {aiError && <div style={{ color: 'var(--danger)', fontSize: 12, marginTop: 8 }}>{aiError}</div>}
+                {!caseTranscript.trim() && !aiLoading && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
+                    No case transcript was entered on the Details step, so AI Attributes below need to be scored manually.
+                  </div>
+                )}
+              </div>
+            )}
             {ungrouped.map(q => (
               <QuestionCard key={q.id} question={q}
                 answer={answers[q.id]}
-                onChange={(updates) => setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))} />
+                aiSuggested={aiSuggestedIds.has(q.id)}
+                aiReasoning={aiSuggestions[q.id]?.reasoning}
+                onChange={(updates) => {
+                  setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))
+                  setAiSuggestedIds(prev => { if (!prev.has(q.id)) return prev; const next = new Set(prev); next.delete(q.id); return next })
+                }} />
             ))}
             {groups.map(group => {
               const groupQs = questions.filter(q => q.group_id === group.id)
@@ -1174,7 +1274,12 @@ export default function EvaluationForm() {
                   {groupQs.map(q => (
                     <QuestionCard key={q.id} question={q}
                       answer={answers[q.id]}
-                      onChange={(updates) => setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))} />
+                      aiSuggested={aiSuggestedIds.has(q.id)}
+                      aiReasoning={aiSuggestions[q.id]?.reasoning}
+                      onChange={(updates) => {
+                        setAnswers(a => ({ ...a, [q.id]: { ...a[q.id], ...updates } }))
+                        setAiSuggestedIds(prev => { if (!prev.has(q.id)) return prev; const next = new Set(prev); next.delete(q.id); return next })
+                      }} />
                   ))}
                 </div>
               )
@@ -1265,7 +1370,7 @@ export default function EvaluationForm() {
   }
 }
 
-function QuestionCard({ question, answer, onChange }) {
+function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning }) {
   const score = answer?.score
   const comment = answer?.comment || ''
   const btnStyle = (val) => ({
@@ -1288,6 +1393,9 @@ function QuestionCard({ question, answer, onChange }) {
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ fontWeight: 500, marginBottom: 4 }}>
             {question.title}
+            {aiSuggested && (
+              <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--accent)', background: 'var(--accent-light)', borderRadius: 4, padding: '2px 7px', fontWeight: 500 }}>✨ AI suggested — review</span>
+            )}
             {question.is_form_critical && (
               <span className="badge badge-fail" style={{ marginLeft: 8, fontSize: 11 }}>Form Critical</span>
             )}
@@ -1321,6 +1429,11 @@ function QuestionCard({ question, answer, onChange }) {
           onChange={e => onChange({ comment: e.target.value })}
           style={{ fontSize: 13 }} />
       </div>
+      {aiReasoning && (
+        <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'var(--accent-light)', fontSize: 12, color: 'var(--text-secondary)' }}>
+          <strong style={{ color: 'var(--accent)' }}>✨ AI reasoning:</strong> {aiReasoning}
+        </div>
+      )}
     </div>
   )
 }
