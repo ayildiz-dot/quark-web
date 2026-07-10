@@ -81,6 +81,16 @@ function computeMeasure(measureKey, evals, scorecard) {
       }).length
       return { display: Math.round((c / n) * 100) + '%', detail: c + ' of ' + n + ' controllable' }
     }
+    // Phase 5: BPO DSAT (Vendor, non-spot-check) only — % of AI Controllability
+    // predictions that matched the evaluator's own final Controllability answer.
+    // Denominator is evaluations where the AI actually ran (ai_suggested_controllability
+    // is set), not every evaluation — cases without a transcript never had a prediction.
+    case 'ai_accuracy_rate': {
+      const withAi = evals.filter(e => e.ai_suggested_controllability != null)
+      if (!withAi.length) return { display: '—' }
+      const matched = withAi.filter(e => e.is_ai_deviated === false).length
+      return { display: Math.round((matched / withAi.length) * 100) + '%', detail: matched + ' of ' + withAi.length + ' AI predictions matched' }
+    }
     default: return { display: '?' }
   }
 }
@@ -163,6 +173,8 @@ const WIDGET_CATALOG = {
     { widget_type: 'stat_card',  title: 'Total Evaluations',         config: { measure: 'eval_count' } },
     { widget_type: 'line_chart', title: 'Quality \u2014 Week over Week', config: {} },
     { widget_type: 'bar_chart',  title: 'Quality Score by Agent',    config: { measure: 'avg_quality_score' } },
+    { widget_type: 'ai_attribute_accuracy', title: 'AI Attribute Accuracy',             config: {}, aiOnly: true },
+    { widget_type: 'ai_comparison_table',   title: 'AI vs Human — Recent Comparisons',  config: {}, aiOnly: true },
   ],
   dsat: [
     { widget_type: 'stat_card',  title: 'Controllability Rate',          config: { measure: 'controllability_rate' } },
@@ -173,6 +185,8 @@ const WIDGET_CATALOG = {
     { widget_type: 'stat_card',  title: 'Deviated Controllability Rate', config: { measure: 'deviated_controllability_rate' } },
     { widget_type: 'line_chart', title: 'Alignment Rate \u2014 Week over Week', config: { measure: 'alignment_rate' } },
     { widget_type: 'line_chart', title: 'Deviated Controllability \u2014 Week over Week', config: { measure: 'deviated_controllability_rate' } },
+    { widget_type: 'stat_card',  title: 'AI Controllability Accuracy',   config: { measure: 'ai_accuracy_rate' }, aiOnly: true },
+    { widget_type: 'ai_comparison_table', title: 'AI vs Human — Recent Comparisons', config: {}, aiOnly: true },
   ],
 }
 
@@ -413,7 +427,7 @@ function AgentBarChart({ data, scorecard }) {
 
 /* ===================== add widget panel ===================== */
 function AddWidgetPanel({ scorecard, existingWidgets, onAdd, onClose }) {
-  const catalog = WIDGET_CATALOG[scorecard.type] || []
+  const catalog = (WIDGET_CATALOG[scorecard.type] || []).filter(item => !item.aiOnly || !scorecard.is_spot_check)
   const isAdded = (item) => existingWidgets.some(w => w.widget_type === item.widget_type && w.title === item.title)
   return (
     <div className="card" style={{ marginBottom:20, border:'1px solid var(--accent)', padding:'16px 18px' }}>
@@ -752,6 +766,11 @@ export default function ScorecardDashboard() {
   const [widgets, setWidgets] = useState([])
   const [evals, setEvals] = useState([])
   const [govQueues, setGovQueues] = useState([]) // [{id, hub_id, hub_name, market_value}] mapped to this scorecard
+  // Phase 5: Quality AI Attribute accuracy — this scorecard's is_ai_attribute question
+  // titles, and any evaluation_scores rows against them that have an AI suggestion
+  // recorded. Empty for DSAT scorecards (accuracy there comes straight off `evals`).
+  const [aiQuestionTitles, setAiQuestionTitles] = useState({})
+  const [aiScoreRows, setAiScoreRows] = useState([])
   // Vendor-shaped rows for the two spot-check measures (Alignment Rate, Deviated
   // Controllability). On the Vendor (non-spot-check) scorecard's own dashboard,
   // these ARE filteredEvals already. On the KG spot-check scorecard's dashboard,
@@ -805,7 +824,7 @@ export default function ScorecardDashboard() {
         (async () => {
           if (evaluatorBlocked) return { data: [] }
           let evQ = supabase.from('evaluations')
-            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version, hub_id, workspace_id, queue_id, deviated_controllability, is_deviated, deviation_source_evaluation_id, overall_comment')
+            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version, hub_id, workspace_id, queue_id, deviated_controllability, is_deviated, deviation_source_evaluation_id, overall_comment, ai_suggested_controllability, ai_controllability_reasoning, is_ai_deviated')
             .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type)
           if (isAgent) {
             // Agents: scoped to their own results by email. No workspace filter.
@@ -831,6 +850,30 @@ export default function ScorecardDashboard() {
 
       setScorecard(sc); setMetadataFields(mf || []); setWidgets(w || []); setEvals(ev || [])
       setGovQueues(govList)
+
+      // Phase 5: Quality AI Attribute accuracy data — quality scorecards only.
+      if (sc.type === 'quality') {
+        const { data: aiQs } = await supabase
+          .from('scorecard_questions')
+          .select('id, title')
+          .eq('scorecard_id', scorecardId)
+          .eq('is_ai_attribute', true)
+        const aiQIds = (aiQs || []).map(q => q.id)
+        setAiQuestionTitles(Object.fromEntries((aiQs || []).map(q => [q.id, q.title])))
+        if (aiQIds.length) {
+          const { data: scores } = await supabase
+            .from('evaluation_scores')
+            .select('evaluation_id, question_id, score, ai_suggested_score, ai_reasoning')
+            .in('question_id', aiQIds)
+            .not('ai_suggested_score', 'is', null)
+          setAiScoreRows(scores || [])
+        } else {
+          setAiScoreRows([])
+        }
+      } else {
+        setAiQuestionTitles({})
+        setAiScoreRows([])
+      }
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
 
@@ -850,6 +893,68 @@ export default function ScorecardDashboard() {
   )
   const weeklyData = useMemo(() => scorecard ? buildWeeklySeries(filteredEvals, scorecard) : [], [filteredEvals, scorecard])
   const agentData  = useMemo(() => scorecard ? buildAgentSeries(filteredEvals, scorecard) : [],  [filteredEvals, scorecard])
+
+  // Phase 5: pooled + per-attribute Quality AI accuracy, scoped to the currently
+  // filtered evaluations (same filter bar as every other widget on this page).
+  // Accuracy = evaluator's final score exactly matches the AI's original suggestion.
+  const aiAttributeStats = useMemo(() => {
+    if (!scorecard || scorecard.type !== 'quality' || !aiScoreRows.length) return { rows: [], pooled: null }
+    const filteredIds = new Set(filteredEvals.map(e => e.id))
+    const inScope = aiScoreRows.filter(r => filteredIds.has(r.evaluation_id))
+    const byQuestion = new Map()
+    for (const r of inScope) {
+      if (!byQuestion.has(r.question_id)) byQuestion.set(r.question_id, [])
+      byQuestion.get(r.question_id).push(r)
+    }
+    const rows = [...byQuestion.entries()].map(([qId, rs]) => {
+      const matched = rs.filter(r => r.score === r.ai_suggested_score).length
+      return {
+        questionId: qId, title: aiQuestionTitles[qId] || 'Untitled attribute',
+        matched, total: rs.length, pct: rs.length ? Math.round((matched / rs.length) * 100) : null,
+      }
+    }).sort((a, b) => a.title.localeCompare(b.title))
+    const pooledMatched = inScope.filter(r => r.score === r.ai_suggested_score).length
+    const pooled = inScope.length
+      ? { matched: pooledMatched, total: inScope.length, pct: Math.round((pooledMatched / inScope.length) * 100) }
+      : null
+    return { rows, pooled }
+  }, [scorecard, aiScoreRows, aiQuestionTitles, filteredEvals])
+
+  // Phase 5: side-by-side AI vs human rows for the comparison table widget — Quality
+  // (one row per AI-scored question) or BPO DSAT (Controllability only). Most recent
+  // 15, newest first. KG spot-check scorecards never populate this (isSpotCheckScorecard).
+  const aiComparisonRows = useMemo(() => {
+    if (!scorecard) return []
+    if (scorecard.type === 'quality') {
+      const filteredIds = new Set(filteredEvals.map(e => e.id))
+      const evalById = new Map(filteredEvals.map(e => [e.id, e]))
+      return aiScoreRows
+        .filter(r => filteredIds.has(r.evaluation_id))
+        .map(r => ({
+          key: r.evaluation_id + ':' + r.question_id,
+          date: evalById.get(r.evaluation_id)?.submitted_at,
+          label: aiQuestionTitles[r.question_id] || 'Untitled attribute',
+          ai: r.ai_suggested_score, human: r.score, match: r.score === r.ai_suggested_score,
+        }))
+        .sort((a, b) => new Date(b.date) - new Date(a.date))
+        .slice(0, 15)
+    }
+    if (scorecard.type === 'dsat' && !isSpotCheckScorecard) {
+      return filteredEvals
+        .filter(e => e.ai_suggested_controllability != null)
+        .map(e => ({
+          key: e.id,
+          date: evalDate(e, scorecard),
+          label: 'Controllability',
+          ai: e.ai_suggested_controllability,
+          human: isControllable(e) ? 'Controllable' : 'Non-Controllable',
+          match: e.is_ai_deviated === false,
+        }))
+        .sort((a, b) => new Date(b.date) - new Date(a.date))
+        .slice(0, 15)
+    }
+    return []
+  }, [scorecard, isSpotCheckScorecard, filteredEvals, aiScoreRows, aiQuestionTitles])
 
   // Populate alignmentVendorEvals: direct pass-through on the Vendor scorecard's
   // own dashboard, or a lookup-by-back-reference fetch on the KG scorecard's
@@ -984,6 +1089,72 @@ export default function ScorecardDashboard() {
           {removeBtn}
           <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
           <AgentBarChart data={agentData} scorecard={scorecard} />
+        </div>
+      )
+    }
+    if (w.widget_type === 'ai_attribute_accuracy') {
+      const { rows, pooled } = aiAttributeStats
+      return (
+        <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
+          {removeBtn}
+          <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
+          {rows.length === 0 ? (
+            <p style={{ color:'var(--text-tertiary)', fontSize:13, textAlign:'center', padding:'20px 0' }}>
+              No AI-suggested scores yet for this scorecard's filtered evaluations.
+            </p>
+          ) : (
+            <div className="table-wrap" style={{ border:'none' }}>
+              <table className="table">
+                <thead><tr><th>Attribute</th><th>Accuracy</th><th>Matched</th></tr></thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr key={r.questionId}>
+                      <td>{r.title}</td>
+                      <td>{r.pct}%</td>
+                      <td style={{ color:'var(--text-secondary)' }}>{r.matched} of {r.total}</td>
+                    </tr>
+                  ))}
+                  {pooled && (
+                    <tr style={{ fontWeight:600, borderTop:'2px solid var(--border)' }}>
+                      <td>Overall (pooled)</td>
+                      <td>{pooled.pct}%</td>
+                      <td style={{ color:'var(--text-secondary)' }}>{pooled.matched} of {pooled.total}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )
+    }
+    if (w.widget_type === 'ai_comparison_table') {
+      return (
+        <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
+          {removeBtn}
+          <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
+          {aiComparisonRows.length === 0 ? (
+            <p style={{ color:'var(--text-tertiary)', fontSize:13, textAlign:'center', padding:'20px 0' }}>
+              No AI-scored cases yet for this scorecard's filtered evaluations.
+            </p>
+          ) : (
+            <div className="table-wrap" style={{ border:'none' }}>
+              <table className="table">
+                <thead><tr><th>Attribute</th><th>AI Suggestion</th><th>Human Final</th><th>Result</th><th>Date</th></tr></thead>
+                <tbody>
+                  {aiComparisonRows.map(r => (
+                    <tr key={r.key}>
+                      <td>{r.label}</td>
+                      <td style={{ textTransform:'capitalize' }}>{r.ai || '—'}</td>
+                      <td style={{ textTransform:'capitalize' }}>{r.human || '—'}</td>
+                      <td><span className={`badge badge-${r.match ? 'pass' : 'fail'}`}>{r.match ? 'MATCH' : 'MISMATCH'}</span></td>
+                      <td style={{ color:'var(--text-secondary)' }}>{r.date ? new Date(r.date).toLocaleDateString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )
     }
