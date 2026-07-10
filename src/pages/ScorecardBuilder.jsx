@@ -199,7 +199,8 @@ export default function ScorecardBuilder() {
             scorecard_id: id, group_id: realGroupId, title: q.title,
             description: q.description, weight: q.weight, is_weighted: q.is_weighted,
             is_form_critical: q.is_form_critical, is_group_critical: q.is_group_critical,
-            allow_na: q.allow_na, position: i + 1
+            allow_na: q.allow_na, is_ai_attribute: q.is_ai_attribute || false,
+            ai_prompt: q.ai_prompt || null, position: i + 1
           })
         } else {
           await supabase.from('scorecard_questions').update({
@@ -208,6 +209,8 @@ export default function ScorecardBuilder() {
             is_form_critical: q.is_form_critical,
             is_group_critical: q.is_group_critical,
             allow_na: q.allow_na,
+            is_ai_attribute: q.is_ai_attribute || false,
+            ai_prompt: q.ai_prompt || null,
             group_id: realGroupId, position: i + 1
           }).eq('id', q.id)
         }
@@ -977,6 +980,7 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
               onChange={e => onUpdate(question.id, { title: e.target.value })} />
           </div>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 8 }}>
+            {question.is_ai_attribute && <span className="badge badge-admin">✨ AI</span>}
             {question.is_form_critical && <span className="badge badge-fail">Form Critical</span>}
             {question.is_group_critical && groupId && <span className="badge badge-fail">Group Critical</span>}
             {!question.allow_na && <span className="badge badge-channel">No N/A</span>}
@@ -1029,7 +1033,28 @@ function SortableQuestionCard({ question, onUpdate, onDelete, groupId }) {
                   <option value="no">No — must be Pass or Fail</option>
                 </select>
               </div>
+              <div className="form-field">
+                <label>AI Attribute?</label>
+                <select className="select" value={question.is_ai_attribute ? 'yes' : 'no'}
+                  onChange={e => onUpdate(question.id, { is_ai_attribute: e.target.value === 'yes' })}>
+                  <option value="no">No — scored manually</option>
+                  <option value="yes">Yes — Gemini suggests a score, evaluator reviews</option>
+                </select>
+              </div>
             </div>
+            {question.is_ai_attribute && (
+              <div className="form-field" style={{ marginTop: 12 }}>
+                <label>AI Evaluation Instructions</label>
+                <textarea className="input" rows={3}
+                  placeholder="Tell the AI exactly how to judge this attribute — e.g. 'Pass if the agent acknowledged the customer's issue within the first two replies and used their name at least once. Fail otherwise.'"
+                  value={question.ai_prompt || ''}
+                  onChange={e => onUpdate(question.id, { ai_prompt: e.target.value })}
+                  style={{ resize: 'vertical', fontSize: 13, width: '100%', boxSizing: 'border-box' }} />
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                  Be specific — this is the only guidance the AI gets. Vague instructions (e.g. "check if the agent was polite") produce inconsistent suggestions.
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
