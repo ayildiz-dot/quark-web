@@ -19,6 +19,12 @@ export default function EvaluationForm() {
   const [submitting, setSubmitting] = useState(false)
   const [overallComment, setOverallComment] = useState('')
   const [showLgtmConfirm, setShowLgtmConfirm] = useState(false)
+  // Phase 1 (foundation) for AI-assisted scoring: ephemeral only, intentionally never
+  // persisted to drafts or the evaluations table — full case transcripts should not sit in
+  // Quark's database. Evaluator re-pastes it if they leave and come back. Populated on the
+  // Metadata step; Phase 3 will read this once the evaluator reaches Questions and call the
+  // ai-score-suggestion edge function for any question flagged is_ai_attribute.
+  const [caseTranscript, setCaseTranscript] = useState('')
   const [dsatSections,         setDsatSections]         = useState([])
   const [dsatQuestions,        setDsatQuestions]        = useState([])
   const [dsatOptions,          setDsatOptions]          = useState([])
@@ -901,6 +907,18 @@ export default function EvaluationForm() {
               )}
             </div>
           ))}
+        </div>
+      )}
+      {selectedScorecard?.type === 'quality' && questions.some(q => q.is_ai_attribute) && !editingEvalId && (
+        <div className="card" style={{ maxWidth: 600, marginTop: 16, background: 'var(--bg-secondary)' }}>
+          <div className="card-title" style={{ marginBottom: 6 }}>Case Transcript</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
+            This scorecard has AI-assisted attributes. Paste the case transcript so the AI can suggest a score for those — nothing here is saved once you submit or leave, so paste it fresh each time.
+          </div>
+          <textarea className="input" rows={6} placeholder="Paste the case transcript here…"
+            value={caseTranscript}
+            onChange={e => setCaseTranscript(e.target.value)}
+            style={{ resize: 'vertical', fontSize: 13, width: '100%', boxSizing: 'border-box' }} />
         </div>
       )}
       <div style={{ marginTop: 24, maxWidth: 600 }}>
