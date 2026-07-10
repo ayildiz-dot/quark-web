@@ -34,6 +34,14 @@ export default function EvaluationForm() {
   const [aiSuggestedIds, setAiSuggestedIds] = useState(() => new Set())
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState(null)
+  // Phase 4: BPO DSAT (Vendor, non-spot-check) AI Controllability prediction.
+  // aiDsatChain mirrors vendorChain's shape ({sectionTitle, questionTitle, answerValue}),
+  // plus a `reasoning` field on each step — only aiDsatChain[0] (Controllability) is used
+  // for accuracy tracking, the rest is just for the informational chain display.
+  const [aiDsatChain, setAiDsatChain] = useState([])
+  const [aiDsatLoading, setAiDsatLoading] = useState(false)
+  const [aiDsatError, setAiDsatError] = useState(null)
+  const [aiDsatAgreed, setAiDsatAgreed] = useState(false)
   const [dsatSections,         setDsatSections]         = useState([])
   const [dsatQuestions,        setDsatQuestions]        = useState([])
   const [dsatOptions,          setDsatOptions]          = useState([])
@@ -61,6 +69,7 @@ export default function EvaluationForm() {
   const [fullyAligned,      setFullyAligned]      = useState(false)
   const lastLookedUpTicket = useRef(null)
   const aiAutoRunRef = useRef(false)
+  const aiDsatAutoRunRef = useRef(false)
 
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
@@ -112,6 +121,21 @@ export default function EvaluationForm() {
       if (hasAiQuestions && caseTranscript.trim()) {
         aiAutoRunRef.current = true
         runAiAttributes()
+      }
+    }
+  }, [step])
+
+  // Phase 4: same auto-trigger idea as the Quality AI Attributes effect above, but for the
+  // BPO DSAT (Vendor / non-spot-check) scorecard's Controllability prediction. Never runs
+  // for the KG spot-check scorecard, which stays fully manual, or in edit mode.
+  useEffect(() => {
+    if (
+      step === 'questions' && selectedScorecard?.type === 'dsat' &&
+      !selectedScorecard?.is_spot_check && !editingEvalId && !aiDsatAutoRunRef.current
+    ) {
+      if (caseTranscript.trim() && dsatSections.length > 0) {
+        aiDsatAutoRunRef.current = true
+        runAiDsatPrediction()
       }
     }
   }, [step])
@@ -334,6 +358,68 @@ export default function EvaluationForm() {
     } finally {
       setAiLoading(false)
     }
+  }
+
+  const runAiDsatPrediction = async () => {
+    if (!caseTranscript.trim() || dsatSections.length === 0) return
+    setAiDsatLoading(true)
+    setAiDsatError(null)
+    try {
+      const sorted = [...dsatSections].sort((a, b) => a.position - b.position)
+      let section = sorted[0]
+      const chain = []
+      let guard = 0
+      while (section && chain.length < 3 && guard < 5) {
+        guard++
+        const sectionQs = dsatQuestions.filter(q => q.section_id === section.id).sort((a, b) => a.position - b.position)
+        const routingQ = sectionQs.find(q => q.question_type === 'options')
+        if (!routingQ) break
+        const opts = dsatOptions.filter(o => o.question_id === routingQ.id).sort((a, b) => a.position - b.position)
+        if (opts.length === 0) break
+        const { data, error } = await supabase.functions.invoke('ai-dsat-suggestion', {
+          body: {
+            transcript: caseTranscript,
+            sectionTitle: section.title,
+            questionTitle: routingQ.title,
+            options: opts.map(o => o.label),
+          },
+        })
+        if (error) throw error
+        if (data?.error) throw new Error(data.error)
+        chain.push({ sectionTitle: section.title, questionTitle: routingQ.title, answerValue: data.answer, reasoning: data.reasoning })
+        const chosenOpt = opts.find(o => o.label === data.answer)
+        section = chosenOpt?.jump_to_section_id ? dsatSections.find(s => s.id === chosenOpt.jump_to_section_id) : null
+      }
+      setAiDsatChain(chain)
+    } catch (e) {
+      setAiDsatError(e.message || 'Could not get an AI prediction right now — please complete this evaluation manually.')
+    } finally {
+      setAiDsatLoading(false)
+    }
+  }
+
+  // Copies the AI's predicted chain onto this evaluator's own dsatAnswers (same technique
+  // as submitFullyAligned below), but does NOT auto-submit — the AI only predicts up to
+  // 3 levels (Controllability -> Level 1 -> Level 2), so the evaluator still needs to walk
+  // any remaining sections themselves before submitting.
+  const applyAiDsatChain = () => {
+    if (!aiDsatChain.length) return
+    const newDsatAnswers = { ...dsatAnswers }
+    const visitedSectionIds = []
+    let section = [...dsatSections].sort((a, b) => a.position - b.position)[0]
+    for (const step of aiDsatChain) {
+      if (!section) break
+      visitedSectionIds.push(section.id)
+      const q = dsatQuestions.find(q => q.section_id === section.id && q.title === step.questionTitle)
+      if (!q) break
+      newDsatAnswers[q.id] = { value: step.answerValue }
+      const opt = dsatOptions.find(o => o.question_id === q.id && o.label === step.answerValue)
+      section = opt?.jump_to_section_id ? dsatSections.find(s => s.id === opt.jump_to_section_id) : null
+    }
+    setDsatAnswers(newDsatAnswers)
+    setDsatSectionHistory(visitedSectionIds.slice(0, -1))
+    setDsatCurrentSectionId(visitedSectionIds[visitedSectionIds.length - 1] || dsatCurrentSectionId)
+    triggerAutoSave()
   }
 
   const loadAllowedQueues = async () => {
@@ -710,6 +796,13 @@ export default function EvaluationForm() {
         const dsatPayload = visitedQuestions.map(q => ({
           field_id: q.id, label: q.title, value: effectiveDsatAnswers[q.id]?.value || ''
         }))
+        const aiControllabilityFields = (!selectedScorecard.is_spot_check && aiDsatChain[0])
+          ? {
+              ai_suggested_controllability: aiDsatChain[0].answerValue,
+              ai_controllability_reasoning: aiDsatChain[0].reasoning || null,
+              is_ai_deviated: getFirstAnswerFromMetaValues(dsatPayload, dsatSections, dsatQuestions) !== aiDsatChain[0].answerValue,
+            }
+          : {}
         if (editingEvalId) {
           // EDIT: update the existing row. Freeze evaluator_id + submitted_at; stamp last_edit_date.
           const { error: upErr } = await supabase.from('evaluations').update({
@@ -728,7 +821,8 @@ export default function EvaluationForm() {
             overall_comment: null, status: 'submitted',
             evaluation_type: selectedScorecard.type,
             scorecard_version: selectedScorecard.version || 1,
-            submitted_at: new Date().toISOString()
+            submitted_at: new Date().toISOString(),
+            ...aiControllabilityFields,
           }).select().single()
           if (evalError) {
             if (evalError.code === '23505' && evalError.message?.includes('evaluations_dsat_ticket_unique')) {
@@ -981,11 +1075,14 @@ export default function EvaluationForm() {
           ))}
         </div>
       )}
-      {selectedScorecard?.type === 'quality' && questions.some(q => q.is_ai_attribute) && !editingEvalId && (
+      {((selectedScorecard?.type === 'quality' && questions.some(q => q.is_ai_attribute)) ||
+        (selectedScorecard?.type === 'dsat' && !selectedScorecard?.is_spot_check)) && !editingEvalId && (
         <div className="card" style={{ maxWidth: 600, marginTop: 16, background: 'var(--bg-secondary)' }}>
           <div className="card-title" style={{ marginBottom: 6 }}>Case Transcript</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>
-            This scorecard has AI-assisted attributes. Paste the case transcript so the AI can suggest a score for those — nothing here is saved once you submit or leave, so paste it fresh each time.
+            {selectedScorecard?.type === 'dsat'
+              ? "This is the BPO DSAT Scorecard, which gets an AI-predicted Controllability chain. Paste the case transcript so the AI can predict it — nothing here is saved once you submit or leave, so paste it fresh each time."
+              : "This scorecard has AI-assisted attributes. Paste the case transcript so the AI can suggest a score for those — nothing here is saved once you submit or leave, so paste it fresh each time."}
           </div>
           <textarea className="input" rows={6} placeholder="Paste the case transcript here…"
             value={caseTranscript}
@@ -1118,6 +1215,8 @@ export default function EvaluationForm() {
             }
             const isFirstSection = currentSection.position === Math.min(...dsatSections.map(s => s.position))
             const showVendorBanner = selectedScorecard.is_spot_check && !editingEvalId && isFirstSection && vendorLookupState === 'found'
+            const showAiDsatBanner = !selectedScorecard.is_spot_check && !editingEvalId && isFirstSection &&
+              (aiDsatLoading || aiDsatError || aiDsatChain.length > 0)
             return (
               <div>
                 {showVendorBanner && (
@@ -1155,6 +1254,51 @@ export default function EvaluationForm() {
                         }} />
                       I fully align with the BPO's evaluation
                     </label>
+                  </div>
+                )}
+                {showAiDsatBanner && (
+                  <div style={{
+                    marginBottom: 20, padding: '14px 16px', borderRadius: 8,
+                    background: 'var(--bg-secondary)', border: '1px solid var(--border)'
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)',
+                      textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                      ✨ AI Prediction
+                    </div>
+                    {aiDsatLoading && (
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Getting the AI's prediction…</div>
+                    )}
+                    {aiDsatError && (
+                      <div style={{ fontSize: 12, color: 'var(--danger)' }}>{aiDsatError}</div>
+                    )}
+                    {!aiDsatLoading && aiDsatChain.length > 0 && (
+                      <>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginBottom: 8 }}>
+                          {aiDsatChain.map((step, i) => (
+                            <React.Fragment key={i}>
+                              {i > 0 && <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>→</span>}
+                              <span style={{
+                                fontSize: 12, fontWeight: 500, padding: '3px 9px', borderRadius: 6,
+                                background: 'var(--accent-light)', color: 'var(--accent)'
+                              }}>
+                                {step.answerValue}
+                              </span>
+                            </React.Fragment>
+                          ))}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, fontStyle: 'italic' }}>
+                          {aiDsatChain[0].reasoning}
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                          <input type="checkbox" checked={aiDsatAgreed}
+                            onChange={e => {
+                              setAiDsatAgreed(e.target.checked)
+                              if (e.target.checked) applyAiDsatChain()
+                            }} />
+                          I agree with the AI's prediction
+                        </label>
+                      </>
+                    )}
                   </div>
                 )}
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 16 }}>
