@@ -1871,12 +1871,14 @@ function ScorecardsTab({ profile, flash }) {
           {rows.map(sc => (
             <tr key={sc.id}>
               <td style={{ fontWeight: 500 }}>{sc.name}</td>
-              <td style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
-                <TypeBadge type={sc.type} />
-                {sc.is_calibration && (
-                  <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 6, fontWeight: 600,
-                    backgroundColor: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>Calibration</span>
-                )}
+              <td>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <TypeBadge type={sc.type} />
+                  {sc.is_calibration && (
+                    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 6, fontWeight: 600,
+                      backgroundColor: '#7c3aed22', color: '#7c3aed', border: '1px solid #7c3aed44' }}>Calibration</span>
+                  )}
+                </div>
               </td>
               <td style={{ color: sc.division ? 'var(--text-primary)' : 'var(--danger)', fontSize: 13 }}>
                 {sc.division || 'None'}
