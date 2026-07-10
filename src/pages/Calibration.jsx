@@ -719,56 +719,13 @@ function CalibrationAdmin() {
   const [selected, setSelected]     = useState(null)
   const [detail, setDetail]         = useState(null)
   const [creating, setCreating]     = useState(false)
-  const [allResults, setAllResults]  = useState([])
-  const [loadingResults, setLR]     = useState(false)
   const [bpoOptions, setBpoOptions]       = useState([])
   const [hubOptions, setHubOptions]       = useState([])
   const [marketOptions, setMarketOptions] = useState([])
   const [metadataLoadError, setMetadataLoadError] = useState(null)
 
-  useEffect(() => { if (profile) loadResults() }, [profile])
-
-  async function loadResults() {
-    setLR(true)
-    // Admins/owners see every evaluator's results. Everyone else (any @kaizengaming.com
-    // user, now that Manage Sessions is open to all of them) only sees results for
-    // sessions where THEY are the Gauge — never other people's calibrations.
-    const isPrivileged = ['admin', 'owner'].includes(profile?.role)
-    let gaugeSessionIds = null
-    if (!isPrivileged) {
-      const { data: myGaugeSessions } = await supabase
-        .from('calibration_sessions')
-        .select('id')
-        .eq('gauge_user_id', profile?.id)
-      gaugeSessionIds = (myGaugeSessions || []).map(s => s.id)
-      if (gaugeSessionIds.length === 0) { setAllResults([]); setLR(false); return }
-    }
-
-    let resultsQuery = supabase
-      .from('calibration_submissions')
-      .select('evaluator_id, session_id, status, overall_score, is_calibrated, delta, submitted_at')
-      .eq('status', 'evaluated')
-      .eq('is_gauge', false)
-    if (gaugeSessionIds) resultsQuery = resultsQuery.in('session_id', gaugeSessionIds)
-    const { data: subs } = await resultsQuery
-      .order('submitted_at', { ascending: false })
-      .limit(200)
-
-    if ((subs || []).length > 0) {
-      const evalIds = [...new Set(subs.map(s => s.evaluator_id))]
-      const sessIds = [...new Set(subs.map(s => s.session_id))]
-      const [{ data: evalUsers }, { data: sessList }] = await Promise.all([
-        supabase.from('users').select('id, name, email').in('id', evalIds),
-        supabase.from('calibration_sessions').select('id, title, type, session_date').in('id', sessIds),
-      ])
-      const userMap = Object.fromEntries((evalUsers || []).map(u => [u.id, u]))
-      const sessMap = Object.fromEntries((sessList || []).map(s => [s.id, s]))
-      setAllResults(subs.map(s => ({ ...s, user: userMap[s.evaluator_id], session: sessMap[s.session_id] })))
-    }
-    setLR(false)
-  }
   const [form, setForm] = useState({
-    title: '', type: 'quality', scoring_deadline: '', scorecard_id: '', gauge_user_id: '',
+    title: '', type: 'quality', scoring_deadline: '', scorecard_id: '',
     case_reference: '', session_date: new Date().toISOString().split('T')[0],
     bpo: '', hub: '', market: '',
     participants: [],
@@ -861,8 +818,8 @@ function CalibrationAdmin() {
   }
 
   async function handleCreate() {
-    if (!form.title || !form.scorecard_id || !form.gauge_user_id) {
-      alert('Title, scorecard, and gauge are required.')
+    if (!form.title || !form.scorecard_id) {
+      alert('Title and scorecard are required.')
       return
     }
     setCreating(true)
@@ -871,7 +828,7 @@ function CalibrationAdmin() {
       title: form.title,
       type: form.type,
       scorecard_id: form.scorecard_id,
-      gauge_user_id: form.gauge_user_id,
+      gauge_user_id: profile.id,
       case_reference: form.case_reference || null,
       session_date: form.session_date || null,
       scoring_deadline: form.scoring_deadline || null,
@@ -892,7 +849,7 @@ function CalibrationAdmin() {
 
     await loadAll()
     setShowCreate(false)
-    setForm({ title: '', type: 'quality', scorecard_id: '', gauge_user_id: '', case_reference: '', session_date: new Date().toISOString().split('T')[0], bpo: '', hub: '', market: '', participants: [] })
+    setForm({ title: '', type: 'quality', scorecard_id: '', case_reference: '', session_date: new Date().toISOString().split('T')[0], bpo: '', hub: '', market: '', participants: [] })
     setCreating(false)
   }
 
@@ -910,6 +867,7 @@ function CalibrationAdmin() {
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
   const inputStyle = { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box' }
+  const visibleSessions = sessions.filter(s => s.status !== 'completed')
 
   if (loading) return (
     <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>Loading…</div>
@@ -924,9 +882,9 @@ function CalibrationAdmin() {
         </button>
       </div>
 
-      {sessions.length === 0 ? (
+      {visibleSessions.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 36, color: 'var(--text-secondary)', fontSize: 14 }}>
-          No sessions yet. Create one to get started.
+          No open or in-progress sessions. Completed sessions have moved to the Insights tab.
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 20 }}>
@@ -942,7 +900,7 @@ function CalibrationAdmin() {
               </tr>
             </thead>
             <tbody>
-              {sessions.map(s => {
+              {visibleSessions.map(s => {
                 const gaugeUser = users.find(u => u.id === s.gauge_user_id)
                 return (
                   <tr key={s.id} style={{
@@ -1105,62 +1063,15 @@ function CalibrationAdmin() {
         </div>
       )}
 
-      {/* All Results */}
-      {(loadingResults || allResults.length > 0) && (
-        <div style={{ marginTop: 28 }}>
-          <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-            All Calibration Results
-          </h2>
-          {loadingResults ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 13 }}>Loading results…</div>
-          ) : (
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                    <th style={thStyle}>Evaluator</th>
-                    <th style={thStyle}>Session</th>
-                    <th style={thStyle}>Type</th>
-                    <th style={thStyle}>Date</th>
-                    <th style={thStyle}>Score</th>
-                    <th style={thStyle}>Delta</th>
-                    <th style={thStyle}>Result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {allResults.map((r, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ ...tdStyle, fontWeight: 500 }}>{r.user?.name || r.user?.email || '—'}</td>
-                      <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{r.session?.title || '—'}</td>
-                      <td style={tdStyle}>{r.session?.type ? <TypeBadge type={r.session.type} /> : '—'}</td>
-                      <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
-                        {r.session?.session_date ? new Date(r.session.session_date).toLocaleDateString() : '—'}
-                      </td>
-                      <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
-                        {r.overall_score != null ? r.overall_score + '%' : '—'}
-                      </td>
-                      <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
-                        {r.delta != null ? (r.delta * 100).toFixed(1) + '%' : '—'}
-                      </td>
-                      <td style={tdStyle}><ResultBadge calibrated={r.is_calibrated} /></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Create session modal */}
       {showCreate && (
         <div className="modal-backdrop" onClick={() => setShowCreate(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 540 }}>
-            <div className="modal-header">
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 540, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0 }}>
               <h2>New Calibration Session</h2>
               <button className="btn-close" onClick={() => setShowCreate(false)}>✕</button>
             </div>
-            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', minHeight: 0 }}>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Title *</label>
                 <input style={inputStyle} value={form.title} placeholder="e.g. Q3 DSAT Calibration" onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
@@ -1196,11 +1107,10 @@ function CalibrationAdmin() {
                 )}
               </div>
               <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Gauge (Reference Evaluator) *</label>
-                <select style={inputStyle} value={form.gauge_user_id} onChange={e => setForm(f => ({ ...f, gauge_user_id: e.target.value }))}>
-                  <option value="">— Select gauge —</option>
-                  {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
-                </select>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Gauge (Reference Evaluator)</label>
+                <div style={{ ...inputStyle, display: 'flex', alignItems: 'center', background: 'var(--bg-hover, #eef0f3)', color: 'var(--text-secondary)' }}>
+                  {profile?.name || profile?.email} <span style={{ marginLeft: 6, fontSize: 11 }}>— you (the session creator) are always the gauge</span>
+                </div>
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Case Reference (optional)</label>
@@ -1262,7 +1172,7 @@ function CalibrationAdmin() {
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>{form.participants.length} selected</div>
               </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 20px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
               <button className="btn btn-ghost" onClick={() => setShowCreate(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>
                 {creating ? 'Creating…' : 'Create Session'}
@@ -1331,6 +1241,7 @@ function CalibrationInsights() {
   const [filterHub, setFilterHub] = useState('')
   const [filterMarket, setFilterMarket] = useState('')
   const [filterScorecard, setFilterScorecard] = useState('')
+  const [filterSession, setFilterSession] = useState('')
   const [filterGauge, setFilterGauge] = useState('')
   const [filterEvaluator, setFilterEvaluator] = useState('')
   const [filterDateFrom, setFilterDateFrom] = useState('')
@@ -1452,6 +1363,7 @@ function CalibrationInsights() {
   const hubOptions = metaOptions.hub
   const marketOptions = metaOptions.market
   const scorecardOptions = [...new Set(rows.map(r => r.scorecardName).filter(Boolean))].sort()
+  const sessionOptions = [...new Set(rows.map(r => r.sessionTitle).filter(Boolean))].sort()
   const gaugeOptions = [...new Set(rows.map(r => r.gaugeName).filter(Boolean))].sort()
   const evaluatorOptions = [...new Set(rows.map(r => r.evaluatorName).filter(Boolean))].sort()
 
@@ -1460,6 +1372,7 @@ function CalibrationInsights() {
     (!filterHub || r.hub === filterHub) &&
     (!filterMarket || r.market === filterMarket) &&
     (!filterScorecard || r.scorecardName === filterScorecard) &&
+    (!filterSession || r.sessionTitle === filterSession) &&
     (!filterGauge || r.gaugeName === filterGauge) &&
     (!filterEvaluator || r.evaluatorName === filterEvaluator) &&
     (!filterDateFrom || (r.sessionDate && r.sessionDate >= filterDateFrom)) &&
@@ -1583,9 +1496,15 @@ function CalibrationInsights() {
         <button className="btn btn-secondary btn-sm" onClick={exportToCsv}>⬇ Export to Excel</button>
       </div>
 
-      {(bpoOptions.length > 0 || hubOptions.length > 0 || marketOptions.length > 0 || scorecardOptions.length > 0 || gaugeOptions.length > 0 || evaluatorOptions.length > 0) && (
+      {(bpoOptions.length > 0 || hubOptions.length > 0 || marketOptions.length > 0 || scorecardOptions.length > 0 || sessionOptions.length > 0 || gaugeOptions.length > 0 || evaluatorOptions.length > 0) && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
+          {sessionOptions.length > 0 && (
+            <select style={filterSelectStyle} value={filterSession} onChange={e => setFilterSession(e.target.value)}>
+              <option value="">All Sessions</option>
+              {sessionOptions.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          )}
           {scorecardOptions.length > 0 && (
             <select style={filterSelectStyle} value={filterScorecard} onChange={e => setFilterScorecard(e.target.value)}>
               <option value="">All Scorecards</option>
@@ -1626,10 +1545,10 @@ function CalibrationInsights() {
           <input type="date" style={filterSelectStyle} value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} />
           <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>to</span>
           <input type="date" style={filterSelectStyle} value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} />
-          {(filterBpo || filterHub || filterMarket || filterScorecard || filterGauge || filterEvaluator || filterDateFrom || filterDateTo) && (
+          {(filterBpo || filterHub || filterMarket || filterScorecard || filterSession || filterGauge || filterEvaluator || filterDateFrom || filterDateTo) && (
             <button className="btn btn-ghost btn-sm" onClick={() => {
               setFilterBpo(''); setFilterHub(''); setFilterMarket('')
-              setFilterScorecard(''); setFilterGauge(''); setFilterEvaluator('')
+              setFilterScorecard(''); setFilterSession(''); setFilterGauge(''); setFilterEvaluator('')
               setFilterDateFrom(''); setFilterDateTo('')
             }}>
               Clear filters

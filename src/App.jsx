@@ -91,7 +91,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
         <Navbar />
         <main className="main-content">
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<Navigate to="/evaluations" replace />} />
             <Route path="/dashboard" element={<DashboardHome />} />
             <Route path="/dashboard/:division" element={<DashboardHome />} />
             <Route path="/dashboard/:division/:scorecardId" element={<ScorecardDashboard />} />

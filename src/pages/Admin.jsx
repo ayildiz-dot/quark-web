@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
@@ -1871,7 +1871,7 @@ function ScorecardsTab({ profile, flash }) {
           {rows.map(sc => (
             <tr key={sc.id}>
               <td style={{ fontWeight: 500 }}>{sc.name}</td>
-              <td style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <td style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
                 <TypeBadge type={sc.type} />
                 {sc.is_calibration && (
                   <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 6, fontWeight: 600,
@@ -1989,7 +1989,8 @@ function ScorecardsTab({ profile, flash }) {
 // ─── Main Admin ────────────────────────────────────────────────────────────────
 export default function Admin() {
   const { profile } = useAuth()
-  const [tab, setTab] = useState('users')
+  const [searchParams] = useSearchParams()
+  const [tab, setTab] = useState(searchParams.get('tab') || 'users')
   const [msg, setMsg] = useState(null)
 
   const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }

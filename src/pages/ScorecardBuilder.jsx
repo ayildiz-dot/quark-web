@@ -554,7 +554,7 @@ export default function ScorecardBuilder() {
       <div className="page-header">
         <div>
           <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }}
-            onClick={() => safeNavigate('/scorecards')}>
+            onClick={() => safeNavigate('/admin?tab=scorecards')}>
             ← Back to Scorecards
           </button>
           <h1>{scorecard.name}</h1>
