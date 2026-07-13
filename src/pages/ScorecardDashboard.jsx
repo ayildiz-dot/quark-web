@@ -1188,7 +1188,7 @@ export default function ScorecardDashboard() {
         </div>
         {canEdit && (
           <button
-            className={editMode ? 'btn btn-primary' : 'btn btn-secondary'}
+            className={editMode ? 'btn btn-primary' : 'btn btn-accent-soft'}
             disabled={saving}
             onClick={() => { setEditMode(v => !v); setShowAddPanel(v => !v) }}>
             {editMode ? 'Done editing' : 'Edit dashboard'}
