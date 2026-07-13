@@ -74,12 +74,15 @@ ${redacted}
       )
     }
 
+    const startTime = Date.now()
+    const totalBudgetMs = 135000
     let geminiRes: Response | undefined
-    const maxAttempts = 2
-    const perAttemptTimeoutMs = 55000
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const remaining = totalBudgetMs - (Date.now() - startTime)
+      if (remaining < 10000) break
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), perAttemptTimeoutMs)
+      const timeoutId = setTimeout(() => controller.abort(), remaining)
+      const attemptStart = Date.now()
       try {
         geminiRes = await fetch(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
@@ -90,7 +93,7 @@ ${redacted}
             body: JSON.stringify({
               contents: [{ role: "user", parts: [{ text: prompt }] }],
               generationConfig: {
-                thinkingConfig: { thinkingLevel: "LOW" },
+                thinkingConfig: { thinkingLevel: "MINIMAL" },
                 responseMimeType: "application/json",
                 responseSchema: {
                   type: "OBJECT",
@@ -105,17 +108,17 @@ ${redacted}
           },
         )
       } catch (fetchErr) {
-        console.error(`Gemini fetch failed (attempt ${attempt}/${maxAttempts}):`, fetchErr?.message || fetchErr)
+        console.error(`Gemini fetch failed (attempt ${attempt}):`, fetchErr?.message || fetchErr)
         geminiRes = undefined
+        break
       } finally {
         clearTimeout(timeoutId)
       }
-      if (geminiRes?.ok) break
-      if (geminiRes) {
-        const errText = await geminiRes.text()
-        console.error(`Gemini API error (attempt ${attempt}/${maxAttempts}):`, geminiRes.status, errText)
-        if (geminiRes.status !== 503) break
-      }
+      if (geminiRes.ok) break
+      const errText = await geminiRes.text()
+      console.error(`Gemini API error (attempt ${attempt}):`, geminiRes.status, errText)
+      const attemptDuration = Date.now() - attemptStart
+      if (geminiRes.status !== 503 || attemptDuration > 15000) break
     }
 
     if (!geminiRes || !geminiRes.ok) {
