@@ -327,3 +327,8 @@ body::before {
 @media (prefers-reduced-motion: reduce) {
   body::before { animation: none; }
 }
+
+/* Quark ambient background - light mode tuning (added by Claude) */
+[data-theme="light"] body::before {
+  opacity: 0.1;
+}
