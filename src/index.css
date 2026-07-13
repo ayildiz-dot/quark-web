@@ -332,3 +332,15 @@ body::before {
 [data-theme="light"] body::before {
   opacity: 0.1;
 }
+
+/* Quark accent-soft button style (added by Claude) */
+.btn-accent-soft {
+  background: var(--accent-light);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-weight: 600;
+}
+.btn-accent-soft:hover {
+  background: var(--accent);
+  color: #fff;
+}

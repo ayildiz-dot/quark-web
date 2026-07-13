@@ -1126,8 +1126,7 @@ export default function EvaluationForm() {
             <p className="page-sub">Step 2 of 2 — {isDsat ? 'Complete the DSAT form' : 'Score each question'}</p>
             {!isDsat && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => setShowLgtmConfirm(true)}
-                  style={{ fontWeight: 600 }}>
+                <button className="btn btn-accent-soft" onClick={() => setShowLgtmConfirm(true)}>
                   LGTM
                 </button>
                 <span
