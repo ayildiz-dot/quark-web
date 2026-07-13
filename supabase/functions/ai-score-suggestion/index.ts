@@ -87,42 +87,50 @@ Respond only with the requested JSON, one entry per attribute id listed above.`
       )
     }
 
-    const geminiRes = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            thinkingConfig: { thinkingLevel: "LOW" },
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "OBJECT",
-              properties: {
-                suggestions: {
-                  type: "ARRAY",
-                  items: {
-                    type: "OBJECT",
-                    properties: {
-                      questionId: { type: "STRING" },
-                      score: { type: "STRING", enum: ["pass", "fail", "na"] },
-                      comment: { type: "STRING" },
+    let geminiRes: Response | undefined
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      geminiRes = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              thinkingConfig: { thinkingLevel: "LOW" },
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: "OBJECT",
+                properties: {
+                  suggestions: {
+                    type: "ARRAY",
+                    items: {
+                      type: "OBJECT",
+                      properties: {
+                        questionId: { type: "STRING" },
+                        score: { type: "STRING", enum: ["pass", "fail", "na"] },
+                        comment: { type: "STRING" },
+                      },
+                      required: ["questionId", "score", "comment"],
                     },
-                    required: ["questionId", "score", "comment"],
                   },
                 },
+                required: ["suggestions"],
               },
-              required: ["suggestions"],
             },
-          },
-        }),
-      },
-    )
-
-    if (!geminiRes.ok) {
+          }),
+        },
+      )
+      if (geminiRes.ok) break
       const errText = await geminiRes.text()
-      console.error("Gemini API error:", geminiRes.status, errText)
+      console.error(`Gemini API error (attempt ${attempt}/${maxAttempts}):`, geminiRes.status, errText)
+      // Only 503 (model overloaded) is worth retrying — other statuses will just fail the same way again.
+      if (geminiRes.status !== 503 || attempt === maxAttempts) break
+      await new Promise((r) => setTimeout(r, attempt * 1500))
+    }
+
+    if (!geminiRes || !geminiRes.ok) {
       return new Response(JSON.stringify({ error: "Gemini request failed" }), {
         status: 502,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },

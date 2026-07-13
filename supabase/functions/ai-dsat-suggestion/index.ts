@@ -74,32 +74,39 @@ ${redacted}
       )
     }
 
-    const geminiRes = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            thinkingConfig: { thinkingLevel: "LOW" },
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "OBJECT",
-              properties: {
-                answer: { type: "STRING", enum: options },
-                reasoning: { type: "STRING" },
+    let geminiRes: Response | undefined
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      geminiRes = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: {
+              thinkingConfig: { thinkingLevel: "LOW" },
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: "OBJECT",
+                properties: {
+                  answer: { type: "STRING", enum: options },
+                  reasoning: { type: "STRING" },
+                },
+                required: ["answer", "reasoning"],
               },
-              required: ["answer", "reasoning"],
             },
-          },
-        }),
-      },
-    )
-
-    if (!geminiRes.ok) {
+          }),
+        },
+      )
+      if (geminiRes.ok) break
       const errText = await geminiRes.text()
-      console.error("Gemini API error:", geminiRes.status, errText)
+      console.error(`Gemini API error (attempt ${attempt}/${maxAttempts}):`, geminiRes.status, errText)
+      if (geminiRes.status !== 503 || attempt === maxAttempts) break
+      await new Promise((r) => setTimeout(r, attempt * 1500))
+    }
+
+    if (!geminiRes || !geminiRes.ok) {
       return new Response(JSON.stringify({ error: "Gemini request failed" }), {
         status: 502,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
