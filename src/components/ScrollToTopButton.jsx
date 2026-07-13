@@ -1,20 +1,21 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 
-export default function ScrollToTopButton({ containerRef, threshold = 400 }) {
+export default function ScrollToTopButton({ threshold = 400 }) {
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
-    const el = containerRef?.current
-    if (!el) return
-    const onScroll = () => setVisible(el.scrollTop > threshold)
-    el.addEventListener('scroll', onScroll, { passive: true })
+    const onScroll = () => {
+      const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0
+      setVisible(scrollTop > threshold)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
     onScroll()
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [containerRef, threshold])
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [threshold])
 
   const scrollToTop = () => {
-    containerRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   return (

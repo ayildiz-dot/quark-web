@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, useRef } from 'react'
+import { useState, useEffect, createContext, useContext } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from './lib/supabase'
@@ -45,7 +45,6 @@ function UnsavedModal({ show, onLeave, onStay }) {
 function AppShell({ user, profile, logout, fetchProfile }) {
   const navigate = useNavigate()
   const location = useLocation()
-  const mainContentRef = useRef(null)
   const [unsavedChanges, setUnsavedChanges] = useState(false)
   const [showNavModal, setShowNavModal] = useState(false)
   const [pendingNavPath, setPendingNavPath] = useState(null)
@@ -93,7 +92,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
       <div className="app-shell">
         <UnsavedModal show={showNavModal} onLeave={handleLeave} onStay={handleStay} />
         <Navbar />
-        <main className="main-content" ref={mainContentRef}>
+        <main className="main-content">
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}
@@ -118,7 +117,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
             </motion.div>
           </AnimatePresence>
         </main>
-        <ScrollToTopButton containerRef={mainContentRef} />
+        <ScrollToTopButton />
       </div>
     </AuthContext.Provider>
   )
