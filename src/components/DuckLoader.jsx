@@ -6,7 +6,7 @@ export default function DuckLoader() {
       <div className="duck-stage">
         <div className="ground-line" />
         <div className="duck-walker">
-          <svg width="64" height="72" viewBox="0 0 64 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg width="76" height="72" viewBox="-12 0 76 72" fill="none" xmlns="http://www.w3.org/2000/svg">
             <g className="duck-body-group">
               <ellipse cx="54" cy="44" rx="8" ry="5" fill="#F5C842" transform="rotate(-20 54 44)"/>
               <ellipse cx="32" cy="44" rx="22" ry="16" fill="#F5C842"/>
