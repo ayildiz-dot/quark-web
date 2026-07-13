@@ -80,21 +80,23 @@ function DivisionPicker() {
     const inactive = !div.is_active
     return (
       <div
+        {...(inactive ? {} : lift)}
         style={{
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 'var(--radius-lg)', padding: '28px 24px',
           display: 'flex', flexDirection: 'column', gap: 16,
-          transition: 'all .18s ease', position: 'relative',
+          transition: 'transform .25s cubic-bezier(0.34, 1.56, 0.64, 1), border-color .18s ease, box-shadow .18s ease',
+          position: 'relative',
           opacity: inactive ? 0.7 : 1,
         }}>
         <button
-          {...(inactive ? {} : lift)}
           onClick={() => !inactive && navigate(`/dashboard/${encodeURIComponent(div.name)}`)}
           disabled={inactive}
           style={{
             background: 'transparent', border: 'none', padding: 0,
             cursor: inactive ? 'default' : 'pointer', textAlign: 'left',
             color: 'var(--text-primary)', display: 'flex', flexDirection: 'column', gap: 6,
+            width: '100%', boxSizing: 'border-box',
           }}>
           <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.2px' }}>{div.name}</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
