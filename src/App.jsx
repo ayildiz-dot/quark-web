@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from './lib/supabase'
 import Navbar from './components/Navbar'
 import Login from './pages/Login'
@@ -42,6 +43,7 @@ function UnsavedModal({ show, onLeave, onStay }) {
 
 function AppShell({ user, profile, logout, fetchProfile }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const [unsavedChanges, setUnsavedChanges] = useState(false)
   const [showNavModal, setShowNavModal] = useState(false)
   const [pendingNavPath, setPendingNavPath] = useState(null)
@@ -90,19 +92,29 @@ function AppShell({ user, profile, logout, fetchProfile }) {
         <UnsavedModal show={showNavModal} onLeave={handleLeave} onStay={handleStay} />
         <Navbar />
         <main className="main-content">
-          <Routes>
-            <Route path="/" element={<Navigate to="/evaluations" replace />} />
-            <Route path="/dashboard" element={<DashboardHome />} />
-            <Route path="/dashboard/:division" element={<DashboardHome />} />
-            <Route path="/dashboard/:division/:scorecardId" element={<ScorecardDashboard />} />
-            <Route path="/evaluations" element={<Evaluations />} />
-            <Route path="/evaluations/new" element={<EvaluationForm />} />
-            <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
-            <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
-            <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            >
+              <Routes location={location}>
+                <Route path="/" element={<Navigate to="/evaluations" replace />} />
+                <Route path="/dashboard" element={<DashboardHome />} />
+                <Route path="/dashboard/:division" element={<DashboardHome />} />
+                <Route path="/dashboard/:division/:scorecardId" element={<ScorecardDashboard />} />
+                <Route path="/evaluations" element={<Evaluations />} />
+                <Route path="/evaluations/new" element={<EvaluationForm />} />
+                <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
+                <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
+                <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/calibration" element={isKgUser ? <Calibration /> : <Navigate to="/dashboard" replace />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
+              </Routes>
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
     </AuthContext.Provider>

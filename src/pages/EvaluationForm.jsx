@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
@@ -935,7 +936,7 @@ export default function EvaluationForm() {
           <p className="page-sub">Select a scorecard to begin</p>
         </div>
       </div>
-      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
+      <AnimatePresence>{msg && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, overflow: 'hidden' }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></motion.div>}</AnimatePresence>
       {showDraftLimit && (
         <div className="modal-backdrop">
           <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
@@ -998,7 +999,7 @@ export default function EvaluationForm() {
         </div>
         {!editingEvalId && <DraftSaveButton />}
       </div>
-      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
+      <AnimatePresence>{msg && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, overflow: 'hidden' }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></motion.div>}</AnimatePresence>
       {selectedScorecard.is_spot_check && !editingEvalId && vendorLookupState === 'loading' && (
         <div style={{ maxWidth: 600, marginBottom: 16, fontSize: 13, color: 'var(--text-secondary)' }}>
           Looking up the Vendor evaluation for this ticket…
@@ -1146,9 +1147,9 @@ export default function EvaluationForm() {
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
               {answered}/{total} answered
             </span>
-            <button className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}>
+            <motion.button whileTap={{ scale: 0.96 }} className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}>
               {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
-            </button>
+            </motion.button>
           </div>
         </div>
         <div style={{ height: 4, background: 'var(--border)', borderRadius: 4, marginBottom: 24 }}>
@@ -1157,7 +1158,7 @@ export default function EvaluationForm() {
             width: `${pct}%`, transition: 'width 0.3s'
           }} />
         </div>
-        {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
+        <AnimatePresence>{msg && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, overflow: 'hidden' }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></motion.div>}</AnimatePresence>
         {showLgtmConfirm && (
           <div className="modal-backdrop" onClick={() => setShowLgtmConfirm(false)}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420, textAlign: 'center' }}>
@@ -1358,10 +1359,10 @@ export default function EvaluationForm() {
                 </div>
                 {isLastSection && (
                   <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
-                    <button className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}
+                    <motion.button whileTap={{ scale: 0.96 }} className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}
                       style={{ marginRight: 12 }}>
                       {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
-                    </button>
+                    </motion.button>
                     <button className="btn btn-ghost" onClick={goToPrevSection}>← Back</button>
                   </div>
                 )}
@@ -1440,10 +1441,10 @@ export default function EvaluationForm() {
                   onChange={e => setOverallComment(e.target.value)}
                   style={{ resize: 'vertical', fontSize: 13 }} />
               </div>
-              <button className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}
+              <motion.button whileTap={{ scale: 0.96 }} className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}
                 style={{ marginRight: 12 }}>
                 {submitting ? (editingEvalId ? 'Saving…' : 'Submitting…') : (editingEvalId ? 'Save Edit' : 'Submit Evaluation')}
-              </button>
+              </motion.button>
               <button className="btn btn-ghost" onClick={() => setStep('metadata')}>
                 ← Back to Details
               </button>
@@ -1468,18 +1469,30 @@ export default function EvaluationForm() {
           <h1 style={{ marginBottom: 8 }}>{editingEvalId ? 'Evaluation Updated' : 'Evaluation Submitted'}</h1>
           <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>{selectedScorecard.name}</p>
           {!isDsat && (
-            <div className="card" style={{ marginBottom: 32 }}>
+            <motion.div
+              className="card"
+              style={{ marginBottom: 32 }}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 260, damping: 20 }}
+            >
               <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Final Score</div>
               <div style={{
                 fontSize: 48, fontWeight: 700,
                 color: failed_critical ? 'var(--danger)' : passed ? 'var(--success)' : 'var(--danger)'
               }}>
-                {failed_critical ? '0%' : `${score}%`}
+                {failed_critical ? '0%' : <CountUp target={score} />}
               </div>
               <div style={{ marginTop: 12 }}>
-                <span className={`badge ${passed ? 'badge-pass' : 'badge-fail'}`} style={{ fontSize: 14, padding: '4px 14px' }}>
+                <motion.span
+                  className={`badge ${passed ? 'badge-pass' : 'badge-fail'}`}
+                  style={{ fontSize: 14, padding: '4px 14px', display: 'inline-block' }}
+                  initial={{ opacity: 0, scale: 0.7 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 18, delay: 0.5 }}
+                >
                   {passed ? 'PASS' : 'FAIL'}
-                </span>
+                </motion.span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
                 Passing score: {passThreshold}%
@@ -1489,7 +1502,7 @@ export default function EvaluationForm() {
                   A form-critical question was failed
                 </div>
               )}
-            </div>
+            </motion.div>
           )}
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
             <button className="btn btn-primary" onClick={() => {
@@ -1512,6 +1525,23 @@ export default function EvaluationForm() {
       </div>
     )
   }
+}
+
+function CountUp({ target, duration = 700 }) {
+  const [value, setValue] = useState(0)
+  useEffect(() => {
+    let raf
+    const start = performance.now()
+    const tick = (now) => {
+      const progress = Math.min((now - start) / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setValue(Math.round(target * eased))
+      if (progress < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [target, duration])
+  return <>{value}%</>
 }
 
 function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning }) {
