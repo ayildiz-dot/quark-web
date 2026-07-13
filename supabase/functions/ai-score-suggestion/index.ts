@@ -95,6 +95,7 @@ Respond only with the requested JSON, one entry per attribute id listed above.`
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
+            thinkingConfig: { thinkingLevel: "LOW" },
             responseMimeType: "application/json",
             responseSchema: {
               type: "OBJECT",

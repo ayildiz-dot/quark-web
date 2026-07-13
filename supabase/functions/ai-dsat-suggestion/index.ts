@@ -82,6 +82,7 @@ ${redacted}
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
+            thinkingConfig: { thinkingLevel: "LOW" },
             responseMimeType: "application/json",
             responseSchema: {
               type: "OBJECT",
