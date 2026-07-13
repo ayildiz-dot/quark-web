@@ -1493,7 +1493,7 @@ function CalibrationInsights() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <button className="btn btn-secondary btn-sm" onClick={exportToCsv}>⬇ Export to Excel</button>
+        <button className="btn btn-accent-soft" onClick={exportToCsv}>⬇ Export to Excel</button>
       </div>
 
       {(bpoOptions.length > 0 || hubOptions.length > 0 || marketOptions.length > 0 || scorecardOptions.length > 0 || sessionOptions.length > 0 || gaugeOptions.length > 0 || evaluatorOptions.length > 0) && (
