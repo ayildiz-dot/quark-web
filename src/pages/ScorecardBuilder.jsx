@@ -333,7 +333,8 @@ export default function ScorecardBuilder() {
   }
 
   const deleteMetaField = async (fieldId) => {
-    await supabase.from('scorecard_metadata_fields').delete().eq('id', fieldId)
+    const { error } = await supabase.from('scorecard_metadata_fields').delete().eq('id', fieldId)
+    if (error) return flash('Failed to delete field: ' + error.message, false)
     setMetadata(m => m.filter(f => f.id !== fieldId))
     if (isPublished) markChanged()
   }
@@ -361,7 +362,10 @@ export default function ScorecardBuilder() {
 
   const deleteGroup = async (groupId) => {
     if (!confirm('Delete this group? Questions inside will become ungrouped.')) return
-    await supabase.from('scorecard_question_groups').delete().eq('id', groupId)
+    const { error: ungroupErr } = await supabase.from('scorecard_questions').update({ group_id: null }).eq('group_id', groupId)
+    if (ungroupErr) return flash('Failed to ungroup questions: ' + ungroupErr.message, false)
+    const { error } = await supabase.from('scorecard_question_groups').delete().eq('id', groupId)
+    if (error) return flash('Failed to delete group: ' + error.message, false)
     setGroups(g => g.filter(gr => gr.id !== groupId))
     setQuestions(q => q.map(qs => qs.group_id === groupId ? { ...qs, group_id: null } : qs))
     if (isPublished) markChanged()
@@ -492,7 +496,17 @@ export default function ScorecardBuilder() {
 
   const deleteSection = async (sId) => {
     if (!confirm('Delete this section and all its questions?')) return
-    await supabase.from('dsat_sections').delete().eq('id', sId)
+    const childQIds = dsatQuestions.filter(q => q.section_id === sId).map(q => q.id)
+    if (childQIds.length) {
+      const { error: optErr } = await supabase.from('dsat_options').delete().in('question_id', childQIds)
+      if (optErr) return flash('Failed to delete section: ' + optErr.message, false)
+      const { error: qErr } = await supabase.from('dsat_questions').delete().in('id', childQIds)
+      if (qErr) return flash('Failed to delete section: ' + qErr.message, false)
+    }
+    const { error: routeErr } = await supabase.from('dsat_options').update({ jump_to_section_id: null }).eq('jump_to_section_id', sId)
+    if (routeErr) return flash('Failed to clear routing into this section: ' + routeErr.message, false)
+    const { error } = await supabase.from('dsat_sections').delete().eq('id', sId)
+    if (error) return flash('Failed to delete section: ' + error.message, false)
     setSections(s => s.filter(sec => sec.id !== sId))
     setDsatQuestions(q => q.filter(dq => dq.section_id !== sId))
     if (isPublished) markChanged()
@@ -522,7 +536,10 @@ export default function ScorecardBuilder() {
 
   const deleteDsatQuestion = async (qId) => {
     if (!confirm('Delete this question?')) return
-    await supabase.from('dsat_questions').delete().eq('id', qId)
+    const { error: optErr } = await supabase.from('dsat_options').delete().eq('question_id', qId)
+    if (optErr) return flash('Failed to delete question: ' + optErr.message, false)
+    const { error } = await supabase.from('dsat_questions').delete().eq('id', qId)
+    if (error) return flash('Failed to delete question: ' + error.message, false)
     setDsatQuestions(q => q.filter(dq => dq.id !== qId))
     setDsatOptions(o => o.filter(opt => opt.question_id !== qId))
     if (isPublished) markChanged()
@@ -551,7 +568,8 @@ export default function ScorecardBuilder() {
   }
 
   const deleteOption = async (optId) => {
-    await supabase.from('dsat_options').delete().eq('id', optId)
+    const { error } = await supabase.from('dsat_options').delete().eq('id', optId)
+    if (error) return flash('Failed to delete option: ' + error.message, false)
     setDsatOptions(o => o.filter(opt => opt.id !== optId))
     if (isPublished) markChanged()
   }

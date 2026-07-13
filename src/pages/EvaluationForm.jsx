@@ -1111,6 +1111,12 @@ export default function EvaluationForm() {
   if (step === 'questions') {
     const isDsat = selectedScorecard?.type === 'dsat'
     const ungrouped = questions.filter(q => !q.group_id)
+    const questionNumbers = new Map()
+    let _qNumCounter = 0
+    for (const q of ungrouped) questionNumbers.set(q.id, ++_qNumCounter)
+    for (const group of groups) {
+      for (const q of questions.filter(gq => gq.group_id === group.id)) questionNumbers.set(q.id, ++_qNumCounter)
+    }
     const answered = isDsat
       ? Object.values(dsatAnswers).filter(a => a.value).length
       : Object.values(answers).filter(a => a.score !== null).length
@@ -1396,6 +1402,7 @@ export default function EvaluationForm() {
             {ungrouped.map(q => (
               <QuestionCard key={q.id} question={q}
                 answer={answers[q.id]}
+                number={questionNumbers.get(q.id)}
                 aiSuggested={aiSuggestedIds.has(q.id)}
                 aiReasoning={aiSuggestions[q.id]?.reasoning}
                 onChange={(updates) => {
@@ -1418,6 +1425,7 @@ export default function EvaluationForm() {
                   {groupQs.map(q => (
                     <QuestionCard key={q.id} question={q}
                       answer={answers[q.id]}
+                      number={questionNumbers.get(q.id)}
                       aiSuggested={aiSuggestedIds.has(q.id)}
                       aiReasoning={aiSuggestions[q.id]?.reasoning}
                       onChange={(updates) => {
@@ -1543,7 +1551,7 @@ function CountUp({ target, duration = 700 }) {
   return <>{value}%</>
 }
 
-function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning }) {
+function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning, number }) {
   const score = answer?.score
   const comment = answer?.comment || ''
   const btnStyle = (val) => ({
@@ -1565,7 +1573,10 @@ function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning }) 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ fontWeight: 500, marginBottom: 4 }}>
-            {question.title}
+            {number != null ? `${number}. ` : ''}{question.title}
+            {question.is_ai_attribute && (
+              <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--accent)', background: 'var(--accent-light)', borderRadius: 4, padding: '2px 7px', fontWeight: 500 }}>✨ AI Attribute</span>
+            )}
             {aiSuggested && (
               <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--accent)', background: 'var(--accent-light)', borderRadius: 4, padding: '2px 7px', fontWeight: 500 }}>✨ AI suggested — review</span>
             )}
