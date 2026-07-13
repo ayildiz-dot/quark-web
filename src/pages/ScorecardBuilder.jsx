@@ -109,7 +109,7 @@ export default function ScorecardBuilder() {
       supabase.from('scorecards').select('*').eq('id', id).single(),
       supabase.from('scorecard_metadata_fields').select('*').eq('scorecard_id', id).order('position'),
       supabase.from('scorecard_question_groups').select('*').eq('scorecard_id', id).order('position'),
-      supabase.from('scorecard_questions').select('*').eq('scorecard_id', id).order('position'),
+      supabase.from('scorecard_questions').select('*').eq('scorecard_id', id).eq('is_archived', false).order('position'),
     ])
     setScorecard(sc.data)
     setDivision(sc.data?.division || '')
@@ -392,7 +392,17 @@ export default function ScorecardBuilder() {
 
   const deleteQuestion = async (qId) => {
     if (!confirm('Delete this question?')) return
-    await supabase.from('scorecard_questions').delete().eq('id', qId)
+    const { error } = await supabase.from('scorecard_questions').delete().eq('id', qId)
+    if (error) {
+      if (error.code === '23503') {
+        const { error: archiveErr } = await supabase.from('scorecard_questions').update({ is_archived: true }).eq('id', qId)
+        if (archiveErr) return flash('Failed to remove question: ' + archiveErr.message, false)
+        setQuestions(q => q.filter(qs => qs.id !== qId))
+        if (isPublished) markChanged()
+        return flash('This question has past evaluation history, so it was archived instead of deleted. It will no longer appear in new evaluations.')
+      }
+      return flash('Failed to delete question: ' + error.message, false)
+    }
     setQuestions(q => q.filter(qs => qs.id !== qId))
     if (isPublished) markChanged()
   }

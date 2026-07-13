@@ -513,7 +513,7 @@ export default function EvaluationForm() {
     } else {
       const [grp, qs] = await Promise.all([
         supabase.from('scorecard_question_groups').select('*').eq('scorecard_id', sc.id).order('position'),
-        supabase.from('scorecard_questions').select('*').eq('scorecard_id', sc.id).order('position'),
+        supabase.from('scorecard_questions').select('*').eq('scorecard_id', sc.id).eq('is_archived', false).order('position'),
       ])
       setGroups(grp.data || [])
       setQuestions(qs.data || [])
