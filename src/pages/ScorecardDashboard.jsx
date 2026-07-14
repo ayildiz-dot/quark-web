@@ -1094,25 +1094,11 @@ export default function ScorecardDashboard() {
       )
     }
     if (w.widget_type === 'ai_attribute_accuracy') {
-      const { rows, pooled, evalsWithAi } = aiAttributeStats
+      const { rows, pooled } = aiAttributeStats
       return (
         <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
           {removeBtn}
           <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:12, marginBottom:16 }}>
-            <div style={{ background:'var(--bg-secondary)', border:'1px solid var(--border)', borderRadius:'var(--radius-lg)', padding:'16px 18px' }}>
-              <div className="stat-label">Overall AI Accuracy</div>
-              <div className="stat-value" style={{ color: pooled && pooled.pct >= 90 ? 'var(--success)' : 'var(--text-primary)' }}>
-                {pooled ? pooled.pct + '%' : '—'}
-              </div>
-              <div className="stat-sub">{pooled ? pooled.matched + ' of ' + pooled.total + ' AI attributes matched' : 'No AI-scored attributes yet'}</div>
-            </div>
-            <div style={{ background:'var(--bg-secondary)', border:'1px solid var(--border)', borderRadius:'var(--radius-lg)', padding:'16px 18px' }}>
-              <div className="stat-label"># Evaluations with minimum 1 AI Attribute</div>
-              <div className="stat-value">{evalsWithAi}</div>
-              <div className="stat-sub">In the filtered view</div>
-            </div>
-          </div>
           {rows.length === 0 ? (
             <p style={{ color:'var(--text-tertiary)', fontSize:13, textAlign:'center', padding:'20px 0' }}>
               No AI-suggested scores yet for this scorecard's filtered evaluations.
@@ -1185,6 +1171,7 @@ export default function ScorecardDashboard() {
   const charts    = widgets.filter(w => w.widget_type !== 'stat_card')
   const statIds   = statCards.map(w => w.id)
   const chartIds  = charts.map(w => w.id)
+  const showAiCards = scorecard.type === 'quality' && !!aiAttributeStats.pooled
   const anyActive = Object.values(filterState).some(v =>
     Array.isArray(v) ? v.length : (v && (v.from || v.to)))
   const setFilter = (key, val) => setFilterState(s => ({ ...s, [key]: val }))
@@ -1278,7 +1265,7 @@ export default function ScorecardDashboard() {
         onDragEnd={handleDragEnd}
       >
         {/* Stat cards zone */}
-        {statCards.length > 0 && (
+        {(statCards.length > 0 || showAiCards) && (
           <SortableContext items={statIds} strategy={horizontalListSortingStrategy}>
             <div className="stats-grid">
               {statCards.map(w => (
@@ -1286,6 +1273,20 @@ export default function ScorecardDashboard() {
                   {renderWidget(w)}
                 </SortableWidget>
               ))}
+              {showAiCards && (
+                <>
+                  <div className="stat-card">
+                    <div className="stat-label">Overall AI Accuracy</div>
+                    <div className="stat-value" style={{ color: aiAttributeStats.pooled.pct >= 90 ? 'var(--success)' : 'var(--text-primary)' }}>{aiAttributeStats.pooled.pct}%</div>
+                    <div className="stat-sub">{aiAttributeStats.pooled.matched} of {aiAttributeStats.pooled.total} AI attributes matched</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-label"># Evaluations with minimum 1 AI Attribute</div>
+                    <div className="stat-value">{aiAttributeStats.evalsWithAi}</div>
+                    <div className="stat-sub">In the filtered view</div>
+                  </div>
+                </>
+              )}
             </div>
           </SortableContext>
         )}
