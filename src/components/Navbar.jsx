@@ -106,6 +106,11 @@ export default function Navbar() {
           <i className="ti ti-clipboard-check" aria-hidden="true" />
           Evaluations
         </button>
+        <button className={`nav-item ${isActive('/coaching') ? 'active' : ''}`}
+          onClick={() => safeNavigate('/coaching')}>
+          <i className="ti ti-school" aria-hidden="true" />
+          Coaching
+        </button>
         {profile?.email?.endsWith('@kaizengaming.com') && (
           <button className={`nav-item ${isActive('/calibration') ? 'active' : ''}`}
             onClick={() => safeNavigate('/calibration')}>
