@@ -1157,11 +1157,21 @@ export default function EvaluationForm() {
             </motion.button>
           </div>
         </div>
-        <div style={{ height: 4, background: 'var(--border)', borderRadius: 4, marginBottom: 24 }}>
-          <div style={{
-            height: 4, borderRadius: 4, background: 'var(--accent)',
-            width: `${pct}%`, transition: 'width 0.3s'
-          }} />
+        <div style={{
+          position: 'sticky', top: 0, zIndex: 30, background: 'var(--bg-primary)',
+          paddingTop: 10, paddingBottom: 12, marginBottom: 20,
+          borderBottom: '1px solid var(--border)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)' }}>{answered}/{total} answered</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>{pct}%</span>
+          </div>
+          <div style={{ height: 4, background: 'var(--border)', borderRadius: 4 }}>
+            <div style={{
+              height: 4, borderRadius: 4, background: 'var(--accent)',
+              width: `${pct}%`, transition: 'width 0.3s'
+            }} />
+          </div>
         </div>
         <AnimatePresence>{msg && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, overflow: 'hidden' }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></motion.div>}</AnimatePresence>
         {showLgtmConfirm && (
@@ -1272,7 +1282,7 @@ export default function EvaluationForm() {
                       ✨ AI Prediction
                     </div>
                     {aiDsatLoading && (
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Getting the AI's prediction…</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={12} />Gemini is thinking…</div>
                     )}
                     {aiDsatError && (
                       <div style={{ fontSize: 12, color: 'var(--danger)' }}>{aiDsatError}</div>
@@ -1379,9 +1389,10 @@ export default function EvaluationForm() {
             {questions.some(q => q.is_ai_attribute) && (
               <div className="card" style={{ marginBottom: 20, background: 'var(--bg-secondary)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                  <div style={{ fontSize: 13 }}>
+                  <div style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {aiLoading && <Spinner />}
                     {aiLoading
-                      ? '✨ Getting AI suggestions…'
+                      ? '✨ Gemini is thinking…'
                       : Object.keys(aiSuggestions).length > 0
                         ? '✨ AI suggestions applied below — review each before submitting.'
                         : '✨ This scorecard has AI-assisted attributes.'}
@@ -1551,9 +1562,20 @@ function CountUp({ target, duration = 700 }) {
   return <>{value}%</>
 }
 
+function Spinner({ size = 13 }) {
+  return (
+    <span style={{
+      display: 'inline-block', width: size, height: size, flexShrink: 0,
+      border: '2px solid var(--border)', borderTopColor: 'var(--accent)',
+      borderRadius: '50%', animation: 'spin .7s linear infinite'
+    }} />
+  )
+}
+
 function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning, number }) {
   const score = answer?.score
   const comment = answer?.comment || ''
+  const [showDesc, setShowDesc] = useState(true)
   const btnStyle = (val) => ({
     flex: 1, padding: '8px 0', borderRadius: 6, fontWeight: 500, fontSize: 13,
     cursor: 'pointer', border: '1.5px solid',
@@ -1594,8 +1616,20 @@ function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning, nu
             )}
           </div>
           {question.description && (
-            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              {question.description}
+            <div style={{ marginTop: 2 }}>
+              <button
+                type="button"
+                onClick={() => setShowDesc(s => !s)}
+                className="btn btn-ghost btn-sm"
+                style={{ padding: '2px 6px', fontSize: 11, color: 'var(--text-secondary)', marginBottom: showDesc ? 6 : 0 }}
+              >
+                {showDesc ? '▲ Hide description' : '▼ Show description'}
+              </button>
+              {showDesc && (
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  {question.description}
+                </div>
+              )}
             </div>
           )}
         </div>
