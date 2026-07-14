@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
-// ─── COPC coaching constants ────────────────────────────────────────────────
+// ─── Coaching constants ─────────────────────────────────────────────────────
 const MODELS = [
   { value: 'GROW',     label: 'GROW (Goal · Reality · Options · Will)' },
   { value: 'CLEAR',    label: 'CLEAR (Contract · Listen · Explore · Action · Review)' },
@@ -43,19 +43,10 @@ function ConfirmModal({ message, onYes, onNo }) {
   )
 }
 
-const getMeta = (row, label) => {
-  const found = (row?.metadata_values || []).find(m => m.label?.toLowerCase() === label.toLowerCase())
-  return found?.value || ''
-}
-const avg = (nums) => nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null
-
-// ─── New session form (coach only) ─────────────────────────────────────────
+// ─── New session form (coach only) — free, overall coaching ─────────────────
 function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
   const [agentId, setAgentId]   = useState(parent?.agent_id || '')
   const [model, setModel]       = useState('GROW')
-  const [agentEvals, setEvals]  = useState([])
-  const [loadingEvals, setLE]   = useState(false)
-  const [linked, setLinked]     = useState(new Set())
   const [strengths, setStr]     = useState('')
   const [observations, setObs]  = useState('')
   const [rootCause, setRoot]    = useState('')
@@ -63,40 +54,11 @@ function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
   const [actions, setActions]   = useState([{ description: '', done_test: '', due_date: '' }])
   const [saving, setSaving]     = useState(false)
 
-  const agent = agents.find(a => a.id === agentId)
-
-  useEffect(() => {
-    if (!agent?.email) { setEvals([]); return }
-    let cancel = false
-    ;(async () => {
-      setLE(true)
-      const { data } = await supabase
-        .from('evaluations')
-        .select('id, eval_id, score, evaluation_type, submitted_at, scorecards!evaluations_scorecard_id_fkey(name, type)')
-        .eq('status', 'submitted')
-        .filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: agent.email }]))
-        .order('submitted_at', { ascending: false })
-        .limit(100)
-      if (!cancel) { setEvals(data || []); setLinked(new Set()); setLE(false) }
-    })()
-    return () => { cancel = true }
-  }, [agentId])
-
-  const toggleEval = (id) => setLinked(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
-
-  const baselineScore = useMemo(() => {
-    const scores = agentEvals
-      .filter(e => linked.has(e.id) && e.evaluation_type !== 'dsat' && e.score != null)
-      .map(e => Number(e.score))
-    return avg(scores)
-  }, [linked, agentEvals])
-
   const setFocusField  = (i, k, v) => setFocus(f => f.map((x, j) => j === i ? { ...x, [k]: v } : x))
   const setActionField = (i, k, v) => setActions(a => a.map((x, j) => j === i ? { ...x, [k]: v } : x))
 
   const save = async (deliver) => {
     if (!agentId) return flash('Select the agent being coached.', false)
-    if (linked.size === 0) return flash('Link at least one evaluation — COPC coaching must be based on real interactions.', false)
     const cleanFocus   = focus.filter(f => f.label.trim())
     const cleanActions = actions.filter(a => a.description.trim())
     if (deliver && cleanFocus.length === 0) return flash('Add at least one focus area before delivering.', false)
@@ -111,16 +73,10 @@ function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
       strengths: strengths.trim() || null,
       observations: observations.trim() || null,
       root_cause: rootCause.trim() || null,
-      baseline_score: baselineScore,
       parent_session_id: parent?.id || null,
     }).select().single()
     if (error) { setSaving(false); return flash(error.message, false) }
 
-    const links = [...linked].map(evaluation_id => ({ session_id: session.id, evaluation_id }))
-    if (links.length) {
-      const { error: le } = await supabase.from('coaching_session_evaluations').insert(links)
-      if (le) { setSaving(false); return flash(le.message, false) }
-    }
     if (cleanFocus.length) {
       await supabase.from('coaching_focus_areas').insert(cleanFocus.map((f, i) => ({
         session_id: session.id, label: f.label.trim(),
@@ -171,45 +127,6 @@ function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
         </div>
       </div>
 
-      <div style={sectionTitle}>Evaluations this coaching is based on
-        <span style={{ textTransform: 'none', fontWeight: 400, marginLeft: 8, color: 'var(--text-secondary)' }}>
-          (required — COPC coaching is grounded in real interactions)
-        </span>
-      </div>
-      {!agentId ? (
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>Select an agent to see their evaluations.</div>
-      ) : loadingEvals ? (
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Loading evaluations…</div>
-      ) : agentEvals.length === 0 ? (
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)', fontStyle: 'italic' }}>
-          No submitted evaluations found for this agent's email.
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
-          {agentEvals.map(ev => {
-            const isDsat = ev.evaluation_type === 'dsat'
-            return (
-              <label key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-                padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border)',
-                background: linked.has(ev.id) ? 'var(--accent)11' : 'var(--surface)' }}>
-                <input type="checkbox" checked={linked.has(ev.id)} onChange={() => toggleEval(ev.id)} style={{ cursor: 'pointer' }} />
-                <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-secondary)' }}>#{ev.eval_id || ev.id}</span>
-                <span style={{ fontSize: 13, flex: 1 }}>{ev.scorecards?.name || 'Scorecard'}</span>
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{new Date(ev.submitted_at).toLocaleDateString()}</span>
-                <span style={{ fontSize: 13, fontWeight: 600, minWidth: 44, textAlign: 'right' }}>
-                  {isDsat ? 'DSAT' : `${ev.score}%`}
-                </span>
-              </label>
-            )
-          })}
-        </div>
-      )}
-      {baselineScore != null && (
-        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
-          Baseline quality score from linked evaluations: <b style={{ color: 'var(--text-primary)' }}>{baselineScore}%</b>
-        </div>
-      )}
-
       <div style={sectionTitle}>Session notes</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div>
@@ -218,9 +135,9 @@ function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
             style={{ width: '100%', resize: 'vertical' }} placeholder="Recognise what the agent is doing well." />
         </div>
         <div>
-          <label style={labelStyle}>Observations from the interactions</label>
+          <label style={labelStyle}>Observations</label>
           <textarea className="input" rows={2} value={observations} onChange={e => setObs(e.target.value)}
-            style={{ width: '100%', resize: 'vertical' }} placeholder="What was seen in the linked evaluations." />
+            style={{ width: '100%', resize: 'vertical' }} placeholder="What you've observed overall." />
         </div>
         <div>
           <label style={labelStyle}>Agreed root cause</label>
@@ -302,21 +219,18 @@ function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
 function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, onRecoach }) {
   const [focus, setFocus]     = useState([])
   const [actions, setActions] = useState([])
-  const [evals, setEvals]     = useState([])
   const [followup, setFollow] = useState(session.followup_score ?? '')
   const [ackComment, setAck]  = useState('')
   const [confirm, setConfirm] = useState(null)
   const isOwnAgent = session.agent_id === profile.id
 
   const load = async () => {
-    const [{ data: f }, { data: a }, { data: se }] = await Promise.all([
+    const [{ data: f }, { data: a }] = await Promise.all([
       supabase.from('coaching_focus_areas').select('*').eq('session_id', session.id).order('sort_order'),
       supabase.from('coaching_action_items').select('*').eq('session_id', session.id).order('sort_order'),
-      supabase.from('coaching_session_evaluations').select('evaluation_id, evaluations(eval_id, score, evaluation_type, submitted_at, scorecards!evaluations_scorecard_id_fkey(name))').eq('session_id', session.id),
     ])
     setFocus(f || [])
     setActions(a || [])
-    setEvals((se || []).map(r => ({ link: r.evaluation_id, ...r.evaluations })).filter(x => x.eval_id != null || x.link))
   }
   useEffect(() => { load() }, [])
 
@@ -388,29 +302,9 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
             <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{new Date(session.session_date || session.created_at).toLocaleDateString()}</span>
           </div>
 
-          {(session.baseline_score != null || session.followup_score != null) && (
+          {session.followup_score != null && (
             <div style={{ marginTop: 12, fontSize: 13 }}>
-              <b>Effectiveness:</b>{' '}
-              baseline {session.baseline_score != null ? `${session.baseline_score}%` : '—'}
-              {' → '}follow-up {session.followup_score != null ? `${session.followup_score}%` : '—'}
-              {session.baseline_score != null && session.followup_score != null && (
-                <span style={{ marginLeft: 8, fontWeight: 600,
-                  color: session.followup_score >= session.baseline_score ? 'var(--success)' : 'var(--danger)' }}>
-                  ({session.followup_score - session.baseline_score >= 0 ? '+' : ''}{session.followup_score - session.baseline_score} pts)
-                </span>
-              )}
-            </div>
-          )}
-
-          <div style={label}>Based on evaluations</div>
-          {evals.length === 0 ? <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>—</div> : (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {evals.map((e, i) => (
-                <span key={i} style={{ fontSize: 12, padding: '3px 8px', borderRadius: 6,
-                  background: 'var(--accent)18', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
-                  #{e.eval_id || e.link} · {e.scorecards?.name || 'Scorecard'}{e.evaluation_type !== 'dsat' && e.score != null ? ` · ${e.score}%` : ''}
-                </span>
-              ))}
+              <b>Follow-up score:</b> {session.followup_score}%
             </div>
           )}
 
@@ -481,7 +375,7 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
               <div style={label}>Verification & close-out</div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
                 <div style={{ width: 180 }}>
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Follow-up quality score %</label>
+                  <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Follow-up score % (opt.)</label>
                   <input type="number" min={0} max={100} className="input" value={followup} onChange={e => setFollow(e.target.value)} style={{ width: '100%' }} placeholder="—" />
                 </div>
                 <button className="btn btn-ghost btn-sm" onClick={saveFollowup}>Save follow-up</button>
@@ -563,9 +457,6 @@ export default function Coaching() {
       <div className="page-header">
         <div>
           <h1>Coaching</h1>
-          <p className="page-sub">
-            {isCoach ? 'COPC-aligned coaching — grounded in evaluations, targeted, and closed-loop' : 'Your coaching sessions'}
-          </p>
         </div>
         {isCoach && !creating && (
           <button className="btn btn-primary" onClick={() => { setRecoach(null); setCreating(true) }}>+ New Coaching Session</button>
@@ -603,7 +494,7 @@ export default function Coaching() {
                 <th>Date</th>
                 <th>Status</th>
                 <th>Action plan</th>
-                <th>Baseline → Follow-up</th>
+                <th>Follow-up</th>
                 <th></th>
               </tr>
             </thead>
@@ -622,9 +513,7 @@ export default function Coaching() {
                     <td style={{ color: 'var(--text-secondary)' }}>{new Date(s.session_date || s.created_at).toLocaleDateString()}</td>
                     <td><StatusBadge status={s.status} /></td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{c.total ? `${c.done}/${c.total} resolved` : '—'}</td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                      {s.baseline_score != null ? `${s.baseline_score}%` : '—'} → {s.followup_score != null ? `${s.followup_score}%` : '—'}
-                    </td>
+                    <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{s.followup_score != null ? `${s.followup_score}%` : '—'}</td>
                     <td><button className="btn btn-ghost btn-sm" onClick={() => setDetail(s)}>View</button></td>
                   </tr>
                 )
