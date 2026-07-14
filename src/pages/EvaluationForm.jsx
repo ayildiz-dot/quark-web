@@ -35,6 +35,7 @@ export default function EvaluationForm() {
   const [aiSuggestedIds, setAiSuggestedIds] = useState(() => new Set())
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState(null)
+  const [barFloating, setBarFloating] = useState(false)
   // Phase 4: BPO DSAT (Vendor, non-spot-check) AI Controllability prediction.
   // aiDsatChain mirrors vendorChain's shape ({sectionTitle, questionTitle, answerValue}),
   // plus a `reasoning` field on each step — only aiDsatChain[0] (Controllability) is used
@@ -71,6 +72,7 @@ export default function EvaluationForm() {
   const lastLookedUpTicket = useRef(null)
   const aiAutoRunRef = useRef(false)
   const aiDsatAutoRunRef = useRef(false)
+  const barSentinelRef = useRef(null)
 
   // Always-current ref for auto-save interval
   const stateRef = useRef({})
@@ -93,6 +95,24 @@ export default function EvaluationForm() {
     }
   })
   useEffect(() => { draftIdRef.current = draftId }, [draftId])
+
+  // Show the floating progress island once the inline bar scrolls above the top.
+  // Uses capture-phase scroll so it works whether the window or an inner
+  // container is the actual scroller.
+  useEffect(() => {
+    const onScroll = () => {
+      const el = barSentinelRef.current
+      if (!el) { setBarFloating(false); return }
+      setBarFloating(el.getBoundingClientRect().top < 8)
+    }
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    onScroll()
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [step])
 
   useEffect(() => {
     loadScorecards()
@@ -1157,11 +1177,8 @@ export default function EvaluationForm() {
             </motion.button>
           </div>
         </div>
-        <div style={{
-          position: 'sticky', top: 0, zIndex: 30, background: 'var(--bg-primary)',
-          paddingTop: 10, paddingBottom: 12, marginBottom: 20,
-          borderBottom: '1px solid var(--border)'
-        }}>
+        <div ref={barSentinelRef} style={{ height: 1 }} />
+        <div style={{ marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
             <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)' }}>{answered}/{total} answered</span>
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>{pct}%</span>
@@ -1173,6 +1190,29 @@ export default function EvaluationForm() {
             }} />
           </div>
         </div>
+        <AnimatePresence>
+          {barFloating && (
+            <motion.div
+              initial={{ opacity: 0, y: -24, x: '-50%' }}
+              animate={{ opacity: 1, y: 0, x: '-50%' }}
+              exit={{ opacity: 0, y: -24, x: '-50%' }}
+              transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+              style={{
+                position: 'fixed', top: 14, left: 'calc(50% + 110px)', zIndex: 40,
+                display: 'flex', alignItems: 'center', gap: 14, minWidth: 300,
+                padding: '9px 20px', borderRadius: 999,
+                background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                boxShadow: '0 10px 30px rgba(0,0,0,0.28)'
+              }}
+            >
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{answered}/{total}</span>
+              <div style={{ flex: 1, minWidth: 150, height: 5, background: 'var(--border)', borderRadius: 999 }}>
+                <div style={{ height: 5, borderRadius: 999, background: 'var(--accent)', width: `${pct}%`, transition: 'width 0.3s' }} />
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>{pct}%</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <AnimatePresence>{msg && <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, overflow: 'hidden' }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></motion.div>}</AnimatePresence>
         {showLgtmConfirm && (
           <div className="modal-backdrop" onClick={() => setShowLgtmConfirm(false)}>
@@ -1282,7 +1322,7 @@ export default function EvaluationForm() {
                       ✨ AI Prediction
                     </div>
                     {aiDsatLoading && (
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={12} />Gemini is thinking…</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={12} />Quark is thinking…</div>
                     )}
                     {aiDsatError && (
                       <div style={{ fontSize: 12, color: 'var(--danger)' }}>{aiDsatError}</div>
@@ -1392,7 +1432,7 @@ export default function EvaluationForm() {
                   <div style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
                     {aiLoading && <Spinner />}
                     {aiLoading
-                      ? '✨ Gemini is thinking…'
+                      ? '✨ Quark is thinking…'
                       : Object.keys(aiSuggestions).length > 0
                         ? '✨ AI suggestions applied below — review each before submitting.'
                         : '✨ This scorecard has AI-assisted attributes.'}
@@ -1575,7 +1615,7 @@ function Spinner({ size = 13 }) {
 function QuestionCard({ question, answer, onChange, aiSuggested, aiReasoning, number }) {
   const score = answer?.score
   const comment = answer?.comment || ''
-  const [showDesc, setShowDesc] = useState(true)
+  const [showDesc, setShowDesc] = useState(false)
   const btnStyle = (val) => ({
     flex: 1, padding: '8px 0', borderRadius: 6, fontWeight: 500, fontSize: 13,
     cursor: 'pointer', border: '1.5px solid',
