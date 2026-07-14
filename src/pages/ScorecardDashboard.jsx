@@ -898,7 +898,7 @@ export default function ScorecardDashboard() {
   // filtered evaluations (same filter bar as every other widget on this page).
   // Accuracy = evaluator's final score exactly matches the AI's original suggestion.
   const aiAttributeStats = useMemo(() => {
-    if (!scorecard || scorecard.type !== 'quality' || !aiScoreRows.length) return { rows: [], pooled: null }
+    if (!scorecard || scorecard.type !== 'quality' || !aiScoreRows.length) return { rows: [], pooled: null, evalsWithAi: 0 }
     const filteredIds = new Set(filteredEvals.map(e => e.id))
     const inScope = aiScoreRows.filter(r => filteredIds.has(r.evaluation_id))
     const byQuestion = new Map()
@@ -917,7 +917,8 @@ export default function ScorecardDashboard() {
     const pooled = inScope.length
       ? { matched: pooledMatched, total: inScope.length, pct: Math.round((pooledMatched / inScope.length) * 100) }
       : null
-    return { rows, pooled }
+    const evalsWithAi = new Set(inScope.map(r => r.evaluation_id)).size
+    return { rows, pooled, evalsWithAi }
   }, [scorecard, aiScoreRows, aiQuestionTitles, filteredEvals])
 
   // Phase 5: side-by-side AI vs human rows for the comparison table widget — Quality
@@ -1093,11 +1094,25 @@ export default function ScorecardDashboard() {
       )
     }
     if (w.widget_type === 'ai_attribute_accuracy') {
-      const { rows, pooled } = aiAttributeStats
+      const { rows, pooled, evalsWithAi } = aiAttributeStats
       return (
         <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
           {removeBtn}
           <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))', gap:12, marginBottom:16 }}>
+            <div style={{ background:'var(--bg-secondary)', border:'1px solid var(--border)', borderRadius:'var(--radius-lg)', padding:'16px 18px' }}>
+              <div className="stat-label">Overall AI Accuracy</div>
+              <div className="stat-value" style={{ color: pooled && pooled.pct >= 90 ? 'var(--success)' : 'var(--text-primary)' }}>
+                {pooled ? pooled.pct + '%' : '—'}
+              </div>
+              <div className="stat-sub">{pooled ? pooled.matched + ' of ' + pooled.total + ' AI attributes matched' : 'No AI-scored attributes yet'}</div>
+            </div>
+            <div style={{ background:'var(--bg-secondary)', border:'1px solid var(--border)', borderRadius:'var(--radius-lg)', padding:'16px 18px' }}>
+              <div className="stat-label"># Evaluations with minimum 1 AI Attribute</div>
+              <div className="stat-value">{evalsWithAi}</div>
+              <div className="stat-sub">In the filtered view</div>
+            </div>
+          </div>
           {rows.length === 0 ? (
             <p style={{ color:'var(--text-tertiary)', fontSize:13, textAlign:'center', padding:'20px 0' }}>
               No AI-suggested scores yet for this scorecard's filtered evaluations.
@@ -1105,20 +1120,22 @@ export default function ScorecardDashboard() {
           ) : (
             <div className="table-wrap" style={{ border:'none' }}>
               <table className="table">
-                <thead><tr><th>Attribute</th><th>Accuracy</th><th>Matched</th></tr></thead>
+                <thead><tr><th>Attribute</th><th>Accuracy</th><th>Evaluations done</th><th>Manually changed</th></tr></thead>
                 <tbody>
                   {rows.map(r => (
                     <tr key={r.questionId}>
                       <td>{r.title}</td>
                       <td>{r.pct}%</td>
-                      <td style={{ color:'var(--text-secondary)' }}>{r.matched} of {r.total}</td>
+                      <td style={{ color:'var(--text-secondary)' }}>{r.total}</td>
+                      <td style={{ color:'var(--text-secondary)' }}>{r.total - r.matched}</td>
                     </tr>
                   ))}
                   {pooled && (
                     <tr style={{ fontWeight:600, borderTop:'2px solid var(--border)' }}>
                       <td>Overall (pooled)</td>
                       <td>{pooled.pct}%</td>
-                      <td style={{ color:'var(--text-secondary)' }}>{pooled.matched} of {pooled.total}</td>
+                      <td style={{ color:'var(--text-secondary)' }}>{pooled.total}</td>
+                      <td style={{ color:'var(--text-secondary)' }}>{pooled.total - pooled.matched}</td>
                     </tr>
                   )}
                 </tbody>
