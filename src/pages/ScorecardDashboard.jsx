@@ -171,6 +171,8 @@ const WIDGET_CATALOG = {
   quality: [
     { widget_type: 'stat_card',  title: 'Overall Quality Score',     config: { measure: 'avg_quality_score' } },
     { widget_type: 'stat_card',  title: 'Total Evaluations',         config: { measure: 'eval_count' } },
+    { widget_type: 'stat_card',  title: 'Overall AI Accuracy',       config: { measure: 'ai_overall_accuracy' }, aiOnly: true },
+    { widget_type: 'stat_card',  title: '# Evaluations with minimum 1 AI Attribute', config: { measure: 'ai_eval_count' }, aiOnly: true },
     { widget_type: 'line_chart', title: 'Quality \u2014 Week over Week', config: {} },
     { widget_type: 'bar_chart',  title: 'Quality Score by Agent',    config: { measure: 'avg_quality_score' } },
     { widget_type: 'ai_attribute_accuracy', title: 'AI Attribute Accuracy',             config: {}, aiOnly: true },
@@ -1057,13 +1059,24 @@ export default function ScorecardDashboard() {
     ) : null
 
     if (w.widget_type === 'stat_card') {
-      const spotCheckMeasure = w.config?.measure === 'alignment_rate' || w.config?.measure === 'deviated_controllability_rate'
-      const r = computeMeasure(w.config?.measure, spotCheckMeasure ? alignmentVendorEvals : filteredEvals, scorecard)
+      const measure = w.config?.measure
+      let r
+      if (measure === 'ai_overall_accuracy') {
+        const p = aiAttributeStats.pooled
+        r = p
+          ? { display: p.pct + '%', detail: p.matched + ' of ' + p.total + ' AI attributes matched', color: p.pct >= 90 ? 'var(--success)' : null }
+          : { display: '—', detail: 'No AI-scored attributes yet' }
+      } else if (measure === 'ai_eval_count') {
+        r = { display: String(aiAttributeStats.evalsWithAi || 0), detail: 'In the filtered view' }
+      } else {
+        const spotCheckMeasure = measure === 'alignment_rate' || measure === 'deviated_controllability_rate'
+        r = computeMeasure(measure, spotCheckMeasure ? alignmentVendorEvals : filteredEvals, scorecard)
+      }
       return (
         <div key={w.id} className="stat-card" style={{ position:'relative' }}>
           {removeBtn}
           <div className="stat-label">{w.title}</div>
-          <div className="stat-value">{r.display}</div>
+          <div className="stat-value" style={r.color ? { color: r.color } : undefined}>{r.display}</div>
           {r.detail && <div className="stat-sub">{r.detail}</div>}
         </div>
       )
@@ -1171,7 +1184,6 @@ export default function ScorecardDashboard() {
   const charts    = widgets.filter(w => w.widget_type !== 'stat_card')
   const statIds   = statCards.map(w => w.id)
   const chartIds  = charts.map(w => w.id)
-  const showAiCards = scorecard.type === 'quality' && !!aiAttributeStats.pooled
   const anyActive = Object.values(filterState).some(v =>
     Array.isArray(v) ? v.length : (v && (v.from || v.to)))
   const setFilter = (key, val) => setFilterState(s => ({ ...s, [key]: val }))
@@ -1265,7 +1277,7 @@ export default function ScorecardDashboard() {
         onDragEnd={handleDragEnd}
       >
         {/* Stat cards zone */}
-        {(statCards.length > 0 || showAiCards) && (
+        {statCards.length > 0 && (
           <SortableContext items={statIds} strategy={horizontalListSortingStrategy}>
             <div className="stats-grid">
               {statCards.map(w => (
@@ -1273,20 +1285,6 @@ export default function ScorecardDashboard() {
                   {renderWidget(w)}
                 </SortableWidget>
               ))}
-              {showAiCards && (
-                <>
-                  <div className="stat-card">
-                    <div className="stat-label">Overall AI Accuracy</div>
-                    <div className="stat-value" style={{ color: aiAttributeStats.pooled.pct >= 90 ? 'var(--success)' : 'var(--text-primary)' }}>{aiAttributeStats.pooled.pct}%</div>
-                    <div className="stat-sub">{aiAttributeStats.pooled.matched} of {aiAttributeStats.pooled.total} AI attributes matched</div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="stat-label"># Evaluations with minimum 1 AI Attribute</div>
-                    <div className="stat-value">{aiAttributeStats.evalsWithAi}</div>
-                    <div className="stat-sub">In the filtered view</div>
-                  </div>
-                </>
-              )}
             </div>
           </SortableContext>
         )}
