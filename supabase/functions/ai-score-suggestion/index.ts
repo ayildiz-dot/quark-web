@@ -5,6 +5,19 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 }
 
+// --- Model fallback list -----------------------------------------------------
+// Models are tried in order, top to bottom. Stable models come FIRST because
+// preview models (like gemini-3-flash-preview) ship with much tighter rate
+// limits — that is the most common cause of the "usage limit" errors.
+// If a model is rate-limited (429), overloaded (503), or errors out, we
+// automatically fall back to the next one. To change priority, just reorder.
+const MODELS = [
+  "gemini-3.5-flash",       // stable, most capable — primary
+  "gemini-3.1-flash-lite",  // stable, fast + low cost — fallback
+  "gemini-3-flash-preview", // preview — last resort
+]
+// -----------------------------------------------------------------------------
+
 // Best-effort PII redaction before anything leaves Kaizen's systems. This is a
 // defense-in-depth regex pass, NOT a compliance guarantee — it will not catch every
 // name or unusual PII format. Real production rollout should still go through your
@@ -87,66 +100,94 @@ Respond only with the requested JSON, one entry per attribute id listed above.`
       )
     }
 
+    // Same request body is reused for every model in the fallback list.
+    const requestBody = JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        thinkingConfig: { thinkingLevel: "MINIMAL" },
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: {
+            suggestions: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  questionId: { type: "STRING" },
+                  score: { type: "STRING", enum: ["pass", "fail", "na"] },
+                  comment: { type: "STRING" },
+                },
+                required: ["questionId", "score", "comment"],
+              },
+            },
+          },
+          required: ["suggestions"],
+        },
+      },
+    })
+
     const startTime = Date.now()
     const totalBudgetMs = 135000 // stay under Supabase's 150s wall-clock kill
     let geminiRes: Response | undefined
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const remaining = totalBudgetMs - (Date.now() - startTime)
-      if (remaining < 10000) break
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), remaining)
-      const attemptStart = Date.now()
-      try {
-        geminiRes = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-            signal: controller.signal,
-            body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: prompt }] }],
-              generationConfig: {
-                thinkingConfig: { thinkingLevel: "MINIMAL" },
-                responseMimeType: "application/json",
-                responseSchema: {
-                  type: "OBJECT",
-                  properties: {
-                    suggestions: {
-                      type: "ARRAY",
-                      items: {
-                        type: "OBJECT",
-                        properties: {
-                          questionId: { type: "STRING" },
-                          score: { type: "STRING", enum: ["pass", "fail", "na"] },
-                          comment: { type: "STRING" },
-                        },
-                        required: ["questionId", "score", "comment"],
-                      },
-                    },
-                  },
-                  required: ["suggestions"],
-                },
-              },
-            }),
-          },
-        )
-      } catch (fetchErr) {
-        console.error(`Gemini fetch failed (attempt ${attempt}):`, fetchErr?.message || fetchErr)
-        geminiRes = undefined
-        break // timed out or network failure — budget is spent, no point retrying
-      } finally {
-        clearTimeout(timeoutId)
+    let lastStatus = 0
+    let usedModel = ""
+
+    // Try each model in turn. Move to the next model on any non-OK response
+    // (rate limit / overload / error). Retry ONE fast 503 on the same model first.
+    outer:
+    for (const model of MODELS) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const remaining = totalBudgetMs - (Date.now() - startTime)
+        if (remaining < 10000) break outer
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), remaining)
+        const attemptStart = Date.now()
+        try {
+          geminiRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+              signal: controller.signal,
+              body: requestBody,
+            },
+          )
+        } catch (fetchErr) {
+          console.error(`Gemini fetch failed (model ${model}, attempt ${attempt}):`, fetchErr?.message || fetchErr)
+          geminiRes = undefined
+          break outer // timed out or network failure — budget is spent
+        } finally {
+          clearTimeout(timeoutId)
+        }
+        if (geminiRes.ok) {
+          usedModel = model
+          break outer
+        }
+        lastStatus = geminiRes.status
+        const errText = await geminiRes.text()
+        console.error(`Gemini API error (model ${model}, attempt ${attempt}):`, geminiRes.status, errText)
+        const attemptDuration = Date.now() - attemptStart
+        // Retry a FAST 503 once on the same model; otherwise fall through to the next model.
+        if (geminiRes.status === 503 && attemptDuration <= 15000) continue
+        break // try next model
       }
-      if (geminiRes.ok) break
-      const errText = await geminiRes.text()
-      console.error(`Gemini API error (attempt ${attempt}):`, geminiRes.status, errText)
-      const attemptDuration = Date.now() - attemptStart
-      // Only retry a FAST failure (e.g. an instant 503) — a slow failure means the budget's gone.
-      if (geminiRes.status !== 503 || attemptDuration > 15000) break
     }
 
     if (!geminiRes || !geminiRes.ok) {
-      return new Response(JSON.stringify({ error: "Gemini request failed or timed out — please try again in a moment" }), {
+      // Surface WHY it failed so the QC team can tell a usage limit apart from a timeout.
+      let reason = "Gemini request failed or timed out — please try again in a moment"
+      if (lastStatus === 429) {
+        reason = "Usage limit reached — every Gemini model is rate-limited right now. Wait a minute and try again, or raise the quota in Google AI Studio."
+      } else if (lastStatus === 400) {
+        reason = "Gemini rejected the request (400) — this scorecard may have too many or too-long AI attributes for a single call. Try fewer AI attributes."
+      } else if (lastStatus === 503) {
+        reason = "Gemini is temporarily overloaded on every model — please try again in a moment."
+      } else if (lastStatus >= 500) {
+        reason = `Gemini server error (${lastStatus}) on every model — please try again shortly.`
+      }
+      console.error("All Gemini models failed. Last status:", lastStatus)
+      return new Response(JSON.stringify({ error: reason, lastStatus }), {
         status: 502,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       })
@@ -162,6 +203,7 @@ Respond only with the requested JSON, one entry per attribute id listed above.`
       })
     }
 
+    console.log(`ai-score-suggestion OK using model: ${usedModel}`)
     const parsed = JSON.parse(rawText)
 
     return new Response(JSON.stringify(parsed), {
