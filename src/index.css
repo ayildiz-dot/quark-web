@@ -108,7 +108,7 @@ a:hover { color: var(--accent-hover); }
 
 /* Buttons */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: var(--radius); font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all .15s; }
-.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary { background: var(--accent); color: var(--accent-contrast, #fff); }
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
 .btn-outline { background: transparent; border: 1px solid var(--border-light); color: var(--text-secondary); }
@@ -342,5 +342,5 @@ body::before {
 }
 .btn-accent-soft:hover {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast, #fff);
 }

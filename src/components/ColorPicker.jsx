@@ -20,7 +20,17 @@ function hexToHsl(hex) {
 }
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n))
 
-// Apply a custom accent by setting the three CSS vars the whole app reads.
+// Readable text colour for content sitting ON the accent (YIQ brightness).
+function textOn(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
+  if (!m) return '#ffffff'
+  const int = parseInt(m[1], 16)
+  const r = (int >> 16) & 255, g = (int >> 8) & 255, b = int & 255
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000
+  return yiq >= 150 ? '#0b1220' : '#ffffff'
+}
+
+// Apply a custom accent by setting the CSS vars the whole app reads.
 export function applyAccent(hex, theme) {
   const { h, s, l } = hexToHsl(hex)
   const root = document.documentElement
@@ -29,10 +39,11 @@ export function applyAccent(hex, theme) {
   root.style.setProperty('--accent-light', theme === 'light'
     ? `hsl(${h}, ${clamp(s, 20, 100)}%, 93%)`
     : `hsl(${h}, ${clamp(s - 15, 15, 90)}%, 20%)`)
+  root.style.setProperty('--accent-contrast', textOn(hex))
 }
 export function clearAccent() {
   const root = document.documentElement
-  ;['--accent', '--accent-hover', '--accent-light'].forEach(v => root.style.removeProperty(v))
+  ;['--accent', '--accent-hover', '--accent-light', '--accent-contrast'].forEach(v => root.style.removeProperty(v))
 }
 
 export default function ColorPicker({ value, onChange }) {
