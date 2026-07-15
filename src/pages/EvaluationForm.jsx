@@ -57,6 +57,7 @@ export default function EvaluationForm() {
   // Queue-anchored governance: the queues this user may evaluate under.
   // Evaluators are limited to user_queues; admins/owners see all mapped queues.
   const [allowedQueues, setAllowedQueues] = useState([]) // [{id, scorecard_id, hub_id, hub_name, workspace_id, market_value}]
+  const [agentsByQueue, setAgentsByQueue] = useState({}) // { queue_id: [{name, email}] }
   // Edit mode: when set, we are editing an already-submitted evaluation (not creating one).
   const [editingEvalId, setEditingEvalId] = useState(null)
 
@@ -471,6 +472,12 @@ export default function EvaluationForm() {
       list = list.filter(q => allowed.has(q.id))
     }
     setAllowedQueues(list)
+
+    // Agents assigned to each of the caller's queues (secure RPC — bypasses RLS on others' assignments).
+    const { data: agentRows } = await supabase.rpc('agents_for_my_queues')
+    const abq = {}
+    ;(agentRows || []).forEach(r => { (abq[r.queue_id] = abq[r.queue_id] || []).push({ name: r.agent_name, email: r.agent_email }) })
+    setAgentsByQueue(abq)
   }
 
   // Valid queues for the currently-selected scorecard.
@@ -484,6 +491,24 @@ export default function EvaluationForm() {
     [...new Set(validQueuesForScorecard().map(q => q.hub_name).filter(Boolean))].sort()
   const marketOptionsFromQueues = () =>
     [...new Set(validQueuesForScorecard().map(q => q.market_value).filter(Boolean))].sort()
+
+  // Agents on the queue resolved by the currently-selected BPO-Hub + Market.
+  const resolvedQueueForSelection = () => {
+    const bpoHub = metadata.find(f => f.label === 'BPO - Hub')
+    const market = metadata.find(f => f.label === 'Market')
+    const bpoHubVal = bpoHub ? (metaValues[bpoHub.id] || '') : ''
+    const marketVal = market ? (metaValues[market.id] || '') : ''
+    if (!bpoHubVal || !marketVal) return null
+    return validQueuesForScorecard().find(q => q.hub_name === bpoHubVal && q.market_value === marketVal) || null
+  }
+  const agentEmailOptions = () => {
+    const q = resolvedQueueForSelection()
+    const list = q ? (agentsByQueue[q.id] || []) : []
+    const emails = [...new Set(list.map(a => a.email).filter(Boolean))].sort()
+    const agentField = metadata.find(f => f.label === "Agent's Email")
+    const cur = agentField ? (metaValues[agentField.id] || '') : ''
+    return cur && !emails.includes(cur) ? [cur, ...emails] : emails
+  }
 
   const selectScorecard = async (sc) => {
     // Check draft limit for this specific scorecard
@@ -1081,16 +1106,17 @@ export default function EvaluationForm() {
                 {field.label}
                 {field.is_required && <span style={{ color: 'var(--danger)', marginLeft: 4 }}>*</span>}
               </label>
-              {field.field_type === 'dropdown' ? (
+              {(field.field_type === 'dropdown' || field.label === "Agent's Email") ? (
                 <SearchableDropdown
                   options={
                     field.label === 'BPO - Hub' ? bpoHubOptionsFromQueues()
                     : field.label === 'Market'  ? marketOptionsFromQueues()
+                    : field.label === "Agent's Email" ? agentEmailOptions()
                     : (field.options || [])
                   }
                   value={metaValues[field.id] || ''}
                   onChange={val => { setMetaValues(v => ({ ...v, [field.id]: val })); triggerAutoSave() }}
-                  placeholder="Select..."
+                  placeholder={field.label === "Agent's Email" ? 'Select BPO - Hub & Market first…' : 'Select...'}
                 />
               ) : field.field_type === 'date' ? (
                 <input type="date" className="input"
