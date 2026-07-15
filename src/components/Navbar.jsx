@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../App'
 import { supabase } from '../lib/supabase'
 import NotificationBell from './NotificationBell'
+import ColorPicker, { applyAccent, clearAccent } from './ColorPicker'
 
 const SCHEMES = [
   { key: 'default',  label: 'Default',  swatch: '#3b82f6' },
@@ -24,6 +25,7 @@ export default function Navbar() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [flash, setFlash] = useState(null)
   const settingsRef = useRef(null)
+  const persistTimer = useRef(null)
 
   // Apply theme + scheme to <html> and cache them.
   useEffect(() => {
@@ -31,10 +33,18 @@ export default function Navbar() {
     localStorage.setItem('quark-theme', theme)
   }, [theme])
   useEffect(() => {
-    if (scheme && scheme !== 'default') document.documentElement.setAttribute('data-scheme', scheme)
-    else document.documentElement.removeAttribute('data-scheme')
+    const root = document.documentElement
+    clearAccent()
+    if (scheme && scheme.charAt(0) === '#') {
+      root.removeAttribute('data-scheme')
+      applyAccent(scheme, theme)
+    } else if (scheme && scheme !== 'default') {
+      root.setAttribute('data-scheme', scheme)
+    } else {
+      root.removeAttribute('data-scheme')
+    }
     localStorage.setItem('quark-scheme', scheme)
-  }, [scheme])
+  }, [scheme, theme])
 
   // Once profile loads, sync preferences from the DB (source of truth).
   useEffect(() => {
@@ -58,6 +68,12 @@ export default function Navbar() {
 
   const chooseTheme = (t) => { setTheme(t); persist({ theme: t }) }
   const chooseScheme = (sc) => { setScheme(sc); persist({ color_scheme: sc }) }
+  const chooseAccent = (hex) => {
+    setScheme(hex)
+    if (persistTimer.current) clearTimeout(persistTimer.current)
+    persistTimer.current = setTimeout(() => persist({ color_scheme: hex }), 500)
+  }
+  const accentValue = (scheme && scheme.charAt(0) === '#') ? scheme : ((SCHEMES.find(x => x.key === scheme) || {}).swatch || '#3b82f6')
 
   const sendPasswordReset = async () => {
     if (!profile?.email) return
@@ -179,27 +195,11 @@ export default function Navbar() {
               </div>
             </div>
 
-            {/* Color scheme */}
+            {/* Accent color */}
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 6 }}>Color scheme</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-                {SCHEMES.map(sc => (
-                  <button key={sc.key} onClick={() => chooseScheme(sc.key)}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px',
-                      borderRadius: 6, cursor: 'pointer', fontSize: 11.5,
-                      border: `1.5px solid ${scheme === sc.key ? 'var(--accent)' : 'var(--border)'}`,
-                      background: scheme === sc.key ? 'var(--accent-light)' : 'transparent',
-                      color: scheme === sc.key ? 'var(--accent)' : 'var(--text-secondary)',
-                      fontWeight: scheme === sc.key ? 600 : 400,
-                      overflow: 'hidden', whiteSpace: 'nowrap',
-                    }}>
-                    <span style={{ width: 12, height: 12, borderRadius: '50%', background: sc.swatch, flexShrink: 0,
-                      border: '1px solid rgba(255,255,255,0.2)' }} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{sc.label}</span>
-                  </button>
-                ))}
-              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 6 }}>Accent color</div>
+              <ColorPicker value={accentValue} onChange={chooseAccent} />
+              <button className="btn btn-ghost btn-sm" style={{ marginTop: 8, fontSize: 11 }} onClick={() => chooseScheme('default')}>Reset to default</button>
             </div>
 
             {/* Inline flash for password reset result */}
