@@ -264,7 +264,7 @@ function UsersTab({ profile, flash }) {
           <option value="all">All roles</option>
           <option value="owner">Owner</option>
           <option value="admin">Admin</option>
-          <option value="evaluator">Evaluator</option>
+          <option value="evaluator">Evaluator</option><option value="team_leader">Team Leader</option>
           <option value="viewer">Agent</option>
         </select>
         <select className="select" style={{ height: 36, fontSize: 13, minWidth: 160 }}
@@ -292,7 +292,7 @@ function UsersTab({ profile, flash }) {
             <span style={{ color: 'var(--text-secondary)' }}>Change role to</span>
             <select className="select select-sm" value={bulkRole} onChange={e => setBulkRole(e.target.value)} style={{ height: 28, fontSize: 12 }}>
               <option value="viewer">Agent</option>
-              <option value="evaluator">Evaluator</option>
+              <option value="evaluator">Evaluator</option><option value="team_leader">Team Leader</option>
               <option value="admin">Admin</option>
               {profile.role === 'owner' && <option value="owner">Owner</option>}
             </select>
@@ -374,7 +374,7 @@ function UsersTab({ profile, flash }) {
                   <div style={{ fontWeight: 500, fontSize: 13 }}>{u.name}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>{u.email}</div>
                 </div>
-                <div><span className={`badge badge-${u.role}`}>{u.role === 'viewer' ? 'Agent' : u.role}</span></div>
+                <div><span className={`badge badge-${u.role}`}>{u.role === 'viewer' ? 'Agent' : u.role === 'team_leader' ? 'Team Leader' : u.role}</span></div>
                 <div>
                   <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
                     backgroundColor: u.active ? '#22c55e22' : '#ef444422',
@@ -415,12 +415,12 @@ function UsersTab({ profile, flash }) {
                         <select className="select select-sm" value={u.role}
                           onChange={e => changeRole(u.id, e.target.value)} style={{ width: '100%', maxWidth: 200 }}>
                           <option value="viewer">Agent</option>
-                          <option value="evaluator">Evaluator</option>
+                          <option value="evaluator">Evaluator</option><option value="team_leader">Team Leader</option>
                           <option value="admin">Admin</option>
                           {profile.role === 'owner' && <option value="owner">Owner</option>}
                         </select>
                       ) : (
-                        <span className={`badge badge-${u.role}`}>{u.role === 'viewer' ? 'Agent' : u.role}</span>
+                        <span className={`badge badge-${u.role}`}>{u.role === 'viewer' ? 'Agent' : u.role === 'team_leader' ? 'Team Leader' : u.role}</span>
                       )}
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>

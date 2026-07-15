@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
+import { getEvaluatorScope } from '../lib/evaluatorScope'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 
@@ -118,6 +119,11 @@ export default function Evaluations() {
       } else if (isPrivileged) {
         // Admins & owners see ALL submitted evaluations; optionally narrowed to one evaluator.
         if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
+      } else if (profile?.role === 'team_leader') {
+        // Team Leaders: read-only hub-wide view (same scope as their dashboards).
+        const { hubIds } = await getEvaluatorScope(profile.id)
+        if (!hubIds.length) { setData([]); setTotal(0); setPage(pg); return }
+        q = q.in('hub_id', hubIds)
       } else {
         // Evaluators: scoped to evaluations they created.
         q = q.eq('evaluator_id', profile.id)
@@ -189,6 +195,9 @@ export default function Evaluations() {
       q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
     } else if (isPrivileged) {
       if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
+    } else if (profile?.role === 'team_leader') {
+      const { hubIds } = await getEvaluatorScope(profile.id)
+      if (hubIds.length) q = q.in('hub_id', hubIds); else q = q.eq('id', -1)
     } else {
       q = q.eq('evaluator_id', profile.id)
     }
@@ -365,12 +374,12 @@ export default function Evaluations() {
       <div className="page-header">
         <div>
           <h1>Evaluations</h1>
-          <p className="page-sub">{total.toLocaleString()} {profile?.role === 'viewer' ? 'evaluations on your interactions' : isPrivileged ? 'evaluations (all evaluators)' : 'of your evaluations'}</p>
+          <p className="page-sub">{total.toLocaleString()} {profile?.role === 'viewer' ? 'evaluations on your interactions' : isPrivileged ? 'evaluations (all evaluators)' : profile?.role === 'team_leader' ? 'evaluations in your scope' : 'of your evaluations'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
           <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>
-          {profile?.role !== 'viewer' && (
+          {!['viewer', 'team_leader'].includes(profile?.role) && (
             <button
               className="btn btn-ghost"
               style={{
@@ -384,7 +393,7 @@ export default function Evaluations() {
               {drafts.length > 0 ? `Drafts (${drafts.length})` : 'Drafts'}
             </button>
           )}
-          {profile?.role !== 'viewer' && (
+          {!['viewer', 'team_leader'].includes(profile?.role) && (
               <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
                 + New Evaluation
               </button>

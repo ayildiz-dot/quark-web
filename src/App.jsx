@@ -112,7 +112,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
                 <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
-                <Route path="/calibration" element={isKgUser ? <Calibration /> : <Navigate to="/dashboard" replace />} />
+                <Route path="/calibration" element={isKgUser && profile?.role !== 'team_leader' ? <Calibration /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/coaching" element={<Coaching />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>

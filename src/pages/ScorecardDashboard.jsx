@@ -802,7 +802,7 @@ export default function ScorecardDashboard() {
 
       const role = profile?.role
       const isAgent = role === 'viewer'
-      const isEvaluator = role === 'evaluator'
+      const isEvaluator = role === 'evaluator' || role === 'team_leader'
 
       // Evaluator visibility gates:
       //  Gate 1 (scorecard access): the scorecard must be tagged to a hub in one of
