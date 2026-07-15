@@ -89,6 +89,9 @@ export default function NotificationBell() {
     if (item.type === 'evaluation_read' && item.entity_id) {
       await supabase.rpc('mark_evaluation_read', { p_eval_id: Number(item.entity_id) })
     }
+    if (item.type === 'eval_coaching' && item.entity_id) {
+      await supabase.from('eval_coachings').update({ status: 'acknowledged', acknowledged_at: new Date().toISOString() }).eq('id', item.entity_id)
+    }
     load()
   }
 

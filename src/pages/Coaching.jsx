@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
+import CoachingQueue from '../components/CoachingQueue'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const MODELS = [
@@ -789,7 +790,7 @@ export default function Coaching() {
             </>
           )}
           {tab === 'insights' && <InsightsTab sessions={mine} counts={counts} govNames={govNames} />}
-          {tab === 'queue' && <ComingSoon title="Coaching Queue" />}
+          {tab === 'queue' && <CoachingQueue profile={profile} isPrivileged={isPrivileged} flash={flash} />}
           {tab === 'coaching_insights' && <ComingSoon title="Coaching Insights" />}
         </>
       )}
