@@ -143,6 +143,7 @@ export default function Navbar() {
             <div className="user-info">
               <div className="avatar">{initials}</div>
               <div style={{ overflow: 'hidden', flex: 1 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Account</div>
                 <div className="user-name">{profile?.name || 'User'}</div>
               </div>
               <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{settingsOpen ? '▾' : '▸'}</span>
