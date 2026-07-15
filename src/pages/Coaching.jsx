@@ -2,21 +2,28 @@ import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 
-// ─── Coaching constants ─────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────
 const MODELS = [
   { value: 'GROW',     label: 'GROW (Goal · Reality · Options · Will)' },
   { value: 'CLEAR',    label: 'CLEAR (Contract · Listen · Explore · Action · Review)' },
   { value: 'freeform', label: 'Free-form' },
 ]
+const MODEL_NOTES = {
+  GROW: 'A structured improvement conversation: set the Goal, look at the Reality, explore Options, agree the Will (next steps). Best for most performance-improvement plans.',
+  CLEAR: 'A deeper, behaviour-focused frame: Contract, Listen, Explore, Action, Review. Best when the root cause is attitudinal or needs reflection rather than a quick fix.',
+  freeform: 'No fixed structure — capture observations and actions in your own way. Best for light-touch or ad-hoc coaching.',
+}
 
 const STATUS = {
-  draft:                { label: 'Draft',              color: '#64748b', bg: '#64748b22' },
-  active:               { label: 'Active',             color: '#6366f1', bg: '#6366f122' },
+  draft:                { label: 'Draft',                color: '#64748b', bg: '#64748b22' },
+  active:               { label: 'Active',               color: '#6366f1', bg: '#6366f122' },
   pending_verification: { label: 'Pending verification', color: '#f59e0b', bg: '#f59e0b22' },
-  closed_met:           { label: 'Closed · Met',       color: '#22c55e', bg: '#22c55e22' },
-  closed_not_met:       { label: 'Closed · Not met',   color: '#ef4444', bg: '#ef444422' },
-  cancelled:            { label: 'Cancelled',          color: '#94a3b8', bg: '#94a3b822' },
+  closed_met:           { label: 'Closed · Met',         color: '#22c55e', bg: '#22c55e22' },
+  closed_not_met:       { label: 'Closed · Not met',     color: '#ef4444', bg: '#ef444422' },
+  cancelled:            { label: 'Cancelled',            color: '#94a3b8', bg: '#94a3b822' },
 }
+const ACTIVE_STATUSES = ['active', 'pending_verification']
+const CLOSED_STATUSES = ['closed_met', 'closed_not_met', 'cancelled']
 
 const StatusBadge = ({ status }) => {
   const s = STATUS[status] || STATUS.draft
@@ -26,11 +33,22 @@ const StatusBadge = ({ status }) => {
   )
 }
 
-// ─── Confirm modal (same pattern as Control Room) ───────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
+const plusDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().split('T')[0] }
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString() : '—'
+function isoWeek(dateStr) {
+  const d = new Date(dateStr); d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7))
+  const week1 = new Date(d.getFullYear(), 0, 4)
+  const wk = 1 + Math.round(((d - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
+  return `${d.getFullYear()}-W${String(wk).padStart(2, '0')}`
+}
+
+// ─── Confirm modal ──────────────────────────────────────────────────────────
 function ConfirmModal({ message, onYes, onNo }) {
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: '#00000066',
-      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
       <div className="card" style={{ width: 400, padding: '28px', textAlign: 'center' }}>
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Are you sure?</div>
         <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24 }}>{message}</div>
@@ -43,26 +61,64 @@ function ConfirmModal({ message, onYes, onNo }) {
   )
 }
 
-// ─── New session form (coach only) — free, overall coaching ─────────────────
-function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
+// ─── New Observation Session modal (floating, Calibration style) ────────────
+function NewObservationModal({ profile, isPrivileged, gov, parent, flash, onClose, onSaved }) {
+  const [divisionId, setDivId]  = useState('')
   const [agentId, setAgentId]   = useState(parent?.agent_id || '')
+  const [ctxQueueId, setCtxQ]   = useState('')
   const [model, setModel]       = useState('GROW')
   const [strengths, setStr]     = useState('')
   const [observations, setObs]  = useState('')
   const [rootCause, setRoot]    = useState('')
-  const [focus, setFocus]       = useState([{ label: '', baseline: '' }])
+  const [focus, setFocus]       = useState([{ label: '' }])
   const [actions, setActions]   = useState([{ description: '', done_test: '', due_date: '' }])
+  const [closeDate, setClose]   = useState(plusDays(7))
   const [saving, setSaving]     = useState(false)
 
-  const setFocusField  = (i, k, v) => setFocus(f => f.map((x, j) => j === i ? { ...x, [k]: v } : x))
+  // Governance-derived option lists
+  const divisions = useMemo(() => {
+    if (isPrivileged) return gov.divisions
+    const ids = new Set(gov.myContexts.map(c => c.division_id))
+    return gov.divisions.filter(d => ids.has(d.id))
+  }, [gov, isPrivileged])
+
+  const divisionQueues = useMemo(() => {
+    if (!divisionId) return []
+    let qs = gov.queues.filter(q => gov.queueCtx[q.id]?.division_id === divisionId)
+    if (!isPrivileged) qs = qs.filter(q => gov.myQueueIds.has(q.id))
+    return qs
+  }, [divisionId, gov, isPrivileged])
+
+  const agents = useMemo(() => {
+    if (!divisionId) return []
+    if (isPrivileged) return gov.agents
+    const qids = new Set(divisionQueues.map(q => q.id))
+    const agentIds = new Set(gov.userQueues.filter(uq => qids.has(uq.queue_id)).map(uq => uq.user_id))
+    return gov.agents.filter(a => agentIds.has(a.id))
+  }, [divisionId, divisionQueues, gov, isPrivileged])
+
+  const candidateCtx = useMemo(() => {
+    if (!divisionId || !agentId) return []
+    const agentQ = new Set(gov.userQueues.filter(uq => uq.user_id === agentId).map(uq => uq.queue_id))
+    return divisionQueues.filter(q => agentQ.has(q.id))
+  }, [divisionId, agentId, divisionQueues, gov])
+
+  useEffect(() => { setAgentId(parent?.agent_id || ''); setCtxQ('') }, [divisionId])
+  useEffect(() => { setCtxQ(candidateCtx.length === 1 ? candidateCtx[0].id : '') }, [candidateCtx])
+
+  const setFocusField  = (i, v) => setFocus(f => f.map((x, j) => j === i ? { label: v } : x))
   const setActionField = (i, k, v) => setActions(a => a.map((x, j) => j === i ? { ...x, [k]: v } : x))
 
   const save = async (deliver) => {
-    if (!agentId) return flash('Select the agent being coached.', false)
+    if (!divisionId) return flash('Select a division.', false)
+    if (!agentId) return flash('Select the agent being observed.', false)
     const cleanFocus   = focus.filter(f => f.label.trim())
     const cleanActions = actions.filter(a => a.description.trim())
     if (deliver && cleanFocus.length === 0) return flash('Add at least one focus area before delivering.', false)
     if (deliver && cleanActions.length === 0) return flash('Add at least one action item before delivering.', false)
+
+    const div = gov.divisions.find(d => d.id === divisionId)
+    const ctx = ctxQueueId ? gov.queueCtx[ctxQueueId] : (candidateCtx.length === 1 ? gov.queueCtx[candidateCtx[0].id] : null)
 
     setSaving(true)
     const { data: session, error } = await supabase.from('coaching_sessions').insert({
@@ -73,153 +129,149 @@ function NewSessionForm({ profile, agents, parent, flash, onSaved, onCancel }) {
       strengths: strengths.trim() || null,
       observations: observations.trim() || null,
       root_cause: rootCause.trim() || null,
+      division: div?.name || null,
+      workspace_id: ctx?.workspace_id || null,
+      hub_id: ctx?.hub_id || null,
+      queue_id: ctxQueueId || (candidateCtx.length === 1 ? candidateCtx[0].id : null),
+      market: ctx?.market || null,
+      planned_close_date: closeDate || null,
       parent_session_id: parent?.id || null,
     }).select().single()
     if (error) { setSaving(false); return flash(error.message, false) }
 
     if (cleanFocus.length) {
       await supabase.from('coaching_focus_areas').insert(cleanFocus.map((f, i) => ({
-        session_id: session.id, label: f.label.trim(),
-        baseline_score: f.baseline === '' ? null : Number(f.baseline), sort_order: i,
+        session_id: session.id, label: f.label.trim(), sort_order: i,
       })))
     }
     if (cleanActions.length) {
       await supabase.from('coaching_action_items').insert(cleanActions.map((a, i) => ({
         session_id: session.id, description: a.description.trim(),
-        done_test: a.done_test.trim() || null,
-        owner_id: agentId, due_date: a.due_date || null, sort_order: i,
+        done_test: a.done_test.trim() || null, owner_id: agentId,
+        due_date: a.due_date || null, sort_order: i,
       })))
     }
     setSaving(false)
-    flash(deliver ? 'Coaching session delivered' : 'Draft saved')
+    flash(deliver ? 'Observation session delivered' : 'Draft saved')
     onSaved()
   }
 
-  const labelStyle = { fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }
-  const sectionTitle = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)',
-    textTransform: 'uppercase', letterSpacing: '0.08em', margin: '22px 0 12px' }
+  const lbl = { display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }
+  const inp = { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box' }
+  const sect = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '6px 0 2px' }
 
   return (
-    <div className="card" style={{ padding: 24, marginBottom: 24 }}>
-      <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
-        {parent ? 'Re-coaching session' : 'New coaching session'}
-      </div>
-      {parent && (
-        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
-          Follow-up to a previous session that was not sustained.
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560, maxHeight: '88vh', display: 'flex', flexDirection: 'column' }}>
+        <div className="modal-header" style={{ flexShrink: 0 }}>
+          <h2>{parent ? 'Re-coaching session' : 'New Observation Session'}</h2>
+          <button className="btn-close" onClick={onClose}>✕</button>
         </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 12 }}>
-        <div style={{ minWidth: 240 }}>
-          <label style={labelStyle}>Agent being coached</label>
-          <select className="select" value={agentId} disabled={!!parent}
-            onChange={e => setAgentId(e.target.value)} style={{ minWidth: 240 }}>
-            <option value="">Select agent…</option>
-            {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.email})</option>)}
-          </select>
-        </div>
-        <div style={{ minWidth: 260 }}>
-          <label style={labelStyle}>Coaching model</label>
-          <select className="select" value={model} onChange={e => setModel(e.target.value)} style={{ minWidth: 260 }}>
-            {MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div style={sectionTitle}>Session notes</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div>
-          <label style={labelStyle}>Strengths / what went well</label>
-          <textarea className="input" rows={2} value={strengths} onChange={e => setStr(e.target.value)}
-            style={{ width: '100%', resize: 'vertical' }} placeholder="Recognise what the agent is doing well." />
-        </div>
-        <div>
-          <label style={labelStyle}>Observations</label>
-          <textarea className="input" rows={2} value={observations} onChange={e => setObs(e.target.value)}
-            style={{ width: '100%', resize: 'vertical' }} placeholder="What you've observed overall." />
-        </div>
-        <div>
-          <label style={labelStyle}>Agreed root cause</label>
-          <textarea className="input" rows={2} value={rootCause} onChange={e => setRoot(e.target.value)}
-            style={{ width: '100%', resize: 'vertical' }} placeholder="The root cause you and the agent agreed on." />
-        </div>
-      </div>
-
-      <div style={sectionTitle}>Focus areas
-        <span style={{ textTransform: 'none', fontWeight: 400, marginLeft: 8, color: 'var(--text-secondary)' }}>
-          (keep to 1–2 — targeted coaching)
-        </span>
-      </div>
-      {focus.map((f, i) => (
-        <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 220 }}>
-            <label style={labelStyle}>Focus area {i + 1}</label>
-            <input className="input" value={f.label} onChange={e => setFocusField(i, 'label', e.target.value)}
-              style={{ width: '100%' }} placeholder="e.g. Empathy statements" />
-          </div>
-          <div style={{ width: 130 }}>
-            <label style={labelStyle}>Baseline % (opt.)</label>
-            <input type="number" className="input" min={0} max={100} value={f.baseline}
-              onChange={e => setFocusField(i, 'baseline', e.target.value)} style={{ width: '100%' }} placeholder="—" />
-          </div>
-          {focus.length > 1 && (
-            <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-              onClick={() => setFocus(f => f.filter((_, j) => j !== i))}>Remove</button>
+        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', minHeight: 0 }}>
+          {parent && (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Follow-up to a previous session that was not sustained.</div>
           )}
-        </div>
-      ))}
-      {focus.length < 3 && (
-        <button className="btn btn-ghost btn-sm" onClick={() => setFocus(f => [...f, { label: '', baseline: '' }])}>+ Add focus area</button>
-      )}
 
-      <div style={sectionTitle}>Action plan
-        <span style={{ textTransform: 'none', fontWeight: 400, marginLeft: 8, color: 'var(--text-secondary)' }}>
-          (each item: what to do, a measurable "done test", and a due date)
-        </span>
-      </div>
-      {actions.map((a, i) => (
-        <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8 }}>
-          <div style={{ marginBottom: 8 }}>
-            <label style={labelStyle}>Action {i + 1} — what the agent will do</label>
-            <input className="input" value={a.description} onChange={e => setActionField(i, 'description', e.target.value)}
-              style={{ width: '100%' }} placeholder="e.g. Open every chat with a personalised greeting" />
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ flex: 1, minWidth: 240 }}>
-              <label style={labelStyle}>Done test (how we'll know it worked)</label>
-              <input className="input" value={a.done_test} onChange={e => setActionField(i, 'done_test', e.target.value)}
-                style={{ width: '100%' }} placeholder="e.g. Empathy scored PASS on next 3 evaluations" />
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={lbl}>Division *</label>
+              <select style={inp} value={divisionId} onChange={e => setDivId(e.target.value)}>
+                <option value="">— Select division —</option>
+                {divisions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
             </div>
-            <div style={{ width: 160 }}>
-              <label style={labelStyle}>Due date</label>
-              <input type="date" className="input" value={a.due_date} onChange={e => setActionField(i, 'due_date', e.target.value)} style={{ width: '100%' }} />
+            <div style={{ flex: 1 }}>
+              <label style={lbl}>Agent being observed *</label>
+              <select style={inp} value={agentId} disabled={!divisionId || !!parent} onChange={e => setAgentId(e.target.value)}>
+                <option value="">{divisionId ? '— Select agent —' : 'Select division first'}</option>
+                {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.email})</option>)}
+              </select>
             </div>
-            {actions.length > 1 && (
-              <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                onClick={() => setActions(a => a.filter((_, j) => j !== i))}>Remove</button>
-            )}
           </div>
-        </div>
-      ))}
-      <button className="btn btn-ghost btn-sm" onClick={() => setActions(a => [...a, { description: '', done_test: '', due_date: '' }])}>+ Add action item</button>
 
-      <div style={{ display: 'flex', gap: 10, marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
-        <button className="btn btn-primary" disabled={saving} onClick={() => save(true)}>
-          {saving ? 'Saving…' : 'Deliver session'}
-        </button>
-        <button className="btn btn-ghost" disabled={saving} onClick={() => save(false)}>Save as draft</button>
-        <button className="btn btn-ghost" disabled={saving} onClick={onCancel}>Cancel</button>
+          {candidateCtx.length > 1 && (
+            <div>
+              <label style={lbl}>Queue / Market</label>
+              <select style={inp} value={ctxQueueId} onChange={e => setCtxQ(e.target.value)}>
+                <option value="">— Select which queue this relates to —</option>
+                {candidateCtx.map(q => {
+                  const c = gov.queueCtx[q.id]
+                  return <option key={q.id} value={q.id}>{c?.workspace_name} › {c?.hub_name} › {c?.market || q.name}</option>
+                })}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label style={lbl}>Observation model</label>
+            <select style={inp} value={model} onChange={e => setModel(e.target.value)}>
+              {MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 5, lineHeight: 1.5 }}>{MODEL_NOTES[model]}</div>
+          </div>
+
+          <div>
+            <label style={lbl}>Suggested close date</label>
+            <input type="date" style={{ ...inp, maxWidth: 200 }} value={closeDate} onChange={e => setClose(e.target.value)} />
+          </div>
+
+          <div style={sect}>Session notes</div>
+          <div>
+            <label style={lbl}>Strengths / what went well</label>
+            <textarea style={{ ...inp, resize: 'vertical', minHeight: 54 }} value={strengths} onChange={e => setStr(e.target.value)} placeholder="Recognise what the agent is doing well." />
+          </div>
+          <div>
+            <label style={lbl}>Observations</label>
+            <textarea style={{ ...inp, resize: 'vertical', minHeight: 54 }} value={observations} onChange={e => setObs(e.target.value)} placeholder="What you've observed overall." />
+          </div>
+          <div>
+            <label style={lbl}>Agreed root cause</label>
+            <textarea style={{ ...inp, resize: 'vertical', minHeight: 54 }} value={rootCause} onChange={e => setRoot(e.target.value)} placeholder="The root cause you and the agent agreed on." />
+          </div>
+
+          <div style={sect}>Focus areas (keep to 1–2)</div>
+          {focus.map((f, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input style={inp} value={f.label} onChange={e => setFocusField(i, e.target.value)} placeholder={`Focus area ${i + 1} — e.g. Empathy statements`} />
+              {focus.length > 1 && <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setFocus(f => f.filter((_, j) => j !== i))}>✕</button>}
+            </div>
+          ))}
+          {focus.length < 3 && <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setFocus(f => [...f, { label: '' }])}>+ Add focus area</button>}
+
+          <div style={sect}>Action plan</div>
+          {actions.map((a, i) => (
+            <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+              <label style={lbl}>Action {i + 1} — what the agent will do</label>
+              <input style={{ ...inp, marginBottom: 8 }} value={a.description} onChange={e => setActionField(i, 'description', e.target.value)} placeholder="e.g. Open every chat with a personalised greeting" />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div style={{ flex: 1, minWidth: 220 }}>
+                  <label style={lbl}>Done test (how we'll know it worked)</label>
+                  <input style={inp} value={a.done_test} onChange={e => setActionField(i, 'done_test', e.target.value)} placeholder="e.g. Empathy scored PASS on next 3 evaluations" />
+                </div>
+                <div style={{ width: 160 }}>
+                  <label style={lbl}>Due date</label>
+                  <input type="date" style={inp} value={a.due_date} onChange={e => setActionField(i, 'due_date', e.target.value)} />
+                </div>
+                {actions.length > 1 && <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => setActions(a => a.filter((_, j) => j !== i))}>Remove</button>}
+              </div>
+            </div>
+          ))}
+          <button className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => setActions(a => [...a, { description: '', done_test: '', due_date: '' }])}>+ Add action item</button>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 20px', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+          <button className="btn btn-ghost" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="btn btn-ghost" disabled={saving} onClick={() => save(false)}>Save as draft</button>
+          <button className="btn btn-primary" disabled={saving} onClick={() => save(true)}>{saving ? 'Saving…' : 'Deliver session'}</button>
+        </div>
       </div>
     </div>
   )
 }
 
 // ─── Session detail modal ───────────────────────────────────────────────────
-function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, onRecoach }) {
+function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, onRecoach, onResumeDraft }) {
   const [focus, setFocus]     = useState([])
   const [actions, setActions] = useState([])
-  const [followup, setFollow] = useState(session.followup_score ?? '')
   const [ackComment, setAck]  = useState('')
   const [confirm, setConfirm] = useState(null)
   const isOwnAgent = session.agent_id === profile.id
@@ -229,58 +281,48 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
       supabase.from('coaching_focus_areas').select('*').eq('session_id', session.id).order('sort_order'),
       supabase.from('coaching_action_items').select('*').eq('session_id', session.id).order('sort_order'),
     ])
-    setFocus(f || [])
-    setActions(a || [])
+    setFocus(f || []); setActions(a || [])
   }
   useEffect(() => { load() }, [])
 
   const setActionStatus = async (item, status) => {
     const patch = { status }
-    if (status === 'met' || status === 'not_met') {
-      patch.verified_by = profile.id
-      patch.verified_at = new Date().toISOString()
-    }
+    if (status === 'met' || status === 'not_met') { patch.verified_by = profile.id; patch.verified_at = new Date().toISOString() }
     const { error } = await supabase.from('coaching_action_items').update(patch).eq('id', item.id)
     if (error) return flash(error.message, false)
     await load()
   }
-
-  const saveFollowup = async () => {
-    const { error } = await supabase.from('coaching_sessions')
-      .update({ followup_score: followup === '' ? null : Number(followup) }).eq('id', session.id)
-    if (error) return flash(error.message, false)
-    flash('Follow-up score saved'); onChanged()
-  }
-
   const moveToVerification = async () => {
     const { error } = await supabase.from('coaching_sessions').update({ status: 'pending_verification' }).eq('id', session.id)
     if (error) return flash(error.message, false)
     flash('Moved to pending verification'); onChanged(); onClose()
   }
-
-  const closeSession = (met) => setConfirm({
-    message: met ? 'Close this session as MET — improvement was verified and sustained?'
-                  : 'Close this session as NOT MET? You can then create a re-coaching session.',
+  const cancelSession = () => setConfirm({
+    message: 'Cancel this observation session? It will move to Cancelled and be excluded from insights.',
     onYes: async () => {
       setConfirm(null)
-      const { error } = await supabase.from('coaching_sessions')
-        .update({ status: met ? 'closed_met' : 'closed_not_met', closed_at: new Date().toISOString(),
-                  followup_score: followup === '' ? null : Number(followup) }).eq('id', session.id)
+      const { error } = await supabase.from('coaching_sessions').update({ status: 'cancelled', closed_at: new Date().toISOString() }).eq('id', session.id)
       if (error) return flash(error.message, false)
-      flash(met ? 'Session closed — met' : 'Session closed — not met')
-      onChanged(); onClose()
+      flash('Session cancelled'); onChanged(); onClose()
+    }
+  })
+  const closeSession = (met) => setConfirm({
+    message: met ? 'Close this session as MET — improvement was verified and sustained?' : 'Close as NOT MET? You can then create a re-coaching session.',
+    onYes: async () => {
+      setConfirm(null)
+      const { error } = await supabase.from('coaching_sessions').update({ status: met ? 'closed_met' : 'closed_not_met', closed_at: new Date().toISOString() }).eq('id', session.id)
+      if (error) return flash(error.message, false)
+      flash(met ? 'Session closed — met' : 'Session closed — not met'); onChanged(); onClose()
       if (!met) onRecoach(session)
     }
   })
-
   const acknowledge = async () => {
-    const { error } = await supabase.from('coaching_sessions')
-      .update({ agent_acknowledged_at: new Date().toISOString(), agent_comment: ackComment.trim() || null })
-      .eq('id', session.id)
+    const { error } = await supabase.from('coaching_sessions').update({ agent_acknowledged_at: new Date().toISOString(), agent_comment: ackComment.trim() || null }).eq('id', session.id)
     if (error) return flash(error.message, false)
     flash('Acknowledged'); onChanged(); onClose()
   }
 
+  const isClosed = CLOSED_STATUSES.includes(session.status)
   const allResolved = actions.length > 0 && actions.every(a => a.status === 'met' || a.status === 'not_met')
   const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '18px 0 8px' }
   const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
@@ -290,7 +332,7 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
       {confirm && <ConfirmModal message={confirm.message} onYes={confirm.onYes} onNo={() => setConfirm(null)} />}
       <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720 }}>
         <div className="modal-header">
-          <h2>Coaching session</h2>
+          <h2>Observation session</h2>
           <button className="btn-close" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
@@ -299,12 +341,17 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
             <span style={{ fontSize: 13 }}><b>Agent:</b> {session.agent?.name || '—'}</span>
             <span style={{ fontSize: 13 }}><b>Coach:</b> {session.coach?.name || '—'}</span>
             <span style={{ fontSize: 13 }}><b>Model:</b> {session.coaching_model}</span>
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{new Date(session.session_date || session.created_at).toLocaleDateString()}</span>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDate(session.session_date || session.created_at)}</span>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            {session.division && <span>Division: {session.division}</span>}
+            {session.market && <span>Market: {session.market}</span>}
+            {session.planned_close_date && <span>Suggested close: {fmtDate(session.planned_close_date)}</span>}
           </div>
 
-          {session.followup_score != null && (
-            <div style={{ marginTop: 12, fontSize: 13 }}>
-              <b>Follow-up score:</b> {session.followup_score}%
+          {session.status === 'draft' && isCoach && session.coach_id === profile.id && (
+            <div style={{ marginTop: 14 }}>
+              <button className="btn btn-primary btn-sm" onClick={() => { onClose(); onResumeDraft?.(session) }}>Resume / edit draft</button>
             </div>
           )}
 
@@ -317,11 +364,7 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
               <div style={label}>Focus areas</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {focus.map(f => (
-                  <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13,
-                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 12px' }}>
-                    <span>{f.label}</span>
-                    {f.baseline_score != null && <span style={{ color: 'var(--text-secondary)' }}>baseline {f.baseline_score}%</span>}
-                  </div>
+                  <div key={f.id} style={{ fontSize: 13, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 12px' }}>{f.label}</div>
                 ))}
               </div>
             </>
@@ -340,8 +383,8 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
                     </span>
                   </div>
                   {a.done_test && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>Done test: {a.done_test}</div>}
-                  {a.due_date && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>Due: {new Date(a.due_date).toLocaleDateString()}</div>}
-                  {isCoach && session.status !== 'closed_met' && session.status !== 'closed_not_met' && (
+                  {a.due_date && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>Due: {fmtDate(a.due_date)}</div>}
+                  {isCoach && !isClosed && session.status !== 'draft' && (
                     <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
                       <button className="btn btn-ghost btn-sm" onClick={() => setActionStatus(a, 'in_progress')}>In progress</button>
                       <button className="btn btn-ghost btn-sm" style={{ color: 'var(--success)' }} onClick={() => setActionStatus(a, 'met')}>Mark met</button>
@@ -353,41 +396,28 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
             </div>
           )}
 
-          {/* Agent acknowledgement */}
           {isOwnAgent && !session.agent_acknowledged_at && session.status !== 'draft' && (
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <div style={label}>Your acknowledgement</div>
-              <textarea className="input" rows={2} value={ackComment} onChange={e => setAck(e.target.value)}
-                style={{ width: '100%', resize: 'vertical', marginBottom: 8 }} placeholder="Optional comment…" />
+              <textarea className="input" rows={2} value={ackComment} onChange={e => setAck(e.target.value)} style={{ width: '100%', resize: 'vertical', marginBottom: 8 }} placeholder="Optional comment…" />
               <button className="btn btn-primary btn-sm" onClick={acknowledge}>Acknowledge session</button>
             </div>
           )}
           {session.agent_acknowledged_at && (
             <div style={{ marginTop: 12, fontSize: 12, color: 'var(--success)' }}>
-              ✓ Acknowledged by agent on {new Date(session.agent_acknowledged_at).toLocaleDateString()}
+              ✓ Acknowledged by agent on {fmtDate(session.agent_acknowledged_at)}
               {session.agent_comment && <div style={{ ...box, marginTop: 6, color: 'var(--text-primary)' }}>{session.agent_comment}</div>}
             </div>
           )}
 
-          {/* Coach close-loop controls */}
-          {isCoach && session.status !== 'closed_met' && session.status !== 'closed_not_met' && (
+          {isCoach && !isClosed && session.status !== 'draft' && (
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <div style={label}>Verification & close-out</div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
-                <div style={{ width: 180 }}>
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Follow-up score % (opt.)</label>
-                  <input type="number" min={0} max={100} className="input" value={followup} onChange={e => setFollow(e.target.value)} style={{ width: '100%' }} placeholder="—" />
-                </div>
-                <button className="btn btn-ghost btn-sm" onClick={saveFollowup}>Save follow-up</button>
-              </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {session.status === 'active' && (
-                  <button className="btn btn-ghost btn-sm" onClick={moveToVerification}>Move to pending verification</button>
-                )}
-                <button className="btn btn-sm btn-primary" disabled={!allResolved}
-                  title={allResolved ? '' : 'Resolve all action items first'} onClick={() => closeSession(true)}>Close — Met</button>
-                <button className="btn btn-sm btn-danger" disabled={!allResolved}
-                  title={allResolved ? '' : 'Resolve all action items first'} onClick={() => closeSession(false)}>Close — Not met</button>
+                {session.status === 'active' && <button className="btn btn-ghost btn-sm" onClick={moveToVerification}>Move to pending verification</button>}
+                <button className="btn btn-sm btn-primary" disabled={!allResolved} title={allResolved ? '' : 'Resolve all action items first'} onClick={() => closeSession(true)}>Close — Met</button>
+                <button className="btn btn-sm btn-danger" disabled={!allResolved} title={allResolved ? '' : 'Resolve all action items first'} onClick={() => closeSession(false)}>Close — Not met</button>
+                <button className="btn btn-ghost btn-sm" style={{ color: 'var(--text-secondary)' }} onClick={cancelSession}>Cancel session</button>
               </div>
               {!allResolved && <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 6 }}>Mark every action item met or not met to close the session.</div>}
             </div>
@@ -398,27 +428,234 @@ function SessionDetail({ session, profile, isCoach, flash, onClose, onChanged, o
   )
 }
 
-// ─── Main Coaching page ─────────────────────────────────────────────────────
+// ─── Drafts modal (own drafts, like Evaluations page) ───────────────────────
+function DraftsModal({ drafts, onClose, onOpen, onDelete }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modal-header"><h2>Draft observation sessions</h2><button className="btn-close" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          {drafts.length === 0 ? (
+            <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: 24 }}>No drafts.</p>
+          ) : drafts.map(d => (
+            <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: '1px solid var(--border)' }}>
+              <div>
+                <div style={{ fontWeight: 600 }}>{d.agent?.name || 'No agent'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{d.division || '—'} · saved {fmtDate(d.created_at)}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-primary btn-sm" onClick={() => onOpen(d)}>Open</button>
+                <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }} onClick={() => onDelete(d)}>Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Sessions table ─────────────────────────────────────────────────────────
+function SessionsTable({ rows, counts, onView }) {
+  const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
+  const tdStyle = { padding: '10px 16px' }
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid var(--border)' }}>
+            <th style={thStyle}>Agent</th><th style={thStyle}>Coach</th><th style={thStyle}>Division</th>
+            <th style={thStyle}>Date</th><th style={thStyle}>Status</th><th style={thStyle}>Action plan</th>
+            <th style={thStyle}>Acknowledged</th><th style={{ ...thStyle, textAlign: 'right' }} />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.length === 0 && <tr><td colSpan="8" style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
+          {rows.map(s => {
+            const c = counts[s.id] || { total: 0, done: 0 }
+            return (
+              <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ ...tdStyle, fontWeight: 500 }}>{s.agent?.name || '—'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.coach?.name || '—'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.division || '—'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{fmtDate(s.session_date || s.created_at)}</td>
+                <td style={tdStyle}><StatusBadge status={s.status} /></td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{c.total ? `${c.done}/${c.total} resolved` : '—'}</td>
+                <td style={tdStyle}>{s.agent_acknowledged_at ? <span style={{ color: 'var(--success)', fontSize: 12 }}>✓ {fmtDate(s.agent_acknowledged_at)}</span> : <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>—</span>}</td>
+                <td style={{ ...tdStyle, textAlign: 'right' }}><button className="btn btn-ghost btn-sm" onClick={() => onView(s)}>View</button></td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── Observation Insights tab ───────────────────────────────────────────────
+function InsightsTab({ sessions, counts, govNames }) {
+  const [fAgent, setAgent] = useState('')
+  const [fCoach, setCoach] = useState('')
+  const [fDiv, setDiv]     = useState('')
+  const [fBpo, setBpo]     = useState('')
+  const [fHub, setHub]     = useState('')
+  const [fMarket, setMkt]  = useState('')
+  const [fStatus, setStat] = useState('')
+  const [fYear, setYear]   = useState('')
+  const [fMonth, setMonth] = useState('')
+  const [fWeek, setWeek]   = useState('')
+  const [fFrom, setFrom]   = useState('')
+  const [fTo, setTo]       = useState('')
+
+  // Exclude cancelled entirely from insights
+  const base = useMemo(() => sessions.filter(s => s.status !== 'cancelled').map(s => {
+    const d = s.session_date || s.created_at
+    return { ...s,
+      _date: d,
+      _year: d ? String(new Date(d).getFullYear()) : '',
+      _month: d ? new Date(d).toISOString().slice(0, 7) : '',
+      _week: d ? isoWeek(d) : '',
+      _bpo: s.workspace_id ? (govNames.ws[s.workspace_id] || '') : '',
+      _hub: s.hub_id ? (govNames.hub[s.hub_id] || '') : '',
+      _agent: s.agent?.name || '', _coach: s.coach?.name || '',
+    }
+  }), [sessions, govNames])
+
+  const opts = (key) => [...new Set(base.map(r => r[key]).filter(Boolean))].sort()
+
+  const rows = base.filter(r =>
+    (!fAgent || r._agent === fAgent) && (!fCoach || r._coach === fCoach) &&
+    (!fDiv || r.division === fDiv) && (!fBpo || r._bpo === fBpo) &&
+    (!fHub || r._hub === fHub) && (!fMarket || r.market === fMarket) &&
+    (!fStatus || r.status === fStatus) && (!fYear || r._year === fYear) &&
+    (!fMonth || r._month === fMonth) && (!fWeek || r._week === fWeek) &&
+    (!fFrom || (r._date && r._date >= fFrom)) && (!fTo || (r._date && r._date <= fTo))
+  )
+
+  const n = (st) => rows.filter(r => r.status === st).length
+  const total = rows.length
+  const ackd = rows.filter(r => r.agent_acknowledged_at).length
+  const closed = n('closed_met') + n('closed_not_met')
+  const metRate = closed ? Math.round((n('closed_met') / closed) * 100) : 0
+
+  const sel = { padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13 }
+  const card = { flex: 1, minWidth: 150, textAlign: 'center', padding: '18px 16px' }
+  const cnum = { fontSize: 26, fontWeight: 700 }
+  const clbl = { fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }
+  const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
+  const tdStyle = { padding: '10px 16px' }
+
+  const exportCsv = () => {
+    const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const headers = ['Date', 'Agent', 'Coach', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'ISO Week', 'Acknowledged', 'Actions resolved']
+    const lines = [headers.map(esc).join(',')]
+    rows.forEach(r => {
+      const c = counts[r.id] || { total: 0, done: 0 }
+      lines.push([esc(fmtDate(r._date)), esc(r._agent), esc(r._coach), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(STATUS[r.status]?.label), esc(r._week), esc(r.agent_acknowledged_at ? 'Yes' : 'No'), esc(`${c.done}/${c.total}`)].join(','))
+    })
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+    a.download = `observation-insights-${new Date().toISOString().split('T')[0]}.csv`; a.click(); URL.revokeObjectURL(a.href)
+  }
+
+  const clearAll = () => { setAgent(''); setCoach(''); setDiv(''); setBpo(''); setHub(''); setMkt(''); setStat(''); setYear(''); setMonth(''); setWeek(''); setFrom(''); setTo('') }
+  const anyFilter = fAgent || fCoach || fDiv || fBpo || fHub || fMarket || fStatus || fYear || fMonth || fWeek || fFrom || fTo
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button className="btn btn-accent-soft" onClick={exportCsv}>⬇ Export to Excel</button>
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
+        <select style={sel} value={fAgent} onChange={e => setAgent(e.target.value)}><option value="">All Agents</option>{opts('_agent').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fCoach} onChange={e => setCoach(e.target.value)}><option value="">All Coaches</option>{opts('_coach').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fDiv} onChange={e => setDiv(e.target.value)}><option value="">All Divisions</option>{opts('division').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fBpo} onChange={e => setBpo(e.target.value)}><option value="">All BPOs</option>{opts('_bpo').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fHub} onChange={e => setHub(e.target.value)}><option value="">All Hubs</option>{opts('_hub').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fMarket} onChange={e => setMkt(e.target.value)}><option value="">All Markets</option>{opts('market').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fStatus} onChange={e => setStat(e.target.value)}><option value="">All Statuses</option>{Object.entries(STATUS).filter(([k]) => k !== 'cancelled').map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
+        <select style={sel} value={fYear} onChange={e => setYear(e.target.value)}><option value="">All Years</option>{opts('_year').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fMonth} onChange={e => setMonth(e.target.value)}><option value="">All Months</option>{opts('_month').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fWeek} onChange={e => setWeek(e.target.value)}><option value="">All ISO Weeks</option>{opts('_week').map(o => <option key={o}>{o}</option>)}</select>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>from</span>
+        <input type="date" style={sel} value={fFrom} onChange={e => setFrom(e.target.value)} />
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>to</span>
+        <input type="date" style={sel} value={fTo} onChange={e => setTo(e.target.value)} />
+        {anyFilter && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear filters</button>}
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
+        <div className="card" style={card}><div style={cnum}>{total}</div><div style={clbl}>Sessions</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#6366f1' }}>{n('active')}</div><div style={clbl}>Active</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#f59e0b' }}>{n('pending_verification')}</div><div style={clbl}>Pending verification</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#22c55e' }}>{n('closed_met')}</div><div style={clbl}>Closed · Met</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#ef4444' }}>{n('closed_not_met')}</div><div style={clbl}>Closed · Not met</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: metRate >= 70 ? '#22c55e' : '#dc2626' }}>{metRate}%</div><div style={clbl}>Met rate (closed)</div></div>
+        <div className="card" style={card}><div style={cnum}>{ackd}/{total}</div><div style={clbl}>Acknowledged</div></div>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
+              <th style={thStyle}>Date</th><th style={thStyle}>Agent</th><th style={thStyle}>Coach</th>
+              <th style={thStyle}>Division</th><th style={thStyle}>Market</th><th style={thStyle}>Status</th><th style={thStyle}>Ack</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan="7" style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>No results match the selected filters.</td></tr>}
+            {rows.map(r => (
+              <tr key={r.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{fmtDate(r._date)}</td>
+                <td style={{ ...tdStyle, fontWeight: 500 }}>{r._agent || '—'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{r._coach || '—'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{r.division || '—'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{r.market || '—'}</td>
+                <td style={tdStyle}><StatusBadge status={r.status} /></td>
+                <td style={tdStyle}>{r.agent_acknowledged_at ? '✓' : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ─── Placeholder tab ────────────────────────────────────────────────────────
+function ComingSoon({ title }) {
+  return (
+    <div className="card" style={{ textAlign: 'center', padding: 48, color: 'var(--text-secondary)', fontSize: 14 }}>
+      {title} is coming in a later update.
+    </div>
+  )
+}
+
+// ─── Root ───────────────────────────────────────────────────────────────────
 export default function Coaching() {
   const { profile } = useAuth()
-  const isCoach = ['owner', 'admin', 'evaluator'].includes(profile?.role)
+  const role = profile?.role
+  const isCoach = ['owner', 'admin', 'evaluator', 'team_leader'].includes(role)
+  const isPrivileged = ['owner', 'admin'].includes(role)
+  const canCreate = ['evaluator', 'team_leader'].includes(role)
 
+  const [tab, setTab]           = useState('sessions')
   const [sessions, setSessions] = useState([])
-  const [agents, setAgents]     = useState([])
   const [counts, setCounts]     = useState({})
   const [loading, setLoading]   = useState(true)
   const [creating, setCreating] = useState(false)
   const [recoachOf, setRecoach] = useState(null)
   const [detail, setDetail]     = useState(null)
-  const [statusFilter, setStatusFilter] = useState('all')
+  const [showDrafts, setDrafts] = useState(false)
   const [msg, setMsg]           = useState(null)
+  const [gov, setGov]           = useState(null)
 
   const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }
 
   const loadSessions = async () => {
     setLoading(true)
-    const { data } = await supabase
-      .from('coaching_sessions')
+    const { data } = await supabase.from('coaching_sessions')
       .select('*, agent:users!coaching_sessions_agent_id_fkey(name, email), coach:users!coaching_sessions_coach_id_fkey(name, email)')
       .order('created_at', { ascending: false })
     const rows = data || []
@@ -427,106 +664,142 @@ export default function Coaching() {
     if (ids.length) {
       const { data: items } = await supabase.from('coaching_action_items').select('session_id, status').in('session_id', ids)
       const c = {}
-      ;(items || []).forEach(it => {
-        c[it.session_id] = c[it.session_id] || { total: 0, done: 0 }
-        c[it.session_id].total++
-        if (it.status === 'met' || it.status === 'not_met') c[it.session_id].done++
-      })
+      ;(items || []).forEach(it => { c[it.session_id] = c[it.session_id] || { total: 0, done: 0 }; c[it.session_id].total++; if (it.status === 'met' || it.status === 'not_met') c[it.session_id].done++ })
       setCounts(c)
     } else setCounts({})
     setLoading(false)
   }
 
-  const loadAgents = async () => {
-    const { data } = await supabase.from('users').select('id, name, email, role, active').eq('role', 'viewer').order('name')
-    setAgents((data || []).filter(a => a.active !== false))
+  const loadGovernance = async () => {
+    const [{ data: divs }, { data: ws }, { data: hubs }, { data: qs }, { data: uq }, { data: ags }] = await Promise.all([
+      supabase.from('divisions').select('id, name, is_active').order('name'),
+      supabase.from('workspaces').select('id, name, division_id, deleted_at'),
+      supabase.from('hubs').select('id, name, workspace_id, deleted_at'),
+      supabase.from('queues').select('id, name, hub_id, workspace_id, market_value, deleted_at'),
+      supabase.from('user_queues').select('user_id, queue_id'),
+      supabase.from('users').select('id, name, email, role, active').eq('role', 'viewer').order('name'),
+    ])
+    const wsMap = Object.fromEntries((ws || []).filter(w => !w.deleted_at).map(w => [w.id, w]))
+    const hubMap = Object.fromEntries((hubs || []).filter(h => !h.deleted_at).map(h => [h.id, h]))
+    const divMap = Object.fromEntries((divs || []).map(d => [d.id, d]))
+    const queues = (qs || []).filter(q => !q.deleted_at)
+    const queueCtx = {}
+    queues.forEach(q => {
+      const hub = hubMap[q.hub_id]
+      const wspace = hub ? wsMap[hub.workspace_id] : (q.workspace_id ? wsMap[q.workspace_id] : null)
+      const div = wspace ? divMap[wspace.division_id] : null
+      queueCtx[q.id] = {
+        division_id: div?.id || null, division_name: div?.name || null,
+        workspace_id: wspace?.id || null, workspace_name: wspace?.name || null,
+        hub_id: hub?.id || null, hub_name: hub?.name || null,
+        market: q.market_value || null,
+      }
+    })
+    const myQueueIds = new Set((uq || []).filter(u => u.user_id === profile.id).map(u => u.queue_id))
+    const myContexts = [...myQueueIds].map(qid => queueCtx[qid]).filter(Boolean)
+    setGov({
+      divisions: (divs || []).filter(d => d.is_active !== false),
+      queues, queueCtx, userQueues: uq || [],
+      agents: (ags || []).filter(a => a.active !== false),
+      myQueueIds, myContexts,
+      ws: Object.fromEntries((ws || []).map(w => [w.id, w.name])),
+      hub: Object.fromEntries((hubs || []).map(h => [h.id, h.name])),
+    })
   }
 
-  useEffect(() => { if (profile?.id) { loadSessions(); if (isCoach) loadAgents() } }, [profile])
+  useEffect(() => { if (profile?.id) { loadSessions(); if (isCoach) loadGovernance() } }, [profile])
 
-  const filtered = useMemo(() =>
-    statusFilter === 'all' ? sessions : sessions.filter(s => s.status === statusFilter)
-  , [sessions, statusFilter])
+  // Split by ownership + status
+  const mine = isPrivileged ? sessions : sessions.filter(s => s.coach_id === profile?.id)
+  const myDrafts = sessions.filter(s => s.status === 'draft' && s.coach_id === profile?.id)
+  const activeRows = mine.filter(s => ACTIVE_STATUSES.includes(s.status))
+  const closedRows = mine.filter(s => CLOSED_STATUSES.includes(s.status))
 
   const startRecoach = (parent) => { setDetail(null); setRecoach(parent); setCreating(true) }
-  const closeForm = () => { setCreating(false); setRecoach(null) }
-  const afterSave = () => { closeForm(); loadSessions() }
+  const openCreate = () => { setRecoach(null); setCreating(true) }
+  const afterSave = () => { setCreating(false); setRecoach(null); loadSessions() }
+  const resumeDraft = () => { flash('Draft editing opens the create form — full resume comes with the next update.'); }
+
+  const deleteDraft = async (d) => {
+    await supabase.from('coaching_action_items').delete().eq('session_id', d.id)
+    await supabase.from('coaching_focus_areas').delete().eq('session_id', d.id)
+    await supabase.from('coaching_sessions').delete().eq('id', d.id)
+    loadSessions()
+  }
+
+  const govNames = gov ? { ws: gov.ws, hub: gov.hub } : { ws: {}, hub: {} }
+
+  const TABS = isCoach
+    ? [['sessions', 'Observation Sessions'], ['insights', 'Observation Insights'], ['queue', 'Coaching Queue'], ['coaching_insights', 'Coaching Insights']]
+    : []
+
+  // Agent (viewer) view — own sessions only
+  if (!isCoach) {
+    const own = sessions // RLS already limits agents to their own
+    return (
+      <div className="page">
+        <div className="page-header"><div><h1>Coaching</h1></div></div>
+        {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}><span>{msg.text}</span></div>}
+        {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
+          : <SessionsTable rows={own.filter(s => s.status !== 'draft')} counts={counts} onView={setDetail} />}
+        {detail && <SessionDetail session={detail} profile={profile} isCoach={false} flash={flash} onClose={() => setDetail(null)} onChanged={loadSessions} onRecoach={() => {}} />}
+      </div>
+    )
+  }
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div>
-          <h1>Coaching</h1>
-        </div>
-        {isCoach && !creating && (
-          <button className="btn btn-primary" onClick={() => { setRecoach(null); setCreating(true) }}>+ New Coaching Session</button>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div><h1>Coaching</h1></div>
+        {tab === 'sessions' && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-ghost" style={{ opacity: myDrafts.length ? 1 : 0.5 }} disabled={!myDrafts.length} onClick={() => setDrafts(true)}>
+              {myDrafts.length ? `Drafts (${myDrafts.length})` : 'Drafts'}
+            </button>
+            {canCreate && <button className="btn btn-primary" onClick={openCreate}>+ New Observation Session</button>}
+          </div>
         )}
       </div>
 
       {msg && (
-        <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}
-          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <span>{msg.text}</span>
           <button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button>
         </div>
       )}
 
-      {creating && isCoach && (
-        <NewSessionForm profile={profile} agents={agents} parent={recoachOf} flash={flash} onSaved={afterSave} onCancel={closeForm} />
-      )}
-
-      <div className="filter-bar" style={{ marginBottom: 16 }}>
-        <select className="select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-          <option value="all">All statuses</option>
-          {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-        </select>
+      <div style={{ display: 'flex', marginBottom: 24, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+        {TABS.map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)} style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '8px 18px', fontSize: 13,
+            fontWeight: tab === key ? 600 : 400, color: tab === key ? 'var(--text-primary)' : 'var(--text-secondary)',
+            borderBottom: `2px solid ${tab === key ? 'var(--accent, #2563eb)' : 'transparent'}`, marginBottom: -1,
+          }}>{label}</button>
+        ))}
       </div>
 
-      {loading ? (
-        <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Agent</th>
-                <th>Coach</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Action plan</th>
-                <th>Follow-up</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && (
-                <tr><td colSpan="7" className="empty-row">
-                  {isCoach ? 'No coaching sessions yet. Start one with + New Coaching Session.' : 'You have no coaching sessions yet.'}
-                </td></tr>
-              )}
-              {filtered.map(s => {
-                const c = counts[s.id] || { total: 0, done: 0 }
-                return (
-                  <tr key={s.id}>
-                    <td style={{ fontWeight: 500 }}>{s.agent?.name || '—'}</td>
-                    <td style={{ color: 'var(--text-secondary)' }}>{s.coach?.name || '—'}</td>
-                    <td style={{ color: 'var(--text-secondary)' }}>{new Date(s.session_date || s.created_at).toLocaleDateString()}</td>
-                    <td><StatusBadge status={s.status} /></td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{c.total ? `${c.done}/${c.total} resolved` : '—'}</td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{s.followup_score != null ? `${s.followup_score}%` : '—'}</td>
-                    <td><button className="btn btn-ghost btn-sm" onClick={() => setDetail(s)}>View</button></td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div> : (
+        <>
+          {tab === 'sessions' && (
+            <>
+              <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Active & Pending Verification</h2>
+              <div style={{ marginBottom: 28 }}><SessionsTable rows={activeRows} counts={counts} onView={setDetail} /></div>
+              <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Closed & Cancelled</h2>
+              <SessionsTable rows={closedRows} counts={counts} onView={setDetail} />
+            </>
+          )}
+          {tab === 'insights' && <InsightsTab sessions={mine} counts={counts} govNames={govNames} />}
+          {tab === 'queue' && <ComingSoon title="Coaching Queue" />}
+          {tab === 'coaching_insights' && <ComingSoon title="Coaching Insights" />}
+        </>
       )}
 
-      {detail && (
-        <SessionDetail session={detail} profile={profile} isCoach={isCoach} flash={flash}
-          onClose={() => setDetail(null)} onChanged={loadSessions} onRecoach={startRecoach} />
+      {creating && gov && (
+        <NewObservationModal profile={profile} isPrivileged={isPrivileged} gov={gov} parent={recoachOf}
+          flash={flash} onClose={() => { setCreating(false); setRecoach(null) }} onSaved={afterSave} />
       )}
+      {showDrafts && <DraftsModal drafts={myDrafts} onClose={() => setDrafts(false)} onOpen={(d) => { setDrafts(false); setDetail(d) }} onDelete={(d) => { setDrafts(false); deleteDraft(d) }} />}
+      {detail && <SessionDetail session={detail} profile={profile} isCoach={isCoach} flash={flash} onClose={() => setDetail(null)} onChanged={loadSessions} onRecoach={startRecoach} onResumeDraft={resumeDraft} />}
     </div>
   )
 }
