@@ -639,7 +639,7 @@ export default function Coaching() {
   const role = profile?.role
   const isCoach = ['owner', 'admin', 'evaluator', 'team_leader'].includes(role)
   const isPrivileged = ['owner', 'admin'].includes(role)
-  const canCreate = ['evaluator', 'team_leader'].includes(role)
+  const canCreate = ['owner', 'admin', 'evaluator', 'team_leader'].includes(role)
 
   const [tab, setTab]           = useState('sessions')
   const [sessions, setSessions] = useState([])
