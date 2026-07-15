@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../App'
 import { supabase } from '../lib/supabase'
+import NotificationBell from './NotificationBell'
 
 const SCHEMES = [
   { key: 'default',  label: 'Default',  swatch: '#3b82f6' },
@@ -128,25 +129,26 @@ export default function Navbar() {
       </div>
 
       <div className="navbar-user" ref={settingsRef} style={{ position: 'relative' }}>
-        {/* Clickable account area → opens settings */}
-        <button
-          onClick={() => setSettingsOpen(o => !o)}
-          style={{
-            width: '100%', background: settingsOpen ? 'var(--bg-hover)' : 'transparent',
-            border: 'none', borderRadius: 'var(--radius)', padding: '8px',
-            cursor: 'pointer', textAlign: 'left', transition: 'background .15s',
-          }}
-          title="Account settings">
-          <div className="user-info" style={{ marginBottom: 6 }}>
-            <div className="avatar">{initials}</div>
-            <div style={{ overflow: 'hidden', flex: 1 }}>
-              <div className="user-name">{profile?.name || 'User'}</div>
-              <div className="user-email">{profile?.email || ''}</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <NotificationBell />
+          {/* Clickable account area → opens settings */}
+          <button
+            onClick={() => setSettingsOpen(o => !o)}
+            style={{
+              flex: 1, background: settingsOpen ? 'var(--bg-hover)' : 'transparent',
+              border: 'none', borderRadius: 'var(--radius)', padding: '8px',
+              cursor: 'pointer', textAlign: 'left', transition: 'background .15s',
+            }}
+            title="Account settings">
+            <div className="user-info">
+              <div className="avatar">{initials}</div>
+              <div style={{ overflow: 'hidden', flex: 1 }}>
+                <div className="user-name">{profile?.name || 'User'}</div>
+              </div>
+              <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{settingsOpen ? '▾' : '▸'}</span>
             </div>
-            <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{settingsOpen ? '▾' : '▸'}</span>
-          </div>
-          <span className={`role-chip role-${roleClass}`}>{roleLabel}</span>
-        </button>
+          </button>
+        </div>
 
         {/* Settings popover */}
         {settingsOpen && (
@@ -158,6 +160,11 @@ export default function Navbar() {
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)',
               textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>
               Account Settings
+            </div>
+            <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{profile?.name || 'User'}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>{profile?.email || ''}</div>
+              <span className={`role-chip role-${roleClass}`}>{roleLabel}</span>
             </div>
 
             {/* Appearance: theme toggle */}
