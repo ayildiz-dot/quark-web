@@ -87,8 +87,7 @@ export default function NotificationBell() {
     await supabase.from('notifications')
       .update({ action_done: true, action_done_at: new Date().toISOString() }).eq('id', item.id)
     if (item.type === 'evaluation_read' && item.entity_id) {
-      await supabase.from('evaluations')
-        .update({ agent_read_at: new Date().toISOString() }).eq('id', Number(item.entity_id))
+      await supabase.rpc('mark_evaluation_read', { p_eval_id: Number(item.entity_id) })
     }
     load()
   }

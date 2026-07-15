@@ -622,6 +622,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const [assignmentRules, setAssignmentRules] = useState({})
 
   const [manualSampling, setManualSampling] = useState(queue.manual_sampling || false)
+  const [notifyAgent, setNotifyAgent] = useState(queue.notify_agent_on_evaluation || false)
 
   const [saving, setSaving] = useState(false)
 
@@ -824,6 +825,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 
     const { error: mapError } = await supabase.from('queues').update({
       scorecard_id: scId, market_value: market, hub_id: hub.id, workspace_id: ws.id, manual_sampling: manualSampling,
+      notify_agent_on_evaluation: notifyAgent,
     }).eq('id', queue.id)
     if (mapError) {
       setSaving(false)
@@ -1095,6 +1097,20 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           )}
         </div>
       )}
+
+      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+          <span onClick={() => setNotifyAgent(v => !v)} style={{ position: 'relative', width: 36, height: 20, borderRadius: 10, flexShrink: 0, marginTop: 2, backgroundColor: notifyAgent ? 'var(--accent)' : 'var(--border)', transition: 'background-color 0.15s ease' }}>
+            <span style={{ position: 'absolute', top: 2, left: notifyAgent ? 18 : 2, width: 16, height: 16, borderRadius: '50%', backgroundColor: '#fff', boxShadow: '0 1px 2px #00000033', transition: 'left 0.15s ease' }} />
+          </span>
+          <span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: notifyAgent ? 'var(--accent)' : 'var(--text-primary)' }}>Notify agent when they receive a Quality evaluation</span>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2, maxWidth: 460 }}>
+              When on, each agent evaluated on this queue gets a notification to open and confirm they have read their Quality evaluation. Leave off for high-volume queues to avoid over-notifying.
+            </div>
+          </span>
+        </label>
+      </div>
 
       <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px dashed var(--border)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>

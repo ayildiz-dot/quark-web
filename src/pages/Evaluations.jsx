@@ -158,6 +158,14 @@ export default function Evaluations() {
     setDetail({ ...ev, scores })
   }
 
+  const markEvalRead = async () => {
+    if (!detail) return
+    const now = new Date().toISOString()
+    await supabase.rpc('mark_evaluation_read', { p_eval_id: detail.id })
+    await supabase.from('notifications').update({ action_done: true, action_done_at: now }).eq('user_id', profile.id).eq('type', 'evaluation_read').eq('entity_id', String(detail.id))
+    setDetail(d => ({ ...d, agent_read_at: now }))
+  }
+
   // Helper: get a metadata value by label from the metadata_values array
   const getMeta = (row, label) => {
     if (!row?.metadata_values) return '—'
@@ -243,6 +251,7 @@ export default function Evaluations() {
         'Score':           isDsat ? '\u2014' : `${r.score}%`,
         'Failed Critical': isDsat ? '\u2014' : (r.failed_critical ? 'Yes' : 'No'),
         'Status':          r.status || '\u2014',
+        'Agent Read':      isDsat ? '\u2014' : (r.agent_read_required ? (r.agent_read_at ? 'Read' : 'Not read') : '\u2014'),
         ...(r.metadata_values || []).reduce((acc, m) => {
           acc[m.label] = m.value
           return acc
@@ -606,6 +615,17 @@ export default function Evaluations() {
               <button className="btn-close" onClick={() => setDetail(null)}>✕</button>
             </div>
             <div className="modal-body">
+
+              {profile?.role === 'viewer' && detail.agent_read_required && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                  background: detail.agent_read_at ? 'rgba(22,163,74,0.1)' : 'rgba(245,158,11,0.12)',
+                  border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', marginBottom: 14 }}>
+                  <span style={{ fontSize: 13 }}>
+                    {detail.agent_read_at ? '✓ You confirmed you have read this evaluation.' : 'Please confirm you have read this evaluation.'}
+                  </span>
+                  {!detail.agent_read_at && <button className="btn btn-primary btn-sm" onClick={markEvalRead}>Done</button>}
+                </div>
+              )}
 
               {/* Metadata values */}
               <div className="detail-meta">
