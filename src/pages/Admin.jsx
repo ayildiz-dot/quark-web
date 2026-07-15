@@ -90,10 +90,12 @@ function UsersTab({ profile, flash }) {
   const [expanded,   setExpanded]   = useState(null)
   const [confirm,    setConfirm]    = useState(null)
   const [workspaces, setWorkspaces] = useState([])
+  const [divisions,  setDivisions]  = useState([])
   const [allHubs,    setAllHubs]    = useState([])
   const [allQueues,  setAllQueues]  = useState([])
   const [userQueues, setUserQueues] = useState({})
   const [assigning,  setAssigning]  = useState(null)
+  const [assignDiv,  setAssignDiv]  = useState('')
   const [assignWs,   setAssignWs]   = useState('')
   const [assignHub,  setAssignHub]  = useState('')
   const [assignQueue,setAssignQueue]= useState('')
@@ -121,10 +123,12 @@ function UsersTab({ profile, flash }) {
   }
 
   const loadGovernance = async () => {
-    const { data: ws }     = await supabase.from('workspaces').select('id, name').order('name')
+    const { data: ws }     = await supabase.from('workspaces').select('id, name, division_id').order('name')
     const { data: hubs }   = await supabase.from('hubs').select('id, name, workspace_id').order('name')
     const { data: queues } = await supabase.from('queues').select('id, name, hub_id').order('name')
     const { data: uq }     = await supabase.from('user_queues').select('user_id, queue_id')
+    const { data: divs }   = await supabase.from('divisions').select('id, name').order('name')
+    setDivisions(divs || [])
     setWorkspaces(ws || [])
     setAllHubs(hubs || [])
     setAllQueues(queues || [])
@@ -176,9 +180,11 @@ function UsersTab({ profile, flash }) {
     await loadUsers(); flash(`Role updated to ${bulkRole} for ${ids.length} user(s)`)
   }
 
+  const [bulkDiv,   setBulkDiv]   = useState('')
   const [bulkWs,    setBulkWs]    = useState('')
   const [bulkHub,   setBulkHub]   = useState('')
   const [bulkQueue, setBulkQueue] = useState('')
+  const bulkWorkspaces = workspaces.filter(w => (w.division_id || '') === bulkDiv)
   const bulkHubs   = allHubs.filter(h => h.workspace_id === bulkWs)
   const bulkQueues = allQueues.filter(q => q.hub_id === bulkHub)
 
@@ -231,10 +237,11 @@ function UsersTab({ profile, flash }) {
     return false
   }
 
+  const assignWorkspaces = workspaces.filter(w => (w.division_id || '') === assignDiv)
   const filteredHubs   = allHubs.filter(h => h.workspace_id === assignWs)
   const filteredQueues = allQueues.filter(q => q.hub_id === assignHub)
 
-  const startAssign  = (userId) => { setAssigning(userId); setAssignWs(''); setAssignHub(''); setAssignQueue('') }
+  const startAssign  = (userId) => { setAssigning(userId); setAssignDiv(''); setAssignWs(''); setAssignHub(''); setAssignQueue('') }
   const cancelAssign = () => setAssigning(null)
 
   const addQueueAssignment = async (userId) => {
@@ -299,12 +306,20 @@ function UsersTab({ profile, flash }) {
             <button className="btn btn-primary btn-sm" onClick={applyBulkRole}>Apply</button>
             <span style={{ color: 'var(--border)' }}>|</span>
             <span style={{ color: 'var(--text-secondary)' }}>Governance</span>
+            <select className="select select-sm" value={bulkDiv}
+              onChange={e => { setBulkDiv(e.target.value); setBulkWs(''); setBulkHub(''); setBulkQueue('') }}
+              style={{ height: 28, fontSize: 12 }}>
+              <option value="">Division…</option>
+              {divisions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            {bulkDiv && (
             <select className="select select-sm" value={bulkWs}
               onChange={e => { setBulkWs(e.target.value); setBulkHub(''); setBulkQueue('') }}
               style={{ height: 28, fontSize: 12 }}>
               <option value="">Workspace…</option>
-              {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              {bulkWorkspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
+            )}
             {bulkWs && (
               <select className="select select-sm" value={bulkHub}
                 onChange={e => { setBulkHub(e.target.value); setBulkQueue('') }}
@@ -465,11 +480,18 @@ function UsersTab({ profile, flash }) {
                     </div>
                     {assigning === u.id ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <select className="select select-sm" value={assignDiv}
+                          onChange={e => { setAssignDiv(e.target.value); setAssignWs(''); setAssignHub(''); setAssignQueue('') }}>
+                          <option value="">Select division…</option>
+                          {divisions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                        </select>
+                        {assignDiv && (
                         <select className="select select-sm" value={assignWs}
                           onChange={e => { setAssignWs(e.target.value); setAssignHub(''); setAssignQueue('') }}>
                           <option value="">Select workspace…</option>
-                          {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                          {assignWorkspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
                         </select>
+                        )}
                         {assignWs && (
                           <select className="select select-sm" value={assignHub}
                             onChange={e => { setAssignHub(e.target.value); setAssignQueue('') }}>
