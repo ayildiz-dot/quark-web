@@ -945,22 +945,12 @@ export default function EvaluationForm() {
           if (scoresError) throw scoresError
 
           // Phase 3b: if this queue opted in, notify the evaluated agent to review their Quality evaluation.
+          // Runs server-side via SECURITY DEFINER RPC: a client insert for another user's
+          // notification is blocked by RLS (the agent's users row isn't readable), so it
+          // silently failed before. The RPC checks the queue opt-in and resolves the agent.
           try {
-            const { data: nq } = await supabase.from('queues').select('notify_agent_on_evaluation').eq('id', resolvedQueueId).maybeSingle()
-            const agentEmail = (metaPayload.find(f => f.label === "Agent's Email")?.value || '').trim()
-            if (nq?.notify_agent_on_evaluation && agentEmail) {
-              const { data: agentUser } = await supabase.from('users').select('id').ilike('email', agentEmail).maybeSingle()
-              if (agentUser?.id) {
-                await supabase.from('evaluations').update({ agent_read_required: true }).eq('id', evaluation.id)
-                await supabase.from('notifications').insert({
-                  user_id: agentUser.id, type: 'evaluation_read',
-                  title: 'New evaluation to review',
-                  body: 'You received a new quality evaluation. Please open it and confirm you have read it.',
-                  link: '/evaluations', entity_type: 'evaluation', entity_id: String(evaluation.id),
-                  requires_action: true,
-                })
-              }
-            }
+            const { error: notifyErr } = await supabase.rpc('create_eval_read_notification', { p_eval_id: evaluation.id })
+            if (notifyErr) console.error('agent notify failed:', notifyErr.message)
           } catch (e) { console.error('agent notify failed:', e) }
         }
       }

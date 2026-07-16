@@ -634,6 +634,109 @@ function ComingSoon({ title }) {
 }
 
 // ─── Root ───────────────────────────────────────────────────────────────────
+// -- Agent view: per-evaluation coachings (acknowledge on page) ---------------
+function AgentCoachingDetail({ c, onClose, onAck, busy }) {
+  const evalNo = `#${c._evalNo}`
+  const isPending = c.status === 'completed'
+  const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
+  const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '16px 0 8px' }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        <div className="modal-header"><h2>Coaching &middot; Evaluation {evalNo}</h2><button className="btn-close" onClick={onClose}>&times;</button></div>
+        <div className="modal-body">
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>
+            <span><b>Evaluation:</b> {evalNo}</span>
+            <span><b>Type:</b> {c.eval_type === 'dsat' ? 'DSAT' : 'Quality'}</span>
+            <span><b>Coach:</b> {c.coach?.name || '-'}</span>
+          </div>
+          <div style={label}>What was coached</div>
+          <div style={box}>{c.notes || '-'}</div>
+          {isPending
+            ? <button className="btn btn-primary" style={{ marginTop: 16 }} disabled={busy} onClick={() => onAck(c)}>Acknowledge</button>
+            : <div style={{ marginTop: 16, fontSize: 12, color: 'var(--success)' }}>Acknowledged{c.acknowledged_at ? ' on ' + fmtDate(c.acknowledged_at) : ''}</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AgentEvalCoachings({ profile, flash }) {
+  const [loading, setLoading] = useState(true)
+  const [rows, setRows]       = useState([])
+  const [detail, setDetail]   = useState(null)
+  const [busy, setBusy]       = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    const { data } = await supabase.from('eval_coachings')
+      .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
+      .in('status', ['completed', 'acknowledged'])
+      .order('completed_at', { ascending: false })
+    const list = data || []
+    const evIds = [...new Set(list.map(c => c.evaluation_id).filter(Boolean))]
+    const evalMap = {}
+    if (evIds.length) {
+      const { data: evs } = await supabase.from('evaluations').select('id, eval_id').in('id', evIds)
+      ;(evs || []).forEach(e => { evalMap[e.id] = e.eval_id })
+    }
+    setRows(list.map(c => ({ ...c, _evalNo: evalMap[c.evaluation_id] || c.evaluation_id })))
+    setLoading(false)
+  }
+  useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
+
+  const acknowledge = async (c) => {
+    setBusy(true)
+    const { error } = await supabase.from('eval_coachings')
+      .update({ status: 'acknowledged', acknowledged_at: new Date().toISOString() }).eq('id', c.id)
+    if (error) { setBusy(false); return flash(error.message, false) }
+    await supabase.from('notifications').delete()
+      .eq('user_id', profile.id).eq('type', 'eval_coaching').eq('entity_id', String(c.id))
+    setBusy(false); setDetail(null)
+    flash('Coaching acknowledged'); load()
+  }
+
+  const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
+  const tdStyle = { padding: '10px 16px' }
+
+  if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading...</div>
+
+  const ordered = [...rows.filter(r => r.status === 'completed'), ...rows.filter(r => r.status === 'acknowledged')]
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
+          <th style={thStyle}>Evaluation</th><th style={thStyle}>Type</th><th style={thStyle}>Coach</th>
+          <th style={thStyle}>Date</th><th style={thStyle}>Status</th><th style={{ ...thStyle, textAlign: 'right' }} />
+        </tr></thead>
+        <tbody>
+          {ordered.length === 0 && <tr><td colSpan="6" style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>No coaching sessions yet.</td></tr>}
+          {ordered.map(c => {
+            const isPending = c.status === 'completed'
+            return (
+              <tr key={c.id} style={{ borderBottom: '1px solid var(--border)', background: isPending ? 'var(--bg-secondary)' : 'transparent' }}>
+                <td style={{ ...tdStyle, fontFamily: 'monospace' }}>#{c._evalNo}</td>
+                <td style={tdStyle}>{c.eval_type === 'dsat' ? 'DSAT' : 'Quality'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{c.coach?.name || '-'}</td>
+                <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{fmtDate(c.completed_at || c.created_at)}</td>
+                <td style={tdStyle}>{isPending
+                  ? <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#f59e0b22', color: '#f59e0b' }}>Pending acknowledgement</span>
+                  : <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: '#22c55e22', color: '#22c55e' }}>Acknowledged</span>}</td>
+                <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setDetail(c)}>View</button>
+                  {isPending && <button className="btn btn-primary btn-sm" style={{ marginLeft: 8 }} disabled={busy} onClick={() => acknowledge(c)}>Acknowledge</button>}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      {detail && <AgentCoachingDetail c={detail} onClose={() => setDetail(null)} onAck={acknowledge} busy={busy} />}
+    </div>
+  )
+}
+
 export default function Coaching() {
   const { profile } = useAuth()
   const role = profile?.role
@@ -651,6 +754,7 @@ export default function Coaching() {
   const [showDrafts, setDrafts] = useState(false)
   const [msg, setMsg]           = useState(null)
   const [gov, setGov]           = useState(null)
+  const [agentTab, setAgentTab] = useState('coaching')
 
   const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }
 
@@ -741,8 +845,20 @@ export default function Coaching() {
       <div className="page">
         <div className="page-header"><div><h1>Coaching</h1></div></div>
         {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}><span>{msg.text}</span></div>}
-        {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
-          : <SessionsTable rows={own.filter(s => s.status !== 'draft')} counts={counts} onView={setDetail} />}
+        <div style={{ display: 'flex', marginBottom: 24, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
+          {[['coaching', 'Coaching Sessions'], ['observations', 'Observation Sessions']].map(([key, lbl]) => (
+            <button key={key} onClick={() => setAgentTab(key)} style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '8px 18px', fontSize: 13,
+              fontWeight: agentTab === key ? 600 : 400, color: agentTab === key ? 'var(--text-primary)' : 'var(--text-secondary)',
+              borderBottom: `2px solid ${agentTab === key ? 'var(--accent, #2563eb)' : 'transparent'}`, marginBottom: -1,
+            }}>{lbl}</button>
+          ))}
+        </div>
+        {agentTab === 'coaching'
+          ? <AgentEvalCoachings profile={profile} flash={flash} />
+          : (loading
+              ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading...</div>
+              : <SessionsTable rows={own.filter(s => s.status !== 'draft')} counts={counts} onView={setDetail} />)}
         {detail && <SessionDetail session={detail} profile={profile} isCoach={false} flash={flash} onClose={() => setDetail(null)} onChanged={loadSessions} onRecoach={() => {}} />}
       </div>
     )

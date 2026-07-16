@@ -84,15 +84,15 @@ export default function NotificationBell() {
   }
 
   async function markActionDone(item) {
-    await supabase.from('notifications')
-      .update({ action_done: true, action_done_at: new Date().toISOString() }).eq('id', item.id)
     if (item.type === 'evaluation_read' && item.entity_id) {
       await supabase.rpc('mark_evaluation_read', { p_eval_id: Number(item.entity_id) })
     }
     if (item.type === 'eval_coaching' && item.entity_id) {
       await supabase.from('eval_coachings').update({ status: 'acknowledged', acknowledged_at: new Date().toISOString() }).eq('id', item.entity_id)
     }
-    load()
+    // Once actioned, remove the notification entirely so it disappears from the bell.
+    await supabase.from('notifications').delete().eq('id', item.id)
+    setItems(prev => prev.filter(i => i.id !== item.id))
   }
 
   function clickItem(item) {
@@ -143,7 +143,7 @@ export default function NotificationBell() {
               </div>
               {it.requires_action && !it.action_done && (
                 <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }}
-                  onClick={() => { clickItem(it); markActionDone(it) }}>
+                  onClick={() => markActionDone(it)}>
                   {it.type === 'evaluation_read' ? 'Done' : 'Acknowledge'}
                 </button>
               )}
