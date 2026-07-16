@@ -184,7 +184,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash }) {
 
   const filtered = useMemo(() => items.filter(it => {
     const c = it.coaching
-    if (tabFilter === 'open') return !c || c.status === 'in_progress'
+    if (tabFilter === 'open') return !c
     if (tabFilter === 'mine') return c && c.coach_id === profile.id
     if (tabFilter === 'done') return c && (c.status === 'completed' || c.status === 'acknowledged')
     return true

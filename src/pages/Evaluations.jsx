@@ -15,7 +15,7 @@ export default function Evaluations() {
   const [loading, setLoading] = useState(false)
   const [detail,  setDetail]  = useState(null)
   const [filters, setFilters] = useState({
-    search: '', dateFrom: '', dateTo: '', scorecard: ''
+    search: '', dateFrom: '', dateTo: '', scorecard: '', evalId: '', status: ''
   })
   const [scorecards, setScorecards] = useState([])
   const [drafts, setDrafts] = useState([])
@@ -31,18 +31,31 @@ export default function Evaluations() {
   const isPrivileged = ['admin', 'owner'].includes(profile?.role)
 
   const LIMIT = 50
+  const isAgent = profile?.role === 'viewer'
+
+  // Exact assigned-queue ids for the current user (evaluators & team leaders).
+  const getMyQueueIds = async () => {
+    const { data } = await supabase.from('user_queues').select('queue_id').eq('user_id', profile.id)
+    return [...new Set((data || []).map(r => r.queue_id).filter(Boolean))]
+  }
 
   useEffect(() => {
     loadScorecards()
-    if (['admin', 'owner'].includes(profile?.role)) loadEvaluatorList()
+    if (profile?.role && profile.role !== 'viewer') loadEvaluatorList()
   }, [profile])
 
   // Build the evaluator dropdown from people who have actually submitted evaluations.
   const loadEvaluatorList = async () => {
-    const { data: evs } = await supabase
+    let elq = supabase
       .from('evaluations')
       .select('evaluator_id, users(name, email)')
       .eq('status', 'submitted')
+    if (!isPrivileged) {
+      const queueIds = await getMyQueueIds()
+      if (!queueIds.length) { setEvaluatorList([]); return }
+      elq = elq.in('queue_id', queueIds)
+    }
+    const { data: evs } = await elq
     const byId = {}
     ;(evs || []).forEach(r => {
       if (r.evaluator_id && r.users) byId[r.evaluator_id] = { id: r.evaluator_id, name: r.users.name, email: r.users.email }
@@ -58,6 +71,14 @@ export default function Evaluations() {
   useEffect(() => {
     if (profile?.id) loadDrafts()
   }, [profile])
+
+  // Evaluation ID + Status filter immediately as you type / choose.
+  useEffect(() => {
+    if (!profile?.id) return
+    const t = setTimeout(() => fetchEvals(1), 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line
+  }, [filters.evalId, filters.status])
 
   // Returns the evaluation_type values to include, or null to include all.
   const activeTypes = () => {
@@ -112,21 +133,18 @@ export default function Evaluations() {
         .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
         .order('submitted_at', { ascending: false })
-        .range((pg - 1) * LIMIT, pg * LIMIT - 1)
 
       if (isAgent) {
         q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
       } else if (isPrivileged) {
         // Admins & owners see ALL submitted evaluations; optionally narrowed to one evaluator.
         if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
-      } else if (profile?.role === 'team_leader') {
-        // Team Leaders: read-only hub-wide view (same scope as their dashboards).
-        const { hubIds } = await getEvaluatorScope(profile.id)
-        if (!hubIds.length) { setData([]); setTotal(0); setPage(pg); return }
-        q = q.in('hub_id', hubIds)
       } else {
-        // Evaluators: scoped to evaluations they created.
-        q = q.eq('evaluator_id', profile.id)
+        // Evaluators & Team Leaders: evaluations on their EXACT assigned queues,
+        // so colleagues on the same queues share visibility (incl. read status).
+        const queueIds = await getMyQueueIds()
+        if (!queueIds.length) { setData([]); setTotal(0); setPage(pg); return }
+        q = q.in('queue_id', queueIds)
       }
 
       const types = activeTypes()
@@ -135,11 +153,18 @@ export default function Evaluations() {
       if (filters.scorecard) q = q.eq('scorecard_id', filters.scorecard)
       if (filters.dateFrom)  q = q.gte('submitted_at', filters.dateFrom)
       if (filters.dateTo)    q = q.lte('submitted_at', filters.dateTo + 'T23:59:59')
+      if (filters.status === 'done') q = q.not('agent_read_at', 'is', null)
+      if (filters.status === 'pending') q = q.eq('agent_read_required', true).is('agent_read_at', null)
 
-      const { data: rows, count } = await q
-      setData(rows || [])
-      setTotal(count || 0)
-      setPage(pg)
+      const evalId = (filters.evalId || '').trim()
+      if (evalId) {
+        const { data: rows } = await q.limit(2000)
+        const filtered = (rows || []).filter(r => String(r.eval_id ?? '').includes(evalId))
+        setData(filtered); setTotal(filtered.length); setPage(1)
+      } else {
+        const { data: rows, count } = await q.range((pg - 1) * LIMIT, pg * LIMIT - 1)
+        setData(rows || []); setTotal(count || 0); setPage(pg)
+      }
     } finally {
       setLoading(false)
     }
@@ -195,11 +220,9 @@ export default function Evaluations() {
       q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: profile.email }]))
     } else if (isPrivileged) {
       if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
-    } else if (profile?.role === 'team_leader') {
-      const { hubIds } = await getEvaluatorScope(profile.id)
-      if (hubIds.length) q = q.in('hub_id', hubIds); else q = q.eq('id', -1)
     } else {
-      q = q.eq('evaluator_id', profile.id)
+      const queueIds = await getMyQueueIds()
+      if (queueIds.length) q = q.in('queue_id', queueIds); else q = q.eq('id', -1)
     }
     const types = activeTypes()
     if (types) q = q.in('evaluation_type', types)
@@ -260,7 +283,7 @@ export default function Evaluations() {
         'Score':           isDsat ? '\u2014' : `${r.score}%`,
         'Failed Critical': isDsat ? '\u2014' : (r.failed_critical ? 'Yes' : 'No'),
         'Status':          r.status || '\u2014',
-        'Agent Read':      isDsat ? '\u2014' : (r.agent_read_required ? (r.agent_read_at ? 'Read' : 'Not read') : '\u2014'),
+        'Agent Read':      isDsat ? '\u2014' : (r.agent_read_required ? (r.agent_read_at ? 'Done' : 'Pending') : '\u2014'),
         ...(r.metadata_values || []).reduce((acc, m) => {
           acc[m.label] = m.value
           return acc
@@ -377,8 +400,8 @@ export default function Evaluations() {
           <p className="page-sub">{total.toLocaleString()} {profile?.role === 'viewer' ? 'evaluations on your interactions' : isPrivileged ? 'evaluations (all evaluators)' : profile?.role === 'team_leader' ? 'evaluations in your scope' : 'of your evaluations'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>
-          <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>
+          {!isAgent && <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>}
+          {!isAgent && <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>}
           {!['viewer', 'team_leader'].includes(profile?.role) && (
             <button
               className="btn btn-ghost"
@@ -409,7 +432,15 @@ export default function Evaluations() {
             <option key={sc.id} value={sc.id}>{sc.name}</option>
           ))}
         </select>
-        {isPrivileged && (
+        <input type="text" className="input" placeholder="Search Evaluation ID..." value={filters.evalId || ''}
+          onChange={e => setFilters(f => ({ ...f, evalId: e.target.value }))} style={{ maxWidth: 180 }} />
+        <select className="select" value={filters.status || ''}
+          onChange={e => setFilters(f => ({ ...f, status: e.target.value }))}>
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="done">Done</option>
+        </select>
+        {!isAgent && (
           <select className="select" value={evaluatorFilter}
             onChange={e => setEvaluatorFilter(e.target.value)}>
             <option value="">All evaluators</option>
@@ -426,7 +457,7 @@ export default function Evaluations() {
         <button className="btn btn-ghost" onClick={() => {
           // Clearing evaluatorFilter triggers the fetchEvals effect (it's a dependency),
           // so we don't manually refetch here — doing so would read a stale filter value.
-          setFilters({ search: '', dateFrom: '', dateTo: '', scorecard: '' })
+          setFilters({ search: '', dateFrom: '', dateTo: '', scorecard: '', evalId: '', status: '' })
           setEvaluatorFilter('')
         }}>Clear</button>
 
@@ -449,13 +480,14 @@ export default function Evaluations() {
                 <th>Scorecard</th>
                 <th>Score</th>
                 <th>Result</th>
-                <th>Last Edited</th>
+                <th>Read</th>
+                {!isAgent && <th>Last Edited</th>}
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {data.length === 0 && (
-                <tr><td colSpan="8" className="empty-row">No evaluations yet. Start one with + New Evaluation.</td></tr>
+                <tr><td colSpan={isAgent ? 8 : 9} className="empty-row">No evaluations yet. Start one with + New Evaluation.</td></tr>
               )}
               {data.map(ev => {
                 const isDsat = ev.evaluation_type === 'dsat'
@@ -510,9 +542,19 @@ export default function Evaluations() {
                         </span>
                       )}
                     </td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                      {ev.last_edit_date ? new Date(ev.last_edit_date).toLocaleDateString() : '—'}
+                    <td>
+                      {(() => {
+                        const rs = isDsat || !ev.agent_read_required ? null : (ev.agent_read_at ? 'Done' : 'Pending')
+                        if (!rs) return <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                        const done = rs === 'Done'
+                        return <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: done ? '#22c55e22' : '#f59e0b22', color: done ? '#16a34a' : '#f59e0b' }}>{rs}</span>
+                      })()}
                     </td>
+                    {!isAgent && (
+                      <td style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                        {ev.last_edit_date ? new Date(ev.last_edit_date).toLocaleDateString() : '—'}
+                      </td>
+                    )}
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <button className="btn btn-ghost btn-sm" onClick={() => openDetail(ev.id)}>

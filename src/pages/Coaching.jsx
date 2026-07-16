@@ -638,18 +638,75 @@ function ComingSoon({ title }) {
 function AgentCoachingDetail({ c, onClose, onAck, busy }) {
   const evalNo = `#${c._evalNo}`
   const isPending = c.status === 'completed'
+  const isDsat = c.eval_type === 'dsat'
+  const [ev, setEv] = useState(null)
+  const [scores, setScores] = useState([])
   const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
   const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '16px 0 8px' }
+
+  useEffect(() => {
+    if (!c.evaluation_id) return
+    supabase.from('evaluations')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)')
+      .eq('id', c.evaluation_id).maybeSingle()
+      .then(({ data }) => setEv(data))
+    if (!isDsat) {
+      supabase.from('evaluation_scores')
+        .select('*, scorecard_questions(title, is_form_critical)')
+        .eq('evaluation_id', c.evaluation_id)
+        .then(({ data }) => setScores(data || []))
+    }
+    // eslint-disable-next-line
+  }, [c.evaluation_id])
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560 }}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720 }}>
         <div className="modal-header"><h2>Coaching &middot; Evaluation {evalNo}</h2><button className="btn-close" onClick={onClose}>&times;</button></div>
         <div className="modal-body">
-          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', fontSize: 13 }}>
             <span><b>Evaluation:</b> {evalNo}</span>
-            <span><b>Type:</b> {c.eval_type === 'dsat' ? 'DSAT' : 'Quality'}</span>
+            <span><b>Type:</b> {isDsat ? 'DSAT' : 'Quality'}</span>
+            {ev && !isDsat && <span><b>Score:</b> {ev.score}%</span>}
+            {ev && <span><b>Scorecard:</b> {ev.scorecards?.name || '-'}</span>}
             <span><b>Coach:</b> {c.coach?.name || '-'}</span>
+            {ev && <span style={{ color: 'var(--text-secondary)' }}>{fmtDate(ev.submitted_at)}</span>}
           </div>
+
+          {ev && (ev.metadata_values || []).length > 0 && (
+            <>
+              <div style={label}>Interaction details</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                {(ev.metadata_values || []).map((m, i) => <span key={i} style={{ fontSize: 12 }}><b style={{ color: 'var(--text-secondary)' }}>{m.label}:</b> {m.value || '-'}</span>)}
+              </div>
+            </>
+          )}
+
+          {ev && isDsat && (
+            <>
+              <div style={label}>Answers</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {(ev.metadata_values || []).map((m, i) => <div key={i} style={box}><b>{m.label}:</b> {m.value || '-'}</div>)}
+              </div>
+            </>
+          )}
+
+          {ev && !isDsat && scores.length > 0 && (
+            <>
+              <div style={label}>Question scores</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {scores.map((sc, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 12px' }}>
+                    <span>{sc.scorecard_questions?.title || '-'}{sc.scorecard_questions?.is_form_critical && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--danger)' }}>critical</span>}</span>
+                    <span style={{ fontWeight: 700, color: sc.score === 'pass' ? 'var(--success)' : sc.score === 'fail' ? 'var(--danger)' : 'var(--text-secondary)' }}>{(sc.score || 'na').toUpperCase()}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {ev && !isDsat && ev.overall_comment && (<><div style={label}>Overall comment</div><div style={box}>{ev.overall_comment}</div></>)}
+
           <div style={label}>What was coached</div>
           <div style={box}>{c.notes || '-'}</div>
           {isPending

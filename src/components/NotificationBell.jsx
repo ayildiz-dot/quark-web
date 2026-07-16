@@ -95,8 +95,12 @@ export default function NotificationBell() {
     setItems(prev => prev.filter(i => i.id !== item.id))
   }
 
-  function clickItem(item) {
-    if (item.link) { setOpen(false); navigate(item.link) }
+  async function clickItem(item) {
+    setOpen(false)
+    // Clicking a notification opens the relevant page and clears the notification.
+    await supabase.from('notifications').delete().eq('id', item.id)
+    setItems(prev => prev.filter(i => i.id !== item.id))
+    if (item.link) navigate(item.link)
   }
 
   return (
@@ -142,13 +146,7 @@ export default function NotificationBell() {
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>{new Date(it.created_at).toLocaleString()}</div>
               </div>
               {it.requires_action && !it.action_done && (
-                <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }}
-                  onClick={() => markActionDone(it)}>
-                  {it.type === 'evaluation_read' ? 'Done' : 'Acknowledge'}
-                </button>
-              )}
-              {it.requires_action && it.action_done && (
-                <div style={{ fontSize: 11, color: 'var(--success)', marginTop: 6 }}>✓ Done</div>
+                <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 6 }}>Click to open →</div>
               )}
             </div>
           ))}

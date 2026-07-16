@@ -30,11 +30,31 @@ function DivisionPicker() {
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
 
   const load = async () => {
     const { data } = await supabase.from('divisions').select('*').order('position')
-    setDivisions(data || [])
+    let divs = data || []
+    if (!canManage) {
+      // Scope to divisions the user is assigned to: queues -> hub -> workspace -> division.
+      const { data: uq } = await supabase.from('user_queues').select('queue_id').eq('user_id', profile.id)
+      const queueIds = [...new Set((uq || []).map(r => r.queue_id).filter(Boolean))]
+      if (!queueIds.length) { setDivisions([]); setLoading(false); return }
+      const { data: qs } = await supabase.from('queues').select('hub_id, workspace_id').in('id', queueIds)
+      const hubIds = [...new Set((qs || []).map(r => r.hub_id).filter(Boolean))]
+      let wsIds = [...new Set((qs || []).map(r => r.workspace_id).filter(Boolean))]
+      if (hubIds.length) {
+        const { data: hubs } = await supabase.from('hubs').select('workspace_id').in('id', hubIds)
+        wsIds = [...new Set([...wsIds, ...(hubs || []).map(h => h.workspace_id).filter(Boolean)])]
+      }
+      let divIds = []
+      if (wsIds.length) {
+        const { data: ws } = await supabase.from('workspaces').select('division_id').in('id', wsIds)
+        divIds = [...new Set((ws || []).map(w => w.division_id).filter(Boolean))]
+      }
+      divs = divs.filter(d => divIds.includes(d.id))
+    }
+    setDivisions(divs)
     setLoading(false)
   }
 
@@ -171,6 +191,11 @@ function DivisionPicker() {
         <div className="loader-row"><div className="spinner" /></div>
       ) : (
         <>
+          {!canManage && activeDivs.length === 0 && (
+            <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>
+              You are not assigned to any division yet. Once you are assigned to a queue, its division will appear here.
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 20 }}>
             {activeDivs.map(div => <DivisionCard key={div.id} div={div} />)}
 
