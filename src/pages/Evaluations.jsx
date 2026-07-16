@@ -51,9 +51,9 @@ export default function Evaluations() {
       .select('evaluator_id, users(name, email)')
       .eq('status', 'submitted')
     if (!isPrivileged) {
-      const queueIds = await getMyQueueIds()
-      if (!queueIds.length) { setEvaluatorList([]); return }
-      elq = elq.in('queue_id', queueIds)
+      const { hubIds } = await getEvaluatorScope(profile.id)
+      if (!hubIds.length) { setEvaluatorList([]); return }
+      elq = elq.in('hub_id', hubIds)
     }
     const { data: evs } = await elq
     const byId = {}
@@ -140,11 +140,10 @@ export default function Evaluations() {
         // Admins & owners see ALL submitted evaluations; optionally narrowed to one evaluator.
         if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
       } else {
-        // Evaluators & Team Leaders: evaluations on their EXACT assigned queues,
-        // so colleagues on the same queues share visibility (incl. read status).
-        const queueIds = await getMyQueueIds()
-        if (!queueIds.length) { setData([]); setTotal(0); setPage(pg); return }
-        q = q.in('queue_id', queueIds)
+        // Evaluators & Team Leaders: hub-level view (matches dashboards & coaching queue).
+        const { hubIds } = await getEvaluatorScope(profile.id)
+        if (!hubIds.length) { setData([]); setTotal(0); setPage(pg); return }
+        q = q.in('hub_id', hubIds)
       }
 
       const types = activeTypes()
@@ -221,8 +220,8 @@ export default function Evaluations() {
     } else if (isPrivileged) {
       if (evaluatorFilter) q = q.eq('evaluator_id', evaluatorFilter)
     } else {
-      const queueIds = await getMyQueueIds()
-      if (queueIds.length) q = q.in('queue_id', queueIds); else q = q.eq('id', -1)
+      const { hubIds } = await getEvaluatorScope(profile.id)
+      if (hubIds.length) q = q.in('hub_id', hubIds); else q = q.eq('id', -1)
     }
     const types = activeTypes()
     if (types) q = q.in('evaluation_type', types)
