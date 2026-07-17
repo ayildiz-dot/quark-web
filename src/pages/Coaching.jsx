@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 import CoachingQueue from '../components/CoachingQueue'
+import { getEvaluatorScope } from '../lib/evaluatorScope'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const MODELS = [
@@ -794,6 +795,164 @@ function AgentEvalCoachings({ profile, flash }) {
   )
 }
 
+// ─── Coaching Insights (per-evaluation coachings from the Coaching Queue) ─────
+const EC_STATUS = {
+  in_progress:  { label: 'In progress',              color: '#6366f1' },
+  completed:    { label: 'Awaiting acknowledgement', color: '#f59e0b' },
+  acknowledged: { label: 'Acknowledged',             color: '#22c55e' },
+}
+function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
+  const [loading, setLoading] = useState(true)
+  const [rows, setRows]       = useState([])
+  const [evalMap, setEvalMap] = useState({})
+  const [fCoach, setFCoach] = useState('')
+  const [fDiv, setFDiv]     = useState('')
+  const [fBpo, setFBpo]     = useState('')
+  const [fHub, setFHub]     = useState('')
+  const [fMarket, setFMkt]  = useState('')
+  const [fType, setFType]   = useState('')
+  const [fStatus, setFStat] = useState('')
+  const [fFrom, setFrom]    = useState('')
+  const [fTo, setTo]        = useState('')
+
+  const load = async () => {
+    setLoading(true)
+    let hubIds = null
+    if (!isPrivileged) {
+      const scope = await getEvaluatorScope(profile.id)
+      hubIds = scope.hubIds || []
+      if (!hubIds.length) { setRows([]); setLoading(false); return }
+    }
+    let q = supabase.from('eval_coachings')
+      .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
+      .order('created_at', { ascending: false }).limit(3000)
+    if (hubIds) q = q.in('hub_id', hubIds)
+    const { data } = await q
+    const list = data || []
+    const evIds = [...new Set(list.map(c => c.evaluation_id).filter(Boolean))]
+    const em = {}
+    if (evIds.length) {
+      const { data: evs } = await supabase.from('evaluations').select('id, eval_id').in('id', evIds)
+      ;(evs || []).forEach(e => { em[e.id] = e.eval_id })
+    }
+    setEvalMap(em); setRows(list); setLoading(false)
+  }
+  useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
+
+  const base = useMemo(() => (rows || []).map(r => {
+    const d = r.completed_at || r.taken_over_at || r.created_at
+    return { ...r,
+      _date: d ? String(d).slice(0, 10) : '',
+      _bpo: r.workspace_id ? (govNames.ws[r.workspace_id] || '') : '',
+      _hub: r.hub_id ? (govNames.hub[r.hub_id] || '') : '',
+      _coach: r.coach?.name || '',
+      _type: r.eval_type === 'dsat' ? 'DSAT' : 'Quality',
+      _evalNo: evalMap[r.evaluation_id] || r.evaluation_id,
+    }
+  }), [rows, evalMap, govNames])
+
+  const opts = (key) => [...new Set(base.map(r => r[key]).filter(Boolean))].sort()
+  const flt = base.filter(r =>
+    (!fCoach || r._coach === fCoach) && (!fDiv || r.division === fDiv) && (!fBpo || r._bpo === fBpo) &&
+    (!fHub || r._hub === fHub) && (!fMarket || r.market === fMarket) && (!fType || r._type === fType) &&
+    (!fStatus || r.status === fStatus) && (!fFrom || (r._date && r._date >= fFrom)) && (!fTo || (r._date && r._date <= fTo)))
+
+  const total = flt.length
+  const nProg = flt.filter(r => r.status === 'in_progress').length
+  const nAwait = flt.filter(r => r.status === 'completed').length
+  const nAck = flt.filter(r => r.status === 'acknowledged').length
+  const delivered = nAwait + nAck
+  const ackRate = delivered ? Math.round((nAck / delivered) * 100) : 0
+
+  const byCoach = useMemo(() => {
+    const m = {}
+    flt.forEach(r => {
+      const k = r._coach || '—'
+      m[k] = m[k] || { coach: k, total: 0, delivered: 0, ack: 0 }
+      m[k].total++
+      if (r.status === 'completed' || r.status === 'acknowledged') m[k].delivered++
+      if (r.status === 'acknowledged') m[k].ack++
+    })
+    return Object.values(m).sort((a, b) => b.total - a.total)
+  }, [flt])
+
+  const sel = { padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13 }
+  const card = { flex: 1, minWidth: 150, textAlign: 'center', padding: '18px 16px' }
+  const cnum = { fontSize: 26, fontWeight: 700 }
+  const clbl = { fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }
+  const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
+  const tdStyle = { padding: '10px 16px' }
+
+  const exportCsv = () => {
+    const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const headers = ['Evaluation', 'Type', 'Coach', 'Agent', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'Taken over', 'Completed', 'Acknowledged']
+    const lines = [headers.map(esc).join(',')]
+    flt.forEach(r => lines.push([esc('#' + r._evalNo), esc(r._type), esc(r._coach), esc(r.agent_email), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(EC_STATUS[r.status]?.label || r.status), esc(fmtDate(r.taken_over_at)), esc(fmtDate(r.completed_at)), esc(fmtDate(r.acknowledged_at))].join(',')))
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+    a.download = `coaching-insights-${new Date().toISOString().split('T')[0]}.csv`; a.click(); URL.revokeObjectURL(a.href)
+  }
+
+  const clearAll = () => { setFCoach(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFType(''); setFStat(''); setFrom(''); setTo('') }
+  const anyFilter = fCoach || fDiv || fBpo || fHub || fMarket || fType || fStatus || fFrom || fTo
+
+  if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button className="btn btn-accent-soft" onClick={exportCsv}>⬇ Export to Excel</button>
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
+        <select style={sel} value={fCoach} onChange={e => setFCoach(e.target.value)}><option value="">All Coaches</option>{opts('_coach').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fDiv} onChange={e => setFDiv(e.target.value)}><option value="">All Divisions</option>{opts('division').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fBpo} onChange={e => setFBpo(e.target.value)}><option value="">All BPOs</option>{opts('_bpo').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fHub} onChange={e => setFHub(e.target.value)}><option value="">All Hubs</option>{opts('_hub').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fMarket} onChange={e => setFMkt(e.target.value)}><option value="">All Markets</option>{opts('market').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fType} onChange={e => setFType(e.target.value)}><option value="">All Types</option><option>Quality</option><option>DSAT</option></select>
+        <select style={sel} value={fStatus} onChange={e => setFStat(e.target.value)}><option value="">All Statuses</option>{Object.entries(EC_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>from</span>
+        <input type="date" style={sel} value={fFrom} onChange={e => setFrom(e.target.value)} />
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>to</span>
+        <input type="date" style={sel} value={fTo} onChange={e => setTo(e.target.value)} />
+        {anyFilter && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear filters</button>}
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
+        <div className="card" style={card}><div style={cnum}>{total}</div><div style={clbl}>Coachings</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#6366f1' }}>{nProg}</div><div style={clbl}>In progress</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#f59e0b' }}>{nAwait}</div><div style={clbl}>Awaiting ack</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#22c55e' }}>{nAck}</div><div style={clbl}>Acknowledged</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: ackRate >= 70 ? '#22c55e' : '#dc2626' }}>{ackRate}%</div><div style={clbl}>Ack rate</div></div>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
+            <th style={thStyle}>Coach</th><th style={thStyle}>Coachings</th><th style={thStyle}>Delivered</th><th style={thStyle}>Acknowledged</th><th style={thStyle}>Ack rate</th>
+          </tr></thead>
+          <tbody>
+            {byCoach.length === 0 && <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>No coachings match the selected filters.</td></tr>}
+            {byCoach.map(c => {
+              const rate = c.delivered ? Math.round((c.ack / c.delivered) * 100) : 0
+              return (
+                <tr key={c.coach} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ ...tdStyle, fontWeight: 500 }}>{c.coach}</td>
+                  <td style={tdStyle}>{c.total}</td>
+                  <td style={tdStyle}>{c.delivered}</td>
+                  <td style={tdStyle}>{c.ack}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600, color: rate >= 70 ? 'var(--success)' : 'var(--danger)' }}>{rate}%</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function Coaching() {
   const { profile } = useAuth()
   const role = profile?.role
@@ -872,7 +1031,12 @@ export default function Coaching() {
   useEffect(() => { if (profile?.id) { loadSessions(); if (isCoach) loadGovernance() } }, [profile])
 
   // Split by ownership + status
-  const mine = isPrivileged ? sessions : sessions.filter(s => s.coach_id === profile?.id)
+  // Hub-level visibility for coaches: an evaluator/team leader sees observation sessions
+  // on any hub they're assigned to (matches Coaching Queue & dashboards), not only their own.
+  const myHubIds = gov ? new Set(gov.myContexts.map(c => c.hub_id).filter(Boolean)) : null
+  const mine = isPrivileged
+    ? sessions
+    : (myHubIds ? sessions.filter(s => myHubIds.has(s.hub_id)) : sessions.filter(s => s.coach_id === profile?.id))
   const myDrafts = sessions.filter(s => s.status === 'draft' && s.coach_id === profile?.id)
   const activeRows = mine.filter(s => ACTIVE_STATUSES.includes(s.status))
   const closedRows = mine.filter(s => CLOSED_STATUSES.includes(s.status))
@@ -964,7 +1128,7 @@ export default function Coaching() {
           )}
           {tab === 'insights' && <InsightsTab sessions={mine} counts={counts} govNames={govNames} />}
           {tab === 'queue' && <CoachingQueue profile={profile} isPrivileged={isPrivileged} flash={flash} />}
-          {tab === 'coaching_insights' && <ComingSoon title="Coaching Insights" />}
+          {tab === 'coaching_insights' && <CoachingInsightsTab profile={profile} isPrivileged={isPrivileged} govNames={govNames} />}
         </>
       )}
 
