@@ -1566,7 +1566,7 @@ function GovernanceTab({ profile, flash }) {
     const [{ data: ws }, { data: divs }, { data: sc }, { data: sampCfgs }] = await Promise.all([
       supabase.from('workspaces').select('*, hubs(*, queues(*))').order('position'),
       supabase.from('divisions').select('id, name, is_active, position').order('position'),
-      supabase.from('scorecards').select('id, name, type, is_published').eq('is_published', true).eq('is_calibration', false).order('name'),
+      supabase.from('scorecards').select('id, name, type, is_published').eq('is_published', true).eq('is_calibration', false).is('deleted_at', null).order('name'),
       supabase.from('sampling_configurations').select('queue_id, cycle_frequency'),
     ])
     const activeWs = (ws || [])
@@ -1820,7 +1820,7 @@ function ScorecardsTab({ profile, flash }) {
 
   const loadAll = async () => {
     const [{ data: sc }, { data: divs }] = await Promise.all([
-      supabase.from('scorecards').select('*, users(name)').order('created_at', { ascending: false }),
+      supabase.from('scorecards').select('*, users(name)').is('deleted_at', null).order('created_at', { ascending: false }),
       supabase.from('divisions').select('id, name, is_active, position').order('position'),
     ])
     setScorecards(sc || [])
@@ -1861,13 +1861,13 @@ function ScorecardsTab({ profile, flash }) {
   }
 
   const deleteScorecard = (sc) => ask(
-    `Delete "${sc.name}"? This cannot be undone.`,
+    `Archive "${sc.name}"? It will be hidden from all scorecard lists. Its evaluations are kept and remain exportable by admins/owners.`,
     async () => {
       closeConfirm()
-      const { data: del, error } = await supabase.from('scorecards').delete().eq('id', sc.id).select()
+      const { data: arch, error } = await supabase.from('scorecards').update({ deleted_at: new Date().toISOString() }).eq('id', sc.id).select()
       if (error) return flash(error.message, false)
-      if (!del || del.length === 0) return flash('Could not delete this scorecard — it may be in use (evaluations reference it) or you do not have permission.', false)
-      await loadAll(); flash('Scorecard deleted')
+      if (!arch || arch.length === 0) return flash('Could not archive this scorecard — you may not have permission.', false)
+      await loadAll(); flash('Scorecard archived')
     }
   )
 
@@ -1944,7 +1944,7 @@ function ScorecardsTab({ profile, flash }) {
                     <button className="btn btn-sm btn-ghost" disabled={duplicatingId === sc.id} onClick={() => duplicateScorecard(sc)}>
                       {duplicatingId === sc.id ? 'Duplicating…' : 'Duplicate'}
                     </button>
-                    <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Delete</button>
+                    <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => deleteScorecard(sc)}>Archive</button>
                   </div>
                 </td>
               )}

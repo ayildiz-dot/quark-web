@@ -337,6 +337,7 @@ export default function EvaluationForm() {
       .select('*')
       .eq('is_published', true)
       .eq('is_calibration', false)
+      .is('deleted_at', null)
       .order('name')
     setScorecards(data || [])
   }

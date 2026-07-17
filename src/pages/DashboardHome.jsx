@@ -247,6 +247,7 @@ function ScorecardPicker() {
         .select('id, name, description, is_published, type, division')
         .eq('is_published', true)
         .eq('is_calibration', false)
+        .is('deleted_at', null)
         .eq('division', divisionName)
         .order('type')
         .order('name')

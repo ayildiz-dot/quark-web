@@ -18,6 +18,8 @@ export default function Evaluations() {
     search: '', dateFrom: '', dateTo: '', scorecard: '', evalId: '', status: ''
   })
   const [scorecards, setScorecards] = useState([])
+  const [archivedScIds, setArchivedScIds] = useState([])
+  const [includeArchived, setIncludeArchived] = useState(false)
   const [drafts, setDrafts] = useState([])
   const [showDrafts, setShowDrafts] = useState(false)
 
@@ -41,6 +43,7 @@ export default function Evaluations() {
 
   useEffect(() => {
     loadScorecards()
+    loadArchivedScorecards()
     if (profile?.role && profile.role !== 'viewer') loadEvaluatorList()
   }, [profile])
 
@@ -71,6 +74,8 @@ export default function Evaluations() {
   useEffect(() => {
     if (profile?.id) loadDrafts()
   }, [profile])
+
+  useEffect(() => { if (profile?.id) fetchEvals(1) /* eslint-disable-next-line */ }, [includeArchived, archivedScIds])
 
   // Evaluation ID + Status filter immediately as you type / choose.
   useEffect(() => {
@@ -112,12 +117,18 @@ export default function Evaluations() {
     }
   }
 
+  const loadArchivedScorecards = async () => {
+    const { data } = await supabase.from('scorecards').select('id').not('deleted_at', 'is', null)
+    setArchivedScIds((data || []).map(r => r.id))
+  }
+
   const loadScorecards = async () => {
     const { data } = await supabase
       .from('scorecards')
       .select('id, name, type')
       .eq('is_published', true)
       .eq('is_calibration', false)
+      .is('deleted_at', null)
       .order('name')
     setScorecards(data || [])
   }
@@ -154,6 +165,7 @@ export default function Evaluations() {
       if (filters.dateTo)    q = q.lte('submitted_at', filters.dateTo + 'T23:59:59')
       if (filters.status === 'done') q = q.not('agent_read_at', 'is', null)
       if (filters.status === 'pending') q = q.eq('agent_read_required', true).is('agent_read_at', null)
+      if (!includeArchived && archivedScIds.length) q = q.not('scorecard_id', 'in', '(' + archivedScIds.join(',') + ')')
 
       const evalId = (filters.evalId || '').trim()
       if (evalId) {
@@ -167,7 +179,7 @@ export default function Evaluations() {
     } finally {
       setLoading(false)
     }
-  }, [filters, profile, showQuality, showDsat, evaluatorFilter])
+  }, [filters, profile, showQuality, showDsat, evaluatorFilter, includeArchived, archivedScIds])
 
   const openDetail = async (id) => {
     const { data: ev } = await supabase
@@ -225,6 +237,7 @@ export default function Evaluations() {
     }
     const types = activeTypes()
     if (types) q = q.in('evaluation_type', types)
+    if (!includeArchived && archivedScIds.length) q = q.not('scorecard_id', 'in', '(' + archivedScIds.join(',') + ')')
     const { data: rows } = await q
     const evals = rows || []
 
@@ -453,6 +466,12 @@ export default function Evaluations() {
         <input type="date" className="input" value={filters.dateTo}
           onChange={e => setFilters(f => ({ ...f, dateTo: e.target.value }))} />
         <button className="btn btn-primary" onClick={() => fetchEvals(1)}>Apply</button>
+        {isPrivileged && (
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={includeArchived} onChange={e => setIncludeArchived(e.target.checked)} />
+            Include archived
+          </label>
+        )}
         <button className="btn btn-ghost" onClick={() => {
           // Clearing evaluatorFilter triggers the fetchEvals effect (it's a dependency),
           // so we don't manually refetch here — doing so would read a stale filter value.
