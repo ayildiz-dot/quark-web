@@ -374,7 +374,7 @@ function UsersTab({ profile, flash }) {
           return (
             <div key={u.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '28px 20px 1.2fr 80px 70px 90px 90px 1fr 20px',
-                gap: 8, alignItems: 'center', padding: '10px 12px', cursor: 'pointer',
+                gap: 8, alignItems: 'flex-start', padding: '10px 12px', cursor: 'pointer',
                 borderBottom: isExpanded ? '1px solid var(--border)' : 'none' }}
                 onClick={() => setExpanded(isExpanded ? null : u.id)}>
                 <div onClick={e => e.stopPropagation()}>
