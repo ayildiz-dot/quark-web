@@ -58,6 +58,7 @@ export default function EvaluationForm() {
   // Evaluators are limited to user_queues; admins/owners see all mapped queues.
   const [allowedQueues, setAllowedQueues] = useState([]) // [{id, scorecard_id, hub_id, hub_name, workspace_id, market_value}]
   const [agentsByQueue, setAgentsByQueue] = useState({}) // { queue_id: [{name, email}] }
+  const [teamChoice, setTeamChoice] = useState('') // used when a hub+market maps to >1 team (admins/owners)
   // Edit mode: when set, we are editing an already-submitted evaluation (not creating one).
   const [editingEvalId, setEditingEvalId] = useState(null)
 
@@ -449,7 +450,7 @@ export default function EvaluationForm() {
     // Pull mapped queues (those with a scorecard + market set) joined to their hub.
     const { data: queues } = await supabase
       .from('queues')
-      .select('id, scorecard_id, hub_id, workspace_id, market_value, is_active, hubs(name)')
+      .select('id, scorecard_id, hub_id, workspace_id, market_value, team, is_active, hubs(name)')
       .not('scorecard_id', 'is', null)
       .not('market_value', 'is', null)
       .is('deleted_at', null)
@@ -460,6 +461,7 @@ export default function EvaluationForm() {
       hub_name: q.hubs?.name || '',
       workspace_id: q.workspace_id,
       market_value: q.market_value,
+      team: q.team,
       is_active: q.is_active,
     }))
     if (!isPrivileged && profile?.id) {
@@ -493,13 +495,25 @@ export default function EvaluationForm() {
     [...new Set(validQueuesForScorecard().map(q => q.market_value).filter(Boolean))].sort()
 
   // Agents on the queue resolved by the currently-selected BPO-Hub + Market.
+  const teamsForSelection = () => {
+    const bpoHub = metadata.find(f => f.label === 'BPO - Hub')
+    const market = metadata.find(f => f.label === 'Market')
+    const bpoHubVal = bpoHub ? (metaValues[bpoHub.id] || '') : ''
+    const marketVal = market ? (metaValues[market.id] || '') : ''
+    if (!bpoHubVal || !marketVal) return []
+    return [...new Set(validQueuesForScorecard()
+      .filter(q => q.hub_name === bpoHubVal && q.market_value === marketVal)
+      .map(q => q.team).filter(Boolean))]
+  }
   const resolvedQueueForSelection = () => {
     const bpoHub = metadata.find(f => f.label === 'BPO - Hub')
     const market = metadata.find(f => f.label === 'Market')
     const bpoHubVal = bpoHub ? (metaValues[bpoHub.id] || '') : ''
     const marketVal = market ? (metaValues[market.id] || '') : ''
     if (!bpoHubVal || !marketVal) return null
-    return validQueuesForScorecard().find(q => q.hub_name === bpoHubVal && q.market_value === marketVal) || null
+    const ms = validQueuesForScorecard().filter(q => q.hub_name === bpoHubVal && q.market_value === marketVal)
+    if (ms.length > 1) return teamChoice ? (ms.find(q => q.team === teamChoice) || null) : null
+    return ms[0] || null
   }
   const agentEmailOptions = () => {
     const q = resolvedQueueForSelection()
@@ -831,10 +845,25 @@ export default function EvaluationForm() {
         leavingRef.current = false
         return flash(`This BPO - Hub + Market combination (${bpoHubValue} + ${marketValue}) isn't mapped to a queue you can evaluate under. Ask an admin to map it in Control Room → Governance, or check your queue assignments. You can Save Draft in the meantime.`, false)
       }
-      // Unique index on (scorecard_id, hub_id, market_value) guarantees at most one.
-      const resolvedQueueId = matches[0].id
-      const resolvedHubId = matches[0].hub_id
-      const resolvedWorkspaceId = matches[0].workspace_id
+      // A hub+market can now host one queue per team (Kaizen / BPO). Evaluators & TLs
+      // only ever see their own queue (<=1 match); admins/owners may see both, so pick.
+      let resolvedQueue = matches[0]
+      if (matches.length > 1) {
+        if (!teamChoice) {
+          setSubmitting(false)
+          leavingRef.current = false
+          return flash('This BPO - Hub + Market has both a Kaizen and a BPO queue. Select the Team before submitting.', false)
+        }
+        resolvedQueue = matches.find(q => q.team === teamChoice)
+        if (!resolvedQueue) {
+          setSubmitting(false)
+          leavingRef.current = false
+          return flash('The selected Team has no queue for this BPO - Hub + Market.', false)
+        }
+      }
+      const resolvedQueueId = resolvedQueue.id
+      const resolvedHubId = resolvedQueue.hub_id
+      const resolvedWorkspaceId = resolvedQueue.workspace_id
 
       if (selectedScorecard.type === 'dsat') {
         const visitedSectionIds = new Set(effectiveVisitedIds || [...dsatSectionHistory, dsatCurrentSectionId])
@@ -1129,6 +1158,17 @@ export default function EvaluationForm() {
               )}
             </div>
           ))}
+          {teamsForSelection().length > 1 && (
+            <div className="form-field" style={{ marginBottom: 16 }}>
+              <label>Team <span style={{ color: 'var(--danger)', marginLeft: 4 }}>*</span></label>
+              <SearchableDropdown
+                options={teamsForSelection()}
+                value={teamChoice}
+                onChange={val => { setTeamChoice(val); triggerAutoSave() }}
+                placeholder="This hub + market has a Kaizen and a BPO queue — pick one…"
+              />
+            </div>
+          )}
         </div>
       )}
       {((selectedScorecard?.type === 'quality' && questions.some(q => q.is_ai_attribute)) ||

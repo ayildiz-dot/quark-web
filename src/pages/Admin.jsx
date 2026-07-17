@@ -616,6 +616,7 @@ function ScrollToTopButton() {
 function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved, onToggleActive, onDelete }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
   const [market, setMarket] = useState(queue.market_value || '')
+  const [team, setTeam]     = useState(queue.team || '')
 
   const scorecardById = (id) => scorecards.find(s => s.id === id)
   const marketOptions = (scMarkets[scId] || [])
@@ -837,6 +838,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const saveQueueSettings = async () => {
     if (!scId)   return flash('Select a scorecard for this queue.', false)
     if (!market) return flash('Select or enter a market for this queue.', false)
+    if (!team)   return flash('Select a Team (Kaizen or BPO) for this queue.', false)
     if (!manualSampling && cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
     if (!manualSampling && cycleFrequency === 'weekly' && captureDays.length === 0) return flash('Select at least one capture day.', false)
     if (!manualSampling && incompleteRuleCount > 0) return flash(incompleteRuleCount + ' stratification rule(s) are missing a dimension, value, or sizing amount — fill them in or remove them.', false)
@@ -847,7 +849,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 
     const { error: mapError } = await supabase.from('queues').update({
       scorecard_id: scId, market_value: market, hub_id: hub.id, workspace_id: ws.id, manual_sampling: manualSampling,
-      notify_agent_on_evaluation: notifyAgent,
+      notify_agent_on_evaluation: notifyAgent, team,
     }).eq('id', queue.id)
     if (mapError) {
       setSaving(false)
@@ -1106,6 +1108,14 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
               {optionsToShow.map(m => <option key={m} value={m}>{m}{marketOptions.includes(m) ? '' : ' (not in scorecard)'}</option>)}
             </select>
           )}
+        </div>
+        <div style={{ minWidth: 220 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Team</label>
+          <select className="select select-sm" value={team} onChange={e => setTeam(e.target.value)} style={{ maxWidth: 200 }}>
+            <option value="">Select team…</option>
+            <option value="Kaizen">Kaizen</option>
+            <option value="BPO">BPO</option>
+          </select>
         </div>
       </div>
 
