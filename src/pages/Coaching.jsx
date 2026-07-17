@@ -901,7 +901,7 @@ export default function Coaching() {
     return (
       <div className="page">
         <div className="page-header"><div><h1>Coaching</h1></div></div>
-        {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`}><span>{msg.text}</span></div>}
+        {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
         <div style={{ display: 'flex', marginBottom: 24, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
           {[['coaching', 'Coaching Sessions'], ['observations', 'Observation Sessions']].map(([key, lbl]) => (
             <button key={key} onClick={() => setAgentTab(key)} style={{

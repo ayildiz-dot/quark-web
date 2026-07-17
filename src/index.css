@@ -177,7 +177,7 @@ a:hover { color: var(--accent-hover); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* Flash messages */
-.flash { padding: 10px 16px; border-radius: var(--radius); font-size: 13px; margin-bottom: 16px; }
+.flash { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; min-width: 340px; max-width: 620px; box-shadow: 0 8px 30px rgba(0,0,0,0.25); padding: 10px 16px; border-radius: var(--radius); font-size: 13px; }
 .flash-ok { background: var(--success-light); color: var(--success); border: 1px solid #065f46; }
 .flash-err { background: var(--danger-light); color: var(--danger); border: 1px solid #7f1d1d; }
 
