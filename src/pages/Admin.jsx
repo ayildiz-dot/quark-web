@@ -1862,7 +1862,13 @@ function ScorecardsTab({ profile, flash }) {
 
   const deleteScorecard = (sc) => ask(
     `Delete "${sc.name}"? This cannot be undone.`,
-    async () => { closeConfirm(); await supabase.from('scorecards').delete().eq('id', sc.id); await loadAll(); flash('Scorecard deleted') }
+    async () => {
+      closeConfirm()
+      const { data: del, error } = await supabase.from('scorecards').delete().eq('id', sc.id).select()
+      if (error) return flash(error.message, false)
+      if (!del || del.length === 0) return flash('Could not delete this scorecard — it may be in use (evaluations reference it) or you do not have permission.', false)
+      await loadAll(); flash('Scorecard deleted')
+    }
   )
 
   const [duplicatingId, setDuplicatingId] = useState(null)
