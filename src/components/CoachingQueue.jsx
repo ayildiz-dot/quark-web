@@ -53,7 +53,7 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
     })
     setBusy(false)
     if (error) return flash(error.message, false)
-    flash('You took over this coaching'); onChanged(); onClose()
+    flash('Assigned to you'); onChanged(); onClose()
   }
 
   const complete = async () => {
@@ -118,7 +118,7 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
           {!coaching ? (
             <div>
               <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10 }}>This case is waiting to be coached.</p>
-              <button className="btn btn-primary" disabled={busy} onClick={takeOver}>Take over</button>
+              <button className="btn btn-primary" disabled={busy} onClick={takeOver}>Assign to me</button>
             </div>
           ) : (
             <div>
@@ -146,11 +146,21 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
   )
 }
 
-export default function CoachingQueue({ profile, isPrivileged, flash }) {
+export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
   const [loading, setLoading] = useState(true)
   const [items, setItems]     = useState([])
   const [detail, setDetail]   = useState(null)
-  const [tabFilter, setTab]   = useState('open')
+  const [tabFilter, setTab]   = useState('all')
+  const [fType, setFType]   = useState('')
+  const [fScore, setFScore] = useState('')
+  const [fAgent, setFAgent] = useState('')
+  const [fDiv, setFDiv]     = useState('')
+  const [fBpo, setFBpo]     = useState('')
+  const [fHub, setFHub]     = useState('')
+  const [fMarket, setFMkt]  = useState('')
+  const [fCoach, setFCoach] = useState('')
+  const [fFrom, setFrom]    = useState('')
+  const [fTo, setTo]        = useState('')
 
   const load = async () => {
     setLoading(true)
@@ -182,46 +192,90 @@ export default function CoachingQueue({ profile, isPrivileged, flash }) {
   }
   useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
 
-  const filtered = useMemo(() => items.filter(it => {
-    const c = it.coaching
-    if (tabFilter === 'open') return !c
-    if (tabFilter === 'mine') return c && c.coach_id === profile.id
-    if (tabFilter === 'done') return c && (c.status === 'completed' || c.status === 'acknowledged')
-    return true
-  }), [items, tabFilter, profile?.id])
+  const deco = useMemo(() => items.map(it => {
+    const ev = it.ev
+    const ctx = (gov && gov.queueCtx && gov.queueCtx[ev.queue_id]) || {}
+    return { ...it,
+      _type: ev.evaluation_type === 'dsat' ? 'DSAT' : 'Quality',
+      _agent: getMeta(ev, "Agent's Email") || '',
+      _scorecard: ev.scorecards?.name || '',
+      _div: ctx.division_name || '',
+      _bpo: ctx.workspace_name || '',
+      _hub: ctx.hub_name || '',
+      _market: ctx.market || getMeta(ev, 'Market') || '',
+      _coach: it.coaching?.coach?.name || '',
+      _date: ev.submitted_at ? String(ev.submitted_at).slice(0, 10) : '',
+    }
+  }), [items, gov])
 
+  const opts = (key) => [...new Set(deco.map(r => r[key]).filter(Boolean))].sort()
+
+  const filtered = useMemo(() => deco.filter(it => {
+    const c = it.coaching
+    if (tabFilter === 'open' && c) return false
+    if (tabFilter === 'mine' && !(c && c.coach_id === profile.id)) return false
+    if (tabFilter === 'done' && !(c && (c.status === 'completed' || c.status === 'acknowledged'))) return false
+    return (!fType || it._type === fType) && (!fScore || it._scorecard === fScore) &&
+      (!fAgent || it._agent === fAgent) && (!fDiv || it._div === fDiv) && (!fBpo || it._bpo === fBpo) &&
+      (!fHub || it._hub === fHub) && (!fMarket || it._market === fMarket) && (!fCoach || it._coach === fCoach) &&
+      (!fFrom || (it._date && it._date >= fFrom)) && (!fTo || (it._date && it._date <= fTo))
+  }), [deco, tabFilter, profile?.id, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fFrom, fTo])
+
+  const showCoach = tabFilter === 'all' || tabFilter === 'done'
   const statusOf = (it) => it.coaching ? it.coaching.status : 'pending'
+  const clearAll = () => { setFType(''); setFScore(''); setFAgent(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFCoach(''); setFrom(''); setTo('') }
+  const anyFilter = fType || fScore || fAgent || fDiv || fBpo || fHub || fMarket || fCoach || fFrom || fTo
+  const sel = { padding: '6px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12 }
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        {[['open', 'Open'], ['mine', 'Taken by me'], ['done', 'Completed'], ['all', 'All']].map(([k, l]) => (
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        {[['all', 'All'], ['open', 'Unassigned'], ['mine', 'Assigned to me'], ['done', 'Completed']].map(([k, l]) => (
           <button key={k} className={`btn btn-sm ${tabFilter === k ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab(k)}>{l}</button>
         ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
+        <select style={sel} value={fType} onChange={e => setFType(e.target.value)}><option value="">All Types</option><option>Quality</option><option>DSAT</option></select>
+        <select style={sel} value={fScore} onChange={e => setFScore(e.target.value)}><option value="">All Scorecards</option>{opts('_scorecard').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fAgent} onChange={e => setFAgent(e.target.value)}><option value="">All Agents</option>{opts('_agent').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fDiv} onChange={e => setFDiv(e.target.value)}><option value="">All Divisions</option>{opts('_div').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fBpo} onChange={e => setFBpo(e.target.value)}><option value="">All BPOs</option>{opts('_bpo').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fHub} onChange={e => setFHub(e.target.value)}><option value="">All Hubs</option>{opts('_hub').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fMarket} onChange={e => setFMkt(e.target.value)}><option value="">All Markets</option>{opts('_market').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fCoach} onChange={e => setFCoach(e.target.value)}><option value="">All Coaches</option>{opts('_coach').map(o => <option key={o}>{o}</option>)}</select>
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>from</span>
+        <input type="date" style={sel} value={fFrom} onChange={e => setFrom(e.target.value)} />
+        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>to</span>
+        <input type="date" style={sel} value={fTo} onChange={e => setTo(e.target.value)} />
+        {anyFilter && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear filters</button>}
       </div>
       {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div> : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={thStyle}>#</th><th style={thStyle}>Type</th><th style={thStyle}>Agent</th><th style={thStyle}>Scorecard</th>
-              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Date</th><th style={thStyle}>Coaching</th><th style={{ ...thStyle, textAlign: 'right' }}></th>
+              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Date</th>
+              {showCoach && <th style={thStyle}>Coach</th>}
+              <th style={thStyle}>Coaching</th><th style={{ ...thStyle, textAlign: 'right' }}></th>
             </tr></thead>
             <tbody>
-              {filtered.length === 0 && <tr><td colSpan="8" style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={showCoach ? 9 : 8} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
               {filtered.map(it => {
                 const ev = it.ev, isDsat = ev.evaluation_type === 'dsat'
                 return (
                   <tr key={ev.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ ...tdStyle, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>#{ev.eval_id || ev.id}</td>
                     <td style={tdStyle}>{isDsat ? 'DSAT' : 'Quality'}</td>
-                    <td style={tdStyle}>{getMeta(ev, "Agent's Email") || '—'}</td>
+                    <td style={tdStyle}>{it._agent || '—'}</td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{ev.scorecards?.name || '—'}</td>
                     <td style={tdStyle}>{isDsat ? (ev.deviated_controllability ?? 'Controllable') : `${ev.score}%`}</td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{new Date(ev.submitted_at).toLocaleDateString()}</td>
+                    {showCoach && <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{it._coach || '—'}</td>}
                     <td style={tdStyle}><Badge s={statusOf(it)} /></td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}><button className="btn btn-ghost btn-sm" onClick={() => setDetail(it)}>{!it.coaching ? 'Take over' : 'View'}</button></td>
+                    <td style={{ ...tdStyle, textAlign: 'right' }}><button className="btn btn-ghost btn-sm" onClick={() => setDetail(it)}>{!it.coaching ? 'Assign to me' : 'View'}</button></td>
                   </tr>
                 )
               })}

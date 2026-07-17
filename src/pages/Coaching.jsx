@@ -1127,7 +1127,7 @@ export default function Coaching() {
             </>
           )}
           {tab === 'insights' && <InsightsTab sessions={mine} counts={counts} govNames={govNames} />}
-          {tab === 'queue' && <CoachingQueue profile={profile} isPrivileged={isPrivileged} flash={flash} />}
+          {tab === 'queue' && <CoachingQueue profile={profile} isPrivileged={isPrivileged} flash={flash} gov={gov} />}
           {tab === 'coaching_insights' && <CoachingInsightsTab profile={profile} isPrivileged={isPrivileged} govNames={govNames} />}
         </>
       )}
