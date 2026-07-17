@@ -345,7 +345,7 @@ function UsersTab({ profile, flash }) {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '28px 20px minmax(0, 1.2fr) 80px 70px 90px 90px minmax(0, 1fr) 20px',
+        <div style={{ display: 'grid', gridTemplateColumns: '28px 20px minmax(0, 1.2fr) 80px 70px 90px 90px minmax(0, 1fr)',
           gap: 8, alignItems: 'center', padding: '0 12px',
           fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)',
           textTransform: 'uppercase', letterSpacing: '0.05em' }}>
@@ -358,7 +358,6 @@ function UsersTab({ profile, flash }) {
           <div>BPO - Hub</div>
           <div>Market</div>
           <div>Governance</div>
-          <div />
         </div>
 
         {filtered.length === 0 && (
@@ -372,8 +371,8 @@ function UsersTab({ profile, flash }) {
           const isExpanded = expanded === u.id
           const queues     = userQueues[u.id] || []
           return (
-            <div key={u.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '28px 20px minmax(0, 1.2fr) 80px 70px 90px 90px minmax(0, 1fr) 20px',
+            <div key={u.id} className={`card user-card ${isExpanded ? 'user-card-open' : ''}`} style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '28px 20px minmax(0, 1.2fr) 80px 70px 90px 90px minmax(0, 1fr)',
                 gap: 8, alignItems: 'flex-start', padding: '10px 12px', cursor: 'pointer',
                 borderBottom: isExpanded ? '1px solid var(--border)' : 'none' }}
                 onClick={() => setExpanded(isExpanded ? null : u.id)}>
@@ -413,9 +412,6 @@ function UsersTab({ profile, flash }) {
                       </span>
                     ))
                   }
-                </div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: 12, textAlign: 'center' }}>
-                  {isExpanded ? '▲' : '▼'}
                 </div>
               </div>
 
@@ -2046,7 +2042,7 @@ export default function Admin() {
   const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }
 
   return (
-    <div className="page">
+    <div className="page" style={{ maxWidth: 1400 }}>
       <div className="page-header">
         <div>
           <h1>Control Room</h1>
