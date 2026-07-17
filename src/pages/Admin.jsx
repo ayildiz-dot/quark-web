@@ -1494,7 +1494,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                                   {mapped && (
                                     <span style={{ fontSize: 11, padding: '2px 7px', borderRadius: 6, fontWeight: 500,
                                       backgroundColor: 'var(--accent)22', color: 'var(--accent)', border: '1px solid var(--accent)44' }}>
-                                      {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}
+                                      {scorecardById(q.scorecard_id)?.name || 'Scorecard'} · {q.market_value}{q.team ? ' · ' + q.team : ''}
                                     </span>
                                   )}
                                 </span>
