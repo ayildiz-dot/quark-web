@@ -992,6 +992,9 @@ export default function EvaluationForm() {
         draftIdRef.current = null
       }
 
+      if (editingEvalId) {
+        try { await supabase.rpc('consume_evaluation_edit_request', { p_eval_id: editingEvalId }) } catch (e) { /* ignore */ }
+      }
       setStep('done')
     } catch (err) {
       flash('Failed to submit: ' + err.message, false)

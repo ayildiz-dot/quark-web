@@ -6,6 +6,112 @@ import { getEvaluatorScope } from '../lib/evaluatorScope'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 
+function EditRequestModal({ ev, onClose, onSubmitted, flash }) {
+  const [reason, setReason] = useState('')
+  const [change, setChange] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    if (!reason.trim() || !change.trim()) return flash('Please fill in both fields.', false)
+    setBusy(true)
+    const { error } = await supabase.rpc('create_evaluation_edit_request', { p_eval_id: ev.id, p_reason: reason.trim(), p_change: change.trim() })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    flash('Edit request sent for approval'); onSubmitted(); onClose()
+  }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <div className="modal-header"><h2>Request an edit · #{ev.eval_id || ev.id}</h2><button className="btn-close" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <div className="form-field" style={{ marginBottom: 14 }}>
+            <label>What is the reason for requesting an edit?</label>
+            <textarea className="input" rows={3} value={reason} onChange={e => setReason(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+          </div>
+          <div className="form-field" style={{ marginBottom: 14 }}>
+            <label>What do you want to change?</label>
+            <textarea className="input" rows={3} value={change} onChange={e => setChange(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={submit}>Send request</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EditReviewModal({ request, onClose, onResolved, flash }) {
+  const [ev, setEv] = useState(null)
+  const [scores, setScores] = useState([])
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users(name, email)').eq('id', request.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
+    supabase.from('evaluation_scores').select('*, scorecard_questions(title, is_form_critical)').eq('evaluation_id', request.evaluation_id).then(({ data }) => setScores(data || []))
+    // eslint-disable-next-line
+  }, [request.evaluation_id])
+  const act = async (approve) => {
+    setBusy(true)
+    const { error } = await supabase.rpc('resolve_evaluation_edit_request', { p_request_id: request.id, p_approve: approve, p_comment: comment.trim() || null })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    flash(approve ? 'Edit request approved' : 'Edit request rejected'); onResolved(); onClose()
+  }
+  const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
+  const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640 }}>
+        <div className="modal-header"><h2>Edit request · #{ev?.eval_id || request.evaluation_id}</h2><button className="btn-close" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <div style={label}>Requested by</div>
+          <div style={{ fontSize: 13 }}>{request.requester?.name || request.requester?.email || '—'}</div>
+          <div style={label}>Reason</div><div style={box}>{request.reason || '—'}</div>
+          <div style={label}>Requested change</div><div style={box}>{request.requested_change || '—'}</div>
+          {ev && (
+            <>
+              <div style={label}>Evaluation</div>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>
+                <span><b>Scorecard:</b> {ev.scorecards?.name || '—'}</span>
+                <span><b>Score:</b> {ev.score}%</span>
+                <span><b>Evaluator:</b> {ev.users?.name || '—'}</span>
+              </div>
+              {(ev.metadata_values || []).length > 0 && (
+                <>
+                  <div style={label}>Interaction details</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                    {(ev.metadata_values || []).map((m, i) => <span key={i} style={{ fontSize: 12 }}><b style={{ color: 'var(--text-secondary)' }}>{m.label}:</b> {m.value || '—'}</span>)}
+                  </div>
+                </>
+              )}
+              {scores.length > 0 && (
+                <>
+                  <div style={label}>Answers</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {scores.map((sc, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 12px' }}>
+                        <span>{sc.scorecard_questions?.title || '—'}</span>
+                        <span style={{ fontWeight: 700, color: sc.score === 'pass' ? 'var(--success)' : sc.score === 'fail' ? 'var(--danger)' : 'var(--text-secondary)' }}>{(sc.score || 'na').toUpperCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+          <div style={label}>Comment (optional)</div>
+          <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+            <button className="btn btn-danger" disabled={busy} onClick={() => act(false)}>Reject</button>
+            <button className="btn btn-primary" disabled={busy} onClick={() => act(true)}>Approve</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Evaluations() {
   const { profile } = useAuth()
   const navigate = useNavigate()
@@ -14,6 +120,12 @@ export default function Evaluations() {
   const [page,    setPage]    = useState(1)
   const [loading, setLoading] = useState(false)
   const [detail,  setDetail]  = useState(null)
+  const [myReqs, setMyReqs] = useState({})
+  const [pendingReqs, setPendingReqs] = useState({})
+  const [reqModal, setReqModal] = useState(null)
+  const [reviewModal, setReviewModal] = useState(null)
+  const [msg, setMsg] = useState(null)
+  const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }
   const [filters, setFilters] = useState({
     search: '', dateFrom: '', dateTo: '', scorecard: '', evalId: '', status: ''
   })
@@ -31,6 +143,7 @@ export default function Evaluations() {
   const [evaluatorFilter, setEvaluatorFilter] = useState('') // '' = all
   const [evaluatorList,   setEvaluatorList]   = useState([])  // [{id, name, email}]
   const isPrivileged = ['admin', 'owner'].includes(profile?.role)
+  const isKG = (profile?.email || '').toLowerCase().endsWith('@kaizengaming.com')
 
   const LIMIT = 50
   const isAgent = profile?.role === 'viewer'
@@ -75,6 +188,22 @@ export default function Evaluations() {
     if (profile?.id) loadDrafts()
   }, [profile])
 
+  useEffect(() => {
+    if (profile?.id) loadEditRequests()
+    // eslint-disable-next-line
+  }, [profile])
+
+  useEffect(() => {
+    const rid = new URLSearchParams(window.location.search).get('req')
+    if (!rid || !profile?.id) return
+    supabase.from('evaluation_edit_requests')
+      .select('*, requester:users!evaluation_edit_requests_requester_id_fkey(name, email)')
+      .eq('id', rid).maybeSingle()
+      .then(({ data }) => { if (data) setReviewModal(data) })
+    window.history.replaceState({}, '', '/evaluations')
+    // eslint-disable-next-line
+  }, [profile])
+
   useEffect(() => { if (profile?.id) fetchEvals(1) /* eslint-disable-next-line */ }, [includeArchived, archivedScIds])
 
   // Evaluation ID + Status filter immediately as you type / choose.
@@ -92,6 +221,22 @@ export default function Evaluations() {
     if (showQuality) return ['quality']
     if (showDsat) return ['dsat']
     return null
+  }
+
+  const loadEditRequests = async () => {
+    if (!profile?.id) return
+    const { data: mine } = await supabase.from('evaluation_edit_requests').select('*').eq('requester_id', profile.id).order('created_at', { ascending: false })
+    const mm = {}; (mine || []).forEach(r => { if (!(r.evaluation_id in mm)) mm[r.evaluation_id] = r }); setMyReqs(mm)
+    if (isKG || isPrivileged) {
+      let hubIds = null
+      if (!isPrivileged) { const sc = await getEvaluatorScope(profile.id); hubIds = sc.hubIds || [] }
+      const { data: pend } = await supabase.from('evaluation_edit_requests')
+        .select('*, requester:users!evaluation_edit_requests_requester_id_fkey(name, email)')
+        .eq('status', 'pending').order('created_at', { ascending: false })
+      const pm = {}
+      ;(pend || []).forEach(r => { if ((hubIds === null || hubIds.includes(r.hub_id)) && !(r.evaluation_id in pm)) pm[r.evaluation_id] = r })
+      setPendingReqs(pm)
+    }
   }
 
   const loadDrafts = async () => {
@@ -373,7 +518,7 @@ export default function Evaluations() {
     if (ev.evaluation_type === 'dsat') {
       return privileged && withinWindow(ev.submitted_at, 24 * 30)
     }
-    return withinWindow(ev.submitted_at, 72) && (isAuthor || privileged)
+    return withinWindow(ev.submitted_at, 72) && (privileged || (isAuthor && isKG))
   }
 
   // Toggle pill button — ticked + grayed when active
@@ -406,6 +551,13 @@ export default function Evaluations() {
 
   return (
     <div className="page">
+      {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, minWidth: 340, maxWidth: 620, boxShadow: '0 8px 30px rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><span>{msg.text}</span><button className="btn btn-sm" style={{ background: 'rgba(255,255,255,0.2)', color: 'inherit', flexShrink: 0 }} onClick={() => setMsg(null)}>OK</button></div>}
+      {(isKG || isPrivileged) && Object.keys(pendingReqs).length > 0 && (
+        <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 16px', marginBottom: 16, borderLeft: '3px solid #f59e0b' }}>
+          <span style={{ fontSize: 13 }}><b>{Object.keys(pendingReqs).length}</b> edit request{Object.keys(pendingReqs).length === 1 ? '' : 's'} awaiting your review.</span>
+          <button className="btn btn-sm btn-primary" onClick={() => setReviewModal(Object.values(pendingReqs)[0])}>Review next</button>
+        </div>
+      )}
       <div className="page-header">
         <div>
           <h1>Evaluations</h1>
@@ -578,12 +730,26 @@ export default function Evaluations() {
                         <button className="btn btn-ghost btn-sm" onClick={() => openDetail(ev.id)}>
                           View
                         </button>
-                        {canEdit(ev) && (
-                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }}
-                            onClick={() => navigate('/evaluations/new', { state: { editEval: ev.id } })}>
-                            Edit
-                          </button>
-                        )}
+                        {(() => {
+                          const priv = ['admin', 'owner'].includes(profile?.role)
+                          const isAuthor = ev.evaluator_id === profile?.id
+                          const isQuality = ev.evaluation_type !== 'dsat'
+                          const pend = pendingReqs[ev.id]
+                          if (pend && (priv || isKG) && pend.requester_id !== profile?.id)
+                            return <button className="btn btn-ghost btn-sm" style={{ color: '#f59e0b' }} onClick={() => setReviewModal(pend)}>Review edit request</button>
+                          if (canEdit(ev))
+                            return <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }} onClick={() => navigate('/evaluations/new', { state: { editEval: ev.id } })}>Edit</button>
+                          if (isQuality && isAuthor && !isKG && !priv) {
+                            const r = myReqs[ev.id]
+                            const approvedActive = r && r.status === 'approved' && r.approved_at && (Date.now() - new Date(r.approved_at).getTime() < 72 * 3600 * 1000)
+                            if (approvedActive)
+                              return <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }} onClick={() => navigate('/evaluations/new', { state: { editEval: ev.id } })}>Edit</button>
+                            if (r && r.status === 'pending')
+                              return <span style={{ fontSize: 12, color: '#f59e0b' }}>Pending edit approval</span>
+                            return <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }} onClick={() => setReqModal(ev)}>Make an edit request</button>
+                          }
+                          return null
+                        })()}
                       </div>
                     </td>
                   </tr>
@@ -674,6 +840,9 @@ export default function Evaluations() {
           </div>
         </div>
       )}
+
+      {reqModal && <EditRequestModal ev={reqModal} onClose={() => setReqModal(null)} onSubmitted={loadEditRequests} flash={flash} />}
+      {reviewModal && <EditReviewModal request={reviewModal} onClose={() => setReviewModal(null)} onResolved={loadEditRequests} flash={flash} />}
 
       {/* DETAIL MODAL */}
       {detail && (

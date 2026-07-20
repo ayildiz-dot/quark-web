@@ -100,7 +100,8 @@ export default function NotificationBell() {
     // Clicking a notification opens the relevant page and clears the notification.
     await supabase.from('notifications').delete().eq('id', item.id)
     setItems(prev => prev.filter(i => i.id !== item.id))
-    if (item.link) navigate(item.link)
+    if (item.type === 'edit_request' && item.entity_id) navigate('/evaluations?req=' + item.entity_id)
+    else if (item.link) navigate(item.link)
   }
 
   return (
