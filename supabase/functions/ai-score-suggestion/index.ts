@@ -13,8 +13,8 @@ const CORS_HEADERS = {
 // automatically fall back to the next one. To change priority, just reorder.
 const MODELS = [
   "gemini-3.5-flash",       // stable, most capable — primary
-  "gemini-3.1-flash-lite",  // stable, fast + low cost — fallback
-  "gemini-3-flash-preview", // preview — last resort
+  "gemini-3-flash",  // stable, fast + low cost — fallback
+  "gemini-2.5-flash", // preview — last resort
 ]
 // -----------------------------------------------------------------------------
 

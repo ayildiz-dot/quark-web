@@ -378,7 +378,7 @@ export default function EvaluationForm() {
       setAiSuggestedIds(newSuggestedIds)
       triggerAutoSave()
     } catch (e) {
-      setAiError(e.message || 'Could not get AI suggestions right now — please score these manually.')
+      setAiError((e?.message || '').includes('non-2xx') ? 'AI suggestions are busy right now (usage limit reached). Please try again in a minute, or score these manually.' : e.message || 'Could not get AI suggestions right now — please score these manually.')
     } finally {
       setAiLoading(false)
     }
@@ -416,7 +416,7 @@ export default function EvaluationForm() {
       }
       setAiDsatChain(chain)
     } catch (e) {
-      setAiDsatError(e.message || 'Could not get an AI prediction right now — please complete this evaluation manually.')
+      setAiDsatError((e?.message || '').includes('non-2xx') ? 'AI is busy right now (usage limit reached). Please try again in a minute, or complete this evaluation manually.' : e.message || 'Could not get an AI prediction right now — please complete this evaluation manually.')
     } finally {
       setAiDsatLoading(false)
     }
