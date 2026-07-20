@@ -97,10 +97,13 @@ export default function NotificationBell() {
 
   async function clickItem(item) {
     setOpen(false)
-    // Clicking a notification opens the relevant page and clears the notification.
-    await supabase.from('notifications').delete().eq('id', item.id)
-    setItems(prev => prev.filter(i => i.id !== item.id))
+    const isDispute = (item.type || '').startsWith('dispute')
+    if (!isDispute) {
+      await supabase.from('notifications').delete().eq('id', item.id)
+      setItems(prev => prev.filter(i => i.id !== item.id))
+    }
     if (item.type === 'edit_request' && item.entity_id) navigate('/evaluations?req=' + item.entity_id)
+    else if (isDispute && item.entity_id) navigate('/evaluations?dispute=' + item.entity_id)
     else if (item.link) navigate(item.link)
   }
 

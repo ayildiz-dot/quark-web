@@ -112,6 +112,221 @@ function EditReviewModal({ request, onClose, onResolved, flash }) {
   )
 }
 
+const DISPUTE_STATUS = {
+  tl_pending:         { label: 'Awaiting Team Leader', color: '#f59e0b' },
+  evaluator_pending:  { label: 'Awaiting evaluator', color: '#f59e0b' },
+  tl_reconsider:      { label: 'Awaiting Team Leader', color: '#f59e0b' },
+  nudged:             { label: 'Awaiting evaluator (nudged)', color: '#f59e0b' },
+  admin_pending:      { label: 'Awaiting admin', color: '#f59e0b' },
+  evaluator_rejected: { label: 'Rejected by evaluator', color: '#ef4444' },
+  tl_rejected:        { label: 'Rejected by Team Leader', color: '#ef4444' },
+  upheld:             { label: 'Upheld', color: '#22c55e' },
+  accepted:           { label: 'Closed', color: '#64748b' },
+  cancelled:          { label: 'Cancelled', color: '#64748b' },
+}
+const DISPUTE_ACTION_LABEL = {
+  raised: 'raised the dispute', tl_approved: 'approved (Team Leader)', tl_rejected: 'rejected (Team Leader)',
+  evaluator_approved: 'upheld (evaluator)', evaluator_rejected: 'rejected (evaluator)', nudged: 'nudged the evaluator',
+  cancelled: 'cancelled', re_disputed: 're-disputed', accepted: 'accepted the rejection',
+  admin_took_over: 'took over (admin)', admin_approved: 'upheld (admin)', admin_rejected: 'rejected (admin)',
+  escalated: 'escalated', timeout: 'SLA timeout',
+}
+
+function RaiseDisputeModal({ ev, profile, onClose, onSubmitted, flash }) {
+  const [comment, setComment] = useState('')
+  const [tls, setTls] = useState([])
+  const [tlId, setTlId] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { supabase.rpc('tls_for_evaluation', { p_eval_id: ev.id }).then(({ data }) => setTls(data || [])) }, [ev.id])
+  const submit = async () => {
+    if (!comment.trim()) return flash('Please describe your dispute.', false)
+    if (!tlId) return flash('Select a Team Leader.', false)
+    setBusy(true)
+    const { error } = await supabase.rpc('raise_dispute', { p_eval_id: ev.id, p_comment: comment.trim(), p_tl_id: tlId })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    flash('Dispute sent to your Team Leader'); onSubmitted(); onClose()
+  }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <div className="modal-header"><h2>Dispute · #{ev.eval_id || ev.id}</h2><button className="btn-close" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <div className="form-field" style={{ marginBottom: 14 }}>
+            <label>Why are you disputing, and how do you think it should be?</label>
+            <textarea className="input" rows={4} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+          </div>
+          <div className="form-field" style={{ marginBottom: 14 }}>
+            <label>Send to Team Leader</label>
+            <select className="input" value={tlId} onChange={e => setTlId(e.target.value)}>
+              <option value="">Select a Team Leader…</option>
+              {tls.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={submit}>Send dispute</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flash }) {
+  const [d, setD] = useState(d0)
+  const [events, setEvents] = useState([])
+  const [ev, setEv] = useState(null)
+  const [scores, setScores] = useState([])
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [tookOver, setTookOver] = useState(false)
+  const me = profile?.id
+  const priv = ['owner', 'admin'].includes(profile?.role)
+
+  const reload = async () => {
+    const { data: dd } = await supabase.from('disputes').select('*').eq('id', d0.id).maybeSingle(); if (dd) setD(dd)
+    const { data: evs } = await supabase.from('dispute_events').select('*, actor:users!dispute_events_actor_id_fkey(name)').eq('dispute_id', d0.id).order('created_at')
+    setEvents(evs || [])
+  }
+  useEffect(() => {
+    reload()
+    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users(name, email)').eq('id', d0.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
+    supabase.from('evaluation_scores').select('*, scorecard_questions(title, is_form_critical)').eq('evaluation_id', d0.evaluation_id).then(({ data }) => setScores(data || []))
+    // eslint-disable-next-line
+  }, [d0.id])
+
+  const clearNotifs = async () => { await supabase.from('notifications').delete().eq('user_id', me).eq('entity_type', 'dispute').eq('entity_id', d.id) }
+  const run = async (fn, args, msg, gotoEdit) => {
+    setBusy(true); const { error } = await supabase.rpc(fn, args); setBusy(false)
+    if (error) return flash(error.message, false)
+    await clearNotifs(); flash(msg); onChanged && onChanged()
+    if (gotoEdit) { onClose(); navigate('/evaluations/new', { state: { editEval: d.evaluation_id } }) } else onClose()
+  }
+  const needComment = () => { if (!comment.trim()) { flash('A comment is required.', false); return false } return true }
+
+  const isTL = d.tl_id === me, isEval = d.evaluator_id === me
+  const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
+  const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }
+  const st = DISPUTE_STATUS[d.status] || { label: d.status, color: 'var(--text-secondary)' }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 680 }}>
+        <div className="modal-header">
+          <h2>Dispute · Evaluation #{ev?.eval_id || d.evaluation_id}</h2>
+          <button className="btn-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 10, background: st.color + '22', color: st.color }}>{st.label}</span>
+
+          <div style={label}>History</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {events.map(e => (
+              <div key={e.id} style={box}>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: e.comment ? 4 : 0 }}>
+                  <b>{e.actor?.name || (e.actor_role || 'System')}</b> {DISPUTE_ACTION_LABEL[e.action] || e.action} · {new Date(e.created_at).toLocaleString()}
+                </div>
+                {e.comment && <div>{e.comment}</div>}
+              </div>
+            ))}
+          </div>
+
+          {ev && (
+            <>
+              <div style={label}>Evaluation</div>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>
+                <span><b>Scorecard:</b> {ev.scorecards?.name || '—'}</span>
+                {ev.evaluation_type !== 'dsat' && <span><b>Score:</b> {ev.score}%</span>}
+                <span><b>Evaluator:</b> {ev.users?.name || '—'}</span>
+              </div>
+              {(ev.metadata_values || []).length > 0 && (
+                <>
+                  <div style={label}>Interaction details</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+                    {(ev.metadata_values || []).map((m, i) => <span key={i} style={{ fontSize: 12 }}><b style={{ color: 'var(--text-secondary)' }}>{m.label}:</b> {m.value || '—'}</span>)}
+                  </div>
+                </>
+              )}
+              {scores.length > 0 && (
+                <>
+                  <div style={label}>Answers</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {scores.map((sc, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 12px' }}>
+                        <span>{sc.scorecard_questions?.title || '—'}</span>
+                        <span style={{ fontWeight: 700, color: sc.score === 'pass' ? 'var(--success)' : sc.score === 'fail' ? 'var(--danger)' : 'var(--text-secondary)' }}>{(sc.score || 'na').toUpperCase()}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {d.status === 'tl_pending' && (isTL || priv) && (
+            <>
+              <div style={label}>Your decision (comment optional)</div>
+              <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button className="btn btn-danger" disabled={busy} onClick={() => run('tl_decide_dispute', { p_dispute_id: d.id, p_approve: false, p_comment: comment.trim() || null }, 'Dispute rejected')}>Reject</button>
+                <button className="btn btn-primary" disabled={busy} onClick={() => run('tl_decide_dispute', { p_dispute_id: d.id, p_approve: true, p_comment: comment.trim() || null }, 'Approved — sent to evaluator')}>Approve</button>
+              </div>
+            </>
+          )}
+
+          {['evaluator_pending', 'nudged'].includes(d.status) && (isEval || priv) && (
+            <>
+              <div style={label}>Your decision (comment required)</div>
+              <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button className="btn btn-danger" disabled={busy} onClick={() => needComment() && run('evaluator_decide_dispute', { p_dispute_id: d.id, p_approve: false, p_comment: comment.trim() }, 'Dispute rejected')}>Reject</button>
+                <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('evaluator_decide_dispute', { p_dispute_id: d.id, p_approve: true, p_comment: comment.trim() }, 'Upheld — opening the evaluation to edit', true)}>Approve &amp; edit</button>
+              </div>
+            </>
+          )}
+
+          {d.status === 'tl_reconsider' && (isTL || priv) && (
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button className="btn btn-danger" disabled={busy} onClick={() => run('tl_reconsider_dispute', { p_dispute_id: d.id, p_nudge: false }, 'Dispute cancelled')}>Cancel dispute</button>
+              <button className="btn btn-primary" disabled={busy} onClick={() => run('tl_reconsider_dispute', { p_dispute_id: d.id, p_nudge: true }, 'Evaluator nudged')}>Send a nudge</button>
+            </div>
+          )}
+
+          {d.status === 'evaluator_rejected' && (isTL || priv) && (
+            <>
+              <div style={label}>Your response (comment required)</div>
+              <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, flexWrap: 'wrap' }}>
+                <button className="btn btn-ghost" disabled={busy} onClick={() => needComment() && run('tl_after_rejection', { p_dispute_id: d.id, p_redispute: false, p_comment: comment.trim() }, 'Rejection accepted')}>Accept rejection</button>
+                {d.evaluator_is_kg && <button className="btn btn-outline" disabled={busy} onClick={() => run('tl_send_to_admin', { p_dispute_id: d.id, p_comment: comment.trim() || null }, 'Sent to admin')}>Send to Admin</button>}
+                <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_after_rejection', { p_dispute_id: d.id, p_redispute: true, p_comment: comment.trim() }, 'Re-disputed — sent to evaluator')}>Re-dispute</button>
+              </div>
+            </>
+          )}
+
+          {d.status === 'admin_pending' && priv && (
+            !tookOver ? (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+                <button className="btn btn-primary" disabled={busy} onClick={async () => { setBusy(true); const { error } = await supabase.rpc('admin_takeover_dispute', { p_dispute_id: d.id }); setBusy(false); if (error) return flash(error.message, false); setTookOver(true) }}>Take over</button>
+              </div>
+            ) : (
+              <>
+                <div style={label}>Your decision (comment required)</div>
+                <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                  <button className="btn btn-danger" disabled={busy} onClick={() => needComment() && run('admin_decide_dispute', { p_dispute_id: d.id, p_approve: false, p_comment: comment.trim() }, 'Dispute rejected')}>Reject</button>
+                  <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('admin_decide_dispute', { p_dispute_id: d.id, p_approve: true, p_comment: comment.trim() }, 'Upheld — opening the evaluation to edit', true)}>Approve &amp; edit</button>
+                </div>
+              </>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Evaluations() {
   const { profile } = useAuth()
   const navigate = useNavigate()
@@ -124,6 +339,9 @@ export default function Evaluations() {
   const [pendingReqs, setPendingReqs] = useState({})
   const [reqModal, setReqModal] = useState(null)
   const [reviewModal, setReviewModal] = useState(null)
+  const [myDisputes, setMyDisputes] = useState({})
+  const [raiseDispute, setRaiseDispute] = useState(null)
+  const [disputeModal, setDisputeModal] = useState(null)
   const [msg, setMsg] = useState(null)
   const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }
   const [filters, setFilters] = useState({
@@ -204,6 +422,16 @@ export default function Evaluations() {
     // eslint-disable-next-line
   }, [profile])
 
+  useEffect(() => { if (profile?.id) loadDisputes() /* eslint-disable-next-line */ }, [profile])
+
+  useEffect(() => {
+    const did = new URLSearchParams(window.location.search).get('dispute')
+    if (!did || !profile?.id) return
+    supabase.from('disputes').select('*').eq('id', did).maybeSingle().then(({ data }) => { if (data) setDisputeModal(data) })
+    window.history.replaceState({}, '', '/evaluations')
+    // eslint-disable-next-line
+  }, [profile])
+
   useEffect(() => { if (profile?.id) fetchEvals(1) /* eslint-disable-next-line */ }, [includeArchived, archivedScIds])
 
   // Evaluation ID + Status filter immediately as you type / choose.
@@ -221,6 +449,12 @@ export default function Evaluations() {
     if (showQuality) return ['quality']
     if (showDsat) return ['dsat']
     return null
+  }
+
+  const loadDisputes = async () => {
+    if (!profile?.id) return
+    const { data: mine } = await supabase.from('disputes').select('*').eq('agent_id', profile.id).order('created_at', { ascending: false })
+    const mm = {}; (mine || []).forEach(d => { if (!(d.evaluation_id in mm)) mm[d.evaluation_id] = d }); setMyDisputes(mm)
   }
 
   const loadEditRequests = async () => {
@@ -845,6 +1079,8 @@ export default function Evaluations() {
 
       {reqModal && <EditRequestModal ev={reqModal} onClose={() => setReqModal(null)} onSubmitted={loadEditRequests} flash={flash} />}
       {reviewModal && <EditReviewModal request={reviewModal} onClose={() => setReviewModal(null)} onResolved={loadEditRequests} flash={flash} />}
+      {raiseDispute && <RaiseDisputeModal ev={raiseDispute} profile={profile} onClose={() => setRaiseDispute(null)} onSubmitted={loadDisputes} flash={flash} />}
+      {disputeModal && <DisputeModal dispute={disputeModal} profile={profile} navigate={navigate} onClose={() => setDisputeModal(null)} onChanged={loadDisputes} flash={flash} />}
 
       {/* DETAIL MODAL */}
       {detail && (
@@ -866,6 +1102,17 @@ export default function Evaluations() {
                   {!detail.agent_read_at && <button className="btn btn-primary btn-sm" onClick={markEvalRead}>Done</button>}
                 </div>
               )}
+              {profile?.role === 'viewer' && (() => {
+                const dsp = myDisputes[detail.id]
+                const canRaise = !dsp || dsp.status === 'cancelled'
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+                    {dsp && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Dispute: {DISPUTE_STATUS[dsp.status]?.label || dsp.status}</span>}
+                    {dsp && <button className="btn btn-ghost btn-sm" onClick={() => setDisputeModal(dsp)}>View dispute</button>}
+                    {canRaise && <button className="btn btn-outline btn-sm" onClick={() => setRaiseDispute(detail)}>Dispute this evaluation</button>}
+                  </div>
+                )
+              })()}
 
               {/* Metadata values */}
               <div className="detail-meta">
