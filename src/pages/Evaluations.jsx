@@ -518,7 +518,9 @@ export default function Evaluations() {
     if (ev.evaluation_type === 'dsat') {
       return privileged && withinWindow(ev.submitted_at, 24 * 30)
     }
-    return withinWindow(ev.submitted_at, 72) && (privileged || (isAuthor && isKG))
+    return privileged
+      ? withinWindow(ev.submitted_at, 24 * 30)
+      : (withinWindow(ev.submitted_at, 72) && isAuthor && isKG)
   }
 
   // Toggle pill button — ticked + grayed when active
