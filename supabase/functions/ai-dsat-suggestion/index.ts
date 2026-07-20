@@ -12,9 +12,9 @@ const CORS_HEADERS = {
 // If a model is rate-limited (429), overloaded (503), or errors out, we
 // automatically fall back to the next one. To change priority, just reorder.
 const MODELS = [
-  "gemini-3.5-flash",       // stable, most capable — primary
-  "gemini-flash-latest",  // stable, fast + low cost — fallback
-  "gemini-flash-lite-latest", // preview — last resort
+  "gemini-flash-latest",
+  "gemini-flash-lite-latest",
+  "gemini-3.5-flash",
 ]
 // -----------------------------------------------------------------------------
 
@@ -118,7 +118,7 @@ ${redacted}
         const remaining = totalBudgetMs - (Date.now() - startTime)
         if (remaining < 10000) break outer
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), remaining)
+        const timeoutId = setTimeout(() => controller.abort(), Math.min(remaining, 45000))
         const attemptStart = Date.now()
         try {
           geminiRes = await fetch(
@@ -133,7 +133,7 @@ ${redacted}
         } catch (fetchErr) {
           console.error(`Gemini fetch failed (model ${model}, attempt ${attempt}):`, fetchErr?.message || fetchErr)
           geminiRes = undefined
-          break outer
+          break
         } finally {
           clearTimeout(timeoutId)
         }
