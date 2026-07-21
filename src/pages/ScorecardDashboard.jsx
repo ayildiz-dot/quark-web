@@ -16,6 +16,8 @@ import {
   verticalListSortingStrategy, arrayMove
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import * as XLSX from 'xlsx'
+import { saveAs } from 'file-saver'
 
 /* ===================== date helpers ===================== */
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -826,7 +828,7 @@ export default function ScorecardDashboard() {
         (async () => {
           if (evaluatorBlocked) return { data: [] }
           let evQ = supabase.from('evaluations')
-            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version, hub_id, workspace_id, queue_id, deviated_controllability, is_deviated, deviation_source_evaluation_id, overall_comment, ai_suggested_controllability, ai_controllability_reasoning, is_ai_deviated')
+            .select('id, score, metadata_values, submitted_at, evaluation_type, status, scorecard_version, hub_id, workspace_id, queue_id, deviated_controllability, is_deviated, deviation_source_evaluation_id, overall_comment, ai_suggested_controllability, ai_controllability_reasoning, is_ai_deviated, ai_suggested_dsat_chain')
             .eq('scorecard_id', scorecardId).eq('status', 'submitted').eq('evaluation_type', sc.type)
           if (isAgent) {
             // Agents: scoped to their own results by email. No workspace filter.
@@ -1188,6 +1190,82 @@ export default function ScorecardDashboard() {
     Array.isArray(v) ? v.length : (v && (v.from || v.to)))
   const setFilter = (key, val) => setFilterState(s => ({ ...s, [key]: val }))
 
+  const exportToExcel = () => {
+    if (!scorecard || !filteredEvals.length) { alert('No evaluations to export for the current filters.'); return }
+    const qInfo = {}
+    for (const q of govQueues) qInfo[q.id] = { hub: q.hub_name, market: q.market_value }
+    const fmtD = d => d ? new Date(d).toLocaleDateString() : ''
+    const base = (e) => ({
+      'Evaluation ID': e.id,
+      'Date': fmtD(evalDate(e, scorecard)),
+      'Agent': getMetaValue(e, "Agent's Email") || '',
+      'Hub': qInfo[e.queue_id]?.hub || '',
+      'Market': qInfo[e.queue_id]?.market || '',
+      'Status': e.status || '',
+    })
+    let rows = []
+    if (scorecard.type === 'quality') {
+      const byEval = {}
+      for (const r of aiScoreRows) (byEval[r.evaluation_id] ||= []).push(r)
+      const attrEntries = Object.entries(aiQuestionTitles).sort((a, b) => a[1].localeCompare(b[1]))
+      rows = filteredEvals.map(e => {
+        const row = base(e)
+        row['Score'] = (e.score != null ? e.score + '%' : '')
+        row['Result'] = (scorecard.pass_threshold != null && e.score != null) ? (e.score >= scorecard.pass_threshold ? 'PASS' : 'FAIL') : ''
+        const aiById = {}
+        for (const r of (byEval[e.id] || [])) aiById[r.question_id] = r
+        let matched = 0, total = 0
+        for (const [qId, title] of attrEntries) {
+          const r = aiById[qId]
+          if (r && r.ai_suggested_score != null) {
+            const isMatch = r.score === r.ai_suggested_score
+            row[`${title} (Your score)`] = r.score
+            row[`${title} (AI score)`] = r.ai_suggested_score
+            row[`${title} (Accuracy)`] = isMatch ? '100%' : '0%'
+            total++; if (isMatch) matched++
+          } else {
+            row[`${title} (Your score)`] = ''
+            row[`${title} (AI score)`] = ''
+            row[`${title} (Accuracy)`] = ''
+          }
+        }
+        row['Overall AI Accuracy'] = total ? (matched / total * 100).toFixed(1) + '%' : ''
+        return row
+      })
+    } else {
+      const posLabels = ['Controllability', 'Level 1', 'Level 2']
+      rows = filteredEvals.map(e => {
+        const row = base(e)
+        const chain = Array.isArray(e.ai_suggested_dsat_chain) ? e.ai_suggested_dsat_chain : []
+        let sum = 0, present = 0
+        for (let i = 0; i < 3; i++) {
+          const lbl = posLabels[i]
+          const step = chain[i]
+          if (step) {
+            const human = getMetaValue(e, step.questionTitle)
+            const isMatch = human != null && human === step.answerValue
+            row[`${lbl} (AI)`] = step.answerValue || ''
+            row[`${lbl} (You)`] = human || ''
+            row[`${lbl} Accuracy`] = isMatch ? '100%' : '0%'
+            sum += isMatch ? 100 : 0; present++
+          } else {
+            row[`${lbl} (AI)`] = ''
+            row[`${lbl} (You)`] = ''
+            row[`${lbl} Accuracy`] = ''
+          }
+        }
+        row['Overall AI Accuracy'] = present ? (sum / present).toFixed(1) + '%' : ''
+        return row
+      })
+    }
+    const header = rows.length ? Object.keys(rows[0]) : []
+    const ws = XLSX.utils.json_to_sheet(rows, { header })
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Evaluations')
+    const buf = XLSX.write(wb, { type: 'array', bookType: 'xlsx' })
+    saveAs(new Blob([buf], { type: 'application/octet-stream' }), `${scorecard.name} - evaluations.xlsx`)
+  }
+
   return (
     <div className="page">
       <ZoneWarningToast visible={showZoneWarning} />
@@ -1202,14 +1280,19 @@ export default function ScorecardDashboard() {
             {anyActive ? ' of ' + evals.length : ''} evaluation{filteredEvals.length === 1 ? '' : 's'}
           </p>
         </div>
-        {canEdit && (
-          <button
-            className={editMode ? 'btn btn-primary' : 'btn btn-accent-soft'}
-            disabled={saving}
-            onClick={() => { setEditMode(v => !v); setShowAddPanel(v => !v) }}>
-            {editMode ? 'Done editing' : 'Edit dashboard'}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {profile?.role !== 'viewer' && (
+            <button className="btn btn-accent-soft" disabled={loading} onClick={exportToExcel}>Export to Excel</button>
+          )}
+          {canEdit && (
+            <button
+              className={editMode ? 'btn btn-primary' : 'btn btn-accent-soft'}
+              disabled={saving}
+              onClick={() => { setEditMode(v => !v); setShowAddPanel(v => !v) }}>
+              {editMode ? 'Done editing' : 'Edit dashboard'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Add widget panel */}

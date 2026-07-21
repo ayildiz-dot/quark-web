@@ -154,7 +154,7 @@ export default function EvaluationForm() {
   useEffect(() => {
     if (
       step === 'questions' && selectedScorecard?.type === 'dsat' &&
-      !selectedScorecard?.is_spot_check && !editingEvalId && !aiDsatAutoRunRef.current
+      !selectedScorecard?.is_spot_check && selectedScorecard?.ai_dsat_enabled && !editingEvalId && !aiDsatAutoRunRef.current
     ) {
       if (caseTranscript.trim() && dsatSections.length > 0) {
         aiDsatAutoRunRef.current = true
@@ -877,6 +877,7 @@ export default function EvaluationForm() {
               ai_suggested_controllability: aiDsatChain[0].answerValue,
               ai_controllability_reasoning: aiDsatChain[0].reasoning || null,
               is_ai_deviated: getFirstAnswerFromMetaValues(dsatPayload, dsatSections, dsatQuestions) !== aiDsatChain[0].answerValue,
+              ai_suggested_dsat_chain: aiDsatChain,
             }
           : {}
         if (editingEvalId) {
@@ -1176,7 +1177,7 @@ export default function EvaluationForm() {
         </div>
       )}
       {((selectedScorecard?.type === 'quality' && questions.some(q => q.is_ai_attribute)) ||
-        (selectedScorecard?.type === 'dsat' && !selectedScorecard?.is_spot_check)) && !editingEvalId && (
+        (selectedScorecard?.type === 'dsat' && !selectedScorecard?.is_spot_check && selectedScorecard?.ai_dsat_enabled)) && !editingEvalId && (
         <div className="card" style={{ maxWidth: 600, marginTop: 16, background: 'var(--bg-secondary)' }}>
           <div className="card-title" style={{ marginBottom: 6 }}>Case Transcript</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 10 }}>

@@ -174,6 +174,7 @@ export default function ScorecardBuilder() {
         pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
         division: division,
         is_calibration: scorecard.is_calibration || false,
+        ai_dsat_enabled: scorecard.ai_dsat_enabled || false,
         updated_at: new Date().toISOString()
       }).eq('id', id)
 
@@ -578,7 +579,7 @@ export default function ScorecardBuilder() {
   if (!scorecard) return <div className="page"><p>Scorecard not found.</p></div>
 
   const ungroupedQuestions = questions.filter(q => !q.group_id)
-  const tabs = scorecard.type === 'dsat' ? ['settings', 'metadata', 'sections'] : ['settings', 'metadata', 'questions']
+  const tabs = scorecard.type === 'dsat' ? ['settings', 'metadata', 'sections', 'ai'] : ['settings', 'metadata', 'questions']
 
   return (
     <div className="page">
@@ -677,7 +678,7 @@ export default function ScorecardBuilder() {
       <div className="tabs">
         {tabs.map(t => (
           <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'ai' ? 'AI Evaluation Setting' : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
@@ -749,6 +750,7 @@ export default function ScorecardBuilder() {
                   pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
                   division: division,
                   is_calibration: scorecard.is_calibration || false,
+                  ai_dsat_enabled: scorecard.ai_dsat_enabled || false,
                   updated_at: new Date().toISOString() })
                 .eq('id', id)
               if (error) return flash(error.message, false)
@@ -918,6 +920,32 @@ export default function ScorecardBuilder() {
               )}
             </DragOverlay>
           </DndContext>
+        </div>
+      )}
+
+      {tab === 'ai' && scorecard.type === 'dsat' && (
+        <div className="card" style={{ maxWidth: 600 }}>
+          <div className="card-title" style={{ marginBottom: 16 }}>AI Evaluation Setting</div>
+          <div className="form-field" style={{ marginBottom: 16 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!scorecard.ai_dsat_enabled}
+                onChange={e => { setScorecard(s => ({ ...s, ai_dsat_enabled: e.target.checked })); markChanged() }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Activate AI DSAT Evaluation</span>
+            </label>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6, display: 'block' }}>
+              When enabled, evaluators paste the case transcript and the AI predicts the DSAT section chain (Controllability, Level 1, Level 2), and per-section accuracy is tracked. When disabled, this scorecard is evaluated manually - no case transcript, no AI.
+            </span>
+          </div>
+          {!isPublished && (
+            <button className="btn btn-primary" onClick={async () => {
+              const { error } = await supabase.from('scorecards')
+                .update({ ai_dsat_enabled: scorecard.ai_dsat_enabled || false, updated_at: new Date().toISOString() })
+                .eq('id', id)
+              if (error) return flash(error.message, false)
+              clearChanged()
+              flash('AI setting saved')
+            }}>Save AI Setting</button>
+          )}
         </div>
       )}
 
