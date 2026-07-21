@@ -547,13 +547,21 @@ function InsightsTab({ sessions, counts, govNames }) {
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const headers = ['Date', 'Agent', 'Coach', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'ISO Week', 'Acknowledged', 'Actions resolved']
+    const ids = rows.map(r => r.id)
+    const faMap = {}, apMap = {}
+    if (ids.length) {
+      const { data: fa } = await supabase.from('coaching_focus_areas').select('session_id, label, sort_order').in('session_id', ids).order('sort_order')
+      const { data: ap } = await supabase.from('coaching_action_items').select('session_id, description, sort_order').in('session_id', ids).order('sort_order')
+      ;(fa || []).forEach(x => { (faMap[x.session_id] = faMap[x.session_id] || []).push(x.label) })
+      ;(ap || []).forEach(x => { (apMap[x.session_id] = apMap[x.session_id] || []).push(x.description) })
+    }
+    const headers = ['Date', 'Agent', 'Coach', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'ISO Week', 'Acknowledged', 'Actions resolved', 'Observation model', 'Strengths / what went well', 'Observations', 'Agreed root cause', 'Focus Areas', 'Action Plan']
     const lines = [headers.map(esc).join(',')]
     rows.forEach(r => {
       const c = counts[r.id] || { total: 0, done: 0 }
-      lines.push([esc(fmtDate(r._date)), esc(r._agent), esc(r._coach), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(STATUS[r.status]?.label), esc(r._week), esc(r.agent_acknowledged_at ? 'Yes' : 'No'), esc(`${c.done}/${c.total}`)].join(','))
+      lines.push([esc(fmtDate(r._date)), esc(r._agent), esc(r._coach), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(STATUS[r.status]?.label), esc(r._week), esc(r.agent_acknowledged_at ? 'Yes' : 'No'), esc(`${c.done}/${c.total}`), esc(r.coaching_model), esc(r.strengths), esc(r.observations), esc(r.root_cause), esc((faMap[r.id] || []).join(', ')), esc((apMap[r.id] || []).join(' | '))].join(','))
     })
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob)

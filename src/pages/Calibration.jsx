@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useAuth } from '../App'
 import { supabase } from '../lib/supabase'
 
@@ -1248,6 +1248,7 @@ function CalibrationInsights() {
   const [filterDateTo, setFilterDateTo] = useState('')
   const [metaOptions, setMetaOptions] = useState({ bpo: [], hub: [], market: [] })
   const [questionLabels, setQuestionLabels] = useState([])
+  const [expandedSessions, setExpandedSessions] = useState({})
 
   useEffect(() => { if (profile) load() }, [profile])
 
@@ -1276,7 +1277,7 @@ function CalibrationInsights() {
 
     let subsQuery = supabase
       .from('calibration_submissions')
-      .select('id, evaluator_id, session_id, is_calibrated, delta, status, submitted_at')
+      .select('id, evaluator_id, session_id, is_calibrated, delta, status, submitted_at, comment')
       .eq('status', 'evaluated')
       .eq('is_gauge', false)
     if (sessionIdsFilter) subsQuery = subsQuery.in('session_id', sessionIdsFilter)
@@ -1461,7 +1462,7 @@ function CalibrationInsights() {
   // above, so a Gauge can hand over their own raw data without needing DB access.
   function exportToCsv() {
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const headers = ['Submission Date', 'Session', 'Scorecard', 'Evaluator', 'BPO', 'HUB', 'Market', ...questionLabels, 'Delta']
+    const headers = ['Submission Date', 'Session', 'Scorecard', 'Evaluator', 'BPO', 'HUB', 'Market', ...questionLabels, 'Delta', 'Comment']
     const lines = [headers.map(esc).join(',')]
     filteredRows
       .slice()
@@ -1477,6 +1478,7 @@ function CalibrationInsights() {
           esc(r.market || ''),
           ...questionLabels.map(label => esc(r.answers?.[label] ?? '')),
           (r.delta * 100).toFixed(1) + '%',
+          esc(r.comment || ''),
         ]
         lines.push(row.join(','))
       })
@@ -1617,9 +1619,13 @@ function CalibrationInsights() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sessionStats.map(s => (
-                    <tr key={s.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ ...tdStyle, fontWeight: 500 }}>{s.title}</td>
+                  {sessionStats.map(s => {
+                    const parts = (bySession[s.id] || []).slice().sort((a, b) => (a.delta || 0) - (b.delta || 0))
+                    const open = !!expandedSessions[s.id]
+                    return (
+                    <Fragment key={s.id}>
+                    <tr style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer' }} onClick={() => setExpandedSessions(m => ({ ...m, [s.id]: !m[s.id] }))}>
+                      <td style={{ ...tdStyle, fontWeight: 500 }}>{open ? '▾' : '▸'} {s.title}</td>
                       <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.scorecardName}</td>
                       <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.date ? new Date(s.date).toLocaleDateString() : '—'}</td>
                       <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{s.bpo || '—'}</td>
@@ -1629,7 +1635,35 @@ function CalibrationInsights() {
                       <td style={{ ...tdStyle, color: s.avgDelta <= 0.10 ? '#16a34a' : '#dc2626', fontWeight: 600 }}>{(s.avgDelta * 100).toFixed(1)}%</td>
                       <td style={tdStyle}>{s.calibratedCount}/{s.total} ({Math.round((s.calibratedCount / s.total) * 100)}%)</td>
                     </tr>
-                  ))}
+                    {open && (
+                      <tr style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+                        <td colSpan={9} style={{ padding: '4px 16px 14px 34px' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <thead>
+                              <tr style={{ color: 'var(--text-secondary)' }}>
+                                <th style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 600 }}>Participant</th>
+                                <th style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 600 }}>Delta</th>
+                                <th style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 600 }}>Result</th>
+                                <th style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 600 }}>Comment</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {parts.map(p => (
+                                <tr key={p.id}>
+                                  <td style={{ padding: '6px 10px' }}>{p.evaluatorName}</td>
+                                  <td style={{ padding: '6px 10px', color: (p.delta || 0) <= 0.10 ? '#16a34a' : '#dc2626', fontWeight: 600 }}>{((p.delta || 0) * 100).toFixed(1)}%</td>
+                                  <td style={{ padding: '6px 10px' }}>{p.is_calibrated ? 'Calibrated' : 'Not calibrated'}</td>
+                                  <td style={{ padding: '6px 10px', color: 'var(--text-secondary)' }}>{p.comment || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

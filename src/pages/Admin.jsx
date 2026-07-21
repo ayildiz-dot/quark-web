@@ -1804,6 +1804,8 @@ const seededFieldsForType = (type) => type === 'dsat' ? [...CORE_META_FIELDS, ..
 function ScorecardsTab({ profile, flash }) {
   const navigate = useNavigate()
   const [scorecards, setScorecards] = useState([])
+  const [archived, setArchived] = useState([])
+  const [showArchived, setShowArchived] = useState(false)
   const [divisions, setDivisions] = useState([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -1819,11 +1821,13 @@ function ScorecardsTab({ profile, flash }) {
   useEffect(() => { loadAll() }, [])
 
   const loadAll = async () => {
-    const [{ data: sc }, { data: divs }] = await Promise.all([
+    const [{ data: sc }, { data: divs }, { data: arch }] = await Promise.all([
       supabase.from('scorecards').select('*, users(name)').is('deleted_at', null).order('created_at', { ascending: false }),
       supabase.from('divisions').select('id, name, is_active, position').order('position'),
+      supabase.from('scorecards').select('*, users(name)').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
     ])
     setScorecards(sc || [])
+    setArchived(arch || [])
     setDivisions(divs || [])
     setLoading(false)
   }
@@ -2033,6 +2037,47 @@ function ScorecardsTab({ profile, flash }) {
       </div>
       <div>
         {renderTable(drafts)}
+      </div>
+
+      <div style={{ marginTop: 32 }}>
+        <button onClick={() => setShowArchived(v => !v)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          <span>{showArchived ? '▾' : '▸'}</span>
+          Archived ({archived.length})
+        </button>
+        {showArchived && (
+          <div style={{ marginTop: 12 }}>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Division</th>
+                    <th>Description</th>
+                    <th>Created By</th>
+                    <th>Archived On</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {archived.length === 0 && (
+                    <tr><td colSpan={6} className="empty-row">No archived scorecards.</td></tr>
+                  )}
+                  {archived.map(sc => (
+                    <tr key={sc.id} style={{ opacity: 0.7 }}>
+                      <td style={{ fontWeight: 500 }}>{sc.name}</td>
+                      <td><TypeBadge type={sc.type} /></td>
+                      <td style={{ fontSize: 13 }}>{sc.division || 'None'}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{sc.description || '-'}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{sc.users?.name || '-'}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{sc.deleted_at ? new Date(sc.deleted_at).toLocaleDateString() : '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
