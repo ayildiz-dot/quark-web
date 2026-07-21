@@ -88,7 +88,7 @@ a:hover { color: var(--accent-hover); }
 .navbar { width: 220px; background: var(--sidebar-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; position: fixed; height: 100vh; z-index: 50; }
 .navbar-brand { padding: 0 20px 24px; border-bottom: 1px solid var(--border); }
 .brand-icon { font-size: 22px; }
-.brand-name { font-size: 18px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.5px; display: block; margin-top: 6px; }
+.brand-name { font-size: 22px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.5px; display: block; margin-top: 6px; }
 .brand-sub { font-size: 11px; color: var(--text-tertiary); display: block; margin-top: 2px; }
 .navbar-links { padding: 16px 12px; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius); font-size: 13px; font-weight: 500; color: var(--text-secondary); cursor: pointer; background: none; border: none; width: 100%; text-align: left; transition: all .15s; }

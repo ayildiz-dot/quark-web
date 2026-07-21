@@ -514,8 +514,7 @@ export default function Evaluations() {
   const [showDrafts, setShowDrafts] = useState(false)
 
   // Type toggles — both on by default. Both off = show everything.
-  const [showQuality, setShowQuality] = useState(true)
-  const [showDsat,    setShowDsat]    = useState(true)
+  const [typeFilter, setTypeFilter] = useState('')
 
   // Admin/Owner only: filter by which evaluator submitted.
   const [evaluatorFilter, setEvaluatorFilter] = useState('') // '' = all
@@ -523,7 +522,7 @@ export default function Evaluations() {
   const isPrivileged = ['admin', 'owner'].includes(profile?.role)
   const isKG = (profile?.email || '').toLowerCase().endsWith('@kaizengaming.com')
 
-  const LIMIT = 50
+  const LIMIT = 20
   const isAgent = profile?.role === 'viewer'
 
   // Exact assigned-queue ids for the current user (evaluators & team leaders).
@@ -560,7 +559,7 @@ export default function Evaluations() {
   // Refetch whenever the type toggles change (and on first mount once profile is ready)
   useEffect(() => {
     if (profile?.id) fetchEvals(1)
-  }, [profile, showQuality, showDsat, evaluatorFilter])
+  }, [profile, typeFilter, evaluatorFilter])
 
   useEffect(() => {
     if (profile?.id) loadDrafts()
@@ -604,11 +603,7 @@ export default function Evaluations() {
 
   // Returns the evaluation_type values to include, or null to include all.
   const activeTypes = () => {
-    if (showQuality && showDsat) return null      // both on → all
-    if (!showQuality && !showDsat) return null     // both off → all
-    if (showQuality) return ['quality']
-    if (showDsat) return ['dsat']
-    return null
+    return typeFilter ? [typeFilter] : null
   }
 
   const loadDisputes = async () => {
@@ -718,7 +713,7 @@ export default function Evaluations() {
     } finally {
       setLoading(false)
     }
-  }, [filters, profile, showQuality, showDsat, evaluatorFilter, includeArchived, archivedScIds])
+  }, [filters, profile, typeFilter, evaluatorFilter, includeArchived, archivedScIds])
 
   const openDetail = async (id) => {
     const { data: ev } = await supabase
@@ -960,8 +955,6 @@ export default function Evaluations() {
           <p className="page-sub">{total.toLocaleString()} {profile?.role === 'viewer' ? 'evaluations on your interactions' : isPrivileged ? 'evaluations (all evaluators)' : profile?.role === 'team_leader' ? 'evaluations in your scope' : 'of your evaluations'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {!isAgent && <button className="btn btn-outline" onClick={exportCSV}>Export CSV</button>}
-          {!isAgent && <button className="btn btn-outline" onClick={exportXLSX}>Export Excel</button>}
           {!['viewer', 'team_leader'].includes(profile?.role) && (
             <button
               className="btn btn-ghost"
@@ -1034,10 +1027,11 @@ export default function Evaluations() {
           setEvaluatorFilter('')
         }}>Clear</button>
 
-        <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-          <TypeToggle label="Quality" active={showQuality} onClick={() => setShowQuality(v => !v)} />
-          <TypeToggle label="DSAT"    active={showDsat}    onClick={() => setShowDsat(v => !v)} />
-        </div>
+        <select className="select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ marginLeft: 'auto' }}>
+          <option value="">All types</option>
+          <option value="quality">Quality</option>
+          <option value="dsat">DSAT</option>
+        </select>
       </div>
 
       {loading ? (

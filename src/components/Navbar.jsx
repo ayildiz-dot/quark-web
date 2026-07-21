@@ -99,7 +99,7 @@ export default function Navbar() {
   return (
     <nav className="navbar">
       <div className="navbar-brand">
-        <span className="brand-icon"><svg width="22" height="22" viewBox="0 0 90 90" style={{ flexShrink: 0 }}>
+        <span className="brand-icon"><svg width="44" height="44" viewBox="0 0 90 90" style={{ flexShrink: 0 }}>
           <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(0 45 45)" />
           <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(60 45 45)" />
           <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(120 45 45)" />

@@ -885,9 +885,9 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
 
   const exportCsv = () => {
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const headers = ['Evaluation', 'Type', 'Coach', 'Agent', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'Taken over', 'Completed', 'Acknowledged']
+    const headers = ['Evaluation', 'Type', 'Coach', 'Agent', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'Taken over', 'Completed', 'Acknowledged', 'Coaching notes']
     const lines = [headers.map(esc).join(',')]
-    flt.forEach(r => lines.push([esc('#' + r._evalNo), esc(r._type), esc(r._coach), esc(r.agent_email), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(EC_STATUS[r.status]?.label || r.status), esc(fmtDate(r.taken_over_at)), esc(fmtDate(r.completed_at)), esc(fmtDate(r.acknowledged_at))].join(',')))
+    flt.forEach(r => lines.push([esc('#' + r._evalNo), esc(r._type), esc(r._coach), esc(r.agent_email), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(EC_STATUS[r.status]?.label || r.status), esc(fmtDate(r.taken_over_at)), esc(fmtDate(r.completed_at)), esc(fmtDate(r.acknowledged_at)), esc(r.notes)].join(',')))
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
     a.download = `coaching-insights-${new Date().toISOString().split('T')[0]}.csv`; a.click(); URL.revokeObjectURL(a.href)
