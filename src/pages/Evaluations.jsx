@@ -1032,6 +1032,7 @@ export default function Evaluations() {
           <option value="quality">Quality</option>
           <option value="dsat">DSAT</option>
         </select>
+        {!isAgent && <button className="btn btn-accent-soft" onClick={exportXLSX} style={{ marginLeft: 8 }}>Export to Excel</button>}
       </div>
 
       {loading ? (
