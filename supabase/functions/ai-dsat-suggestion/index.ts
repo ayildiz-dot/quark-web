@@ -41,7 +41,7 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { transcript, sectionTitle, questionTitle, options } = await req.json()
+    const { transcript, sectionTitle, questionTitle, options, guidance } = await req.json()
 
     if (!transcript || typeof transcript !== "string") {
       return new Response(JSON.stringify({ error: "transcript is required" }), {
@@ -69,7 +69,7 @@ serve(async (req: Request) => {
 Read the customer service interaction transcript below (some personal details have already been redacted) and answer ONE question about it${sectionTitle ? ` (section: "${sectionTitle}")` : ""}:
 
 "${questionTitle}"
-
+${guidance ? `\nEvaluation guidance from the QA team (apply this when choosing your answer):\n${guidance}\n` : ""}
 You MUST pick exactly one of these options: ${options.map((o: string) => `"${o}"`).join(", ")}
 
 Respond only with the requested JSON: the chosen option (must match one of the options exactly) and a short (1-2 sentence) justification grounded in the transcript.

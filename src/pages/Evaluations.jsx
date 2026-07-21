@@ -45,6 +45,7 @@ function EditReviewModal({ request, onClose, onResolved, flash }) {
   const [ev, setEv] = useState(null)
   const [scores, setScores] = useState([])
   const [comment, setComment] = useState('')
+  const [subject, setSubject] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users(name, email)').eq('id', request.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
@@ -123,6 +124,9 @@ const DISPUTE_STATUS = {
   upheld:             { label: 'Upheld', color: '#22c55e' },
   accepted:           { label: 'Closed', color: '#64748b' },
   cancelled:          { label: 'Cancelled', color: '#64748b' },
+  post_nudge_pending: { label: 'Awaiting mediator', color: '#f59e0b' },
+  bpo_final_pending:  { label: 'Awaiting BPO final review', color: '#f59e0b' },
+  rejected_final:     { label: 'Rejected (final)', color: '#ef4444' },
 }
 const DISPUTE_ACTION_LABEL = {
   raised: 'raised the dispute', tl_approved: 'approved (Team Leader)', tl_rejected: 'rejected (Team Leader)',
@@ -206,6 +210,7 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
   const needComment = () => { if (!comment.trim()) { flash('A comment is required.', false); return false } return true }
 
   const isTL = d.tl_id === me, isEval = d.evaluator_id === me
+  const isMediator = d.kind === 'dsat_spotcheck' ? d.agent_id === me : d.tl_id === me
   const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
   const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }
   const st = DISPUTE_STATUS[d.status] || { label: d.status, color: 'var(--text-secondary)' }
@@ -286,21 +291,58 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
             </>
           )}
 
-          {d.status === 'tl_reconsider' && (isTL || priv) && (
+          {d.status === 'tl_reconsider' && (isMediator || priv) && (
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
               <button className="btn btn-danger" disabled={busy} onClick={() => run('tl_reconsider_dispute', { p_dispute_id: d.id, p_nudge: false }, 'Dispute cancelled')}>Cancel dispute</button>
               <button className="btn btn-primary" disabled={busy} onClick={() => run('tl_reconsider_dispute', { p_dispute_id: d.id, p_nudge: true }, 'Evaluator nudged')}>Send a nudge</button>
             </div>
           )}
 
-          {d.status === 'evaluator_rejected' && (isTL || priv) && (
+          {d.status === 'evaluator_rejected' && (isMediator || priv) && (
             <>
               <div style={label}>Your response (comment required)</div>
               <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+              {!d.evaluator_is_kg && (d.re_dispute_count || 0) >= 1 && (
+                <input className="input" placeholder="Email subject" value={subject} onChange={e => setSubject(e.target.value)} style={{ width: '100%', marginTop: 8 }} />
+              )}
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, flexWrap: 'wrap' }}>
                 <button className="btn btn-ghost" disabled={busy} onClick={() => needComment() && run('tl_after_rejection', { p_dispute_id: d.id, p_redispute: false, p_comment: comment.trim() }, 'Rejection accepted')}>Accept rejection</button>
-                {d.evaluator_is_kg && <button className="btn btn-outline" disabled={busy} onClick={() => run('tl_send_to_admin', { p_dispute_id: d.id, p_comment: comment.trim() || null }, 'Sent to admin')}>Send to Admin</button>}
-                <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_after_rejection', { p_dispute_id: d.id, p_redispute: true, p_comment: comment.trim() }, 'Re-disputed — sent to evaluator')}>Re-dispute</button>
+                {(d.re_dispute_count || 0) < 1 && (
+                  <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_after_rejection', { p_dispute_id: d.id, p_redispute: true, p_comment: comment.trim() }, 'Re-disputed')}>Re-dispute</button>
+                )}
+                {(d.re_dispute_count || 0) >= 1 && d.evaluator_is_kg && (
+                  <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_send_to_admin', { p_dispute_id: d.id, p_comment: comment.trim() }, 'Sent for final decision')}>Send it for final decision</button>
+                )}
+                {(d.re_dispute_count || 0) >= 1 && !d.evaluator_is_kg && (
+                  <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_send_to_bpo_final', { p_dispute_id: d.id, p_comment: comment.trim(), p_subject: subject.trim() || null }, 'Sent to internal quality management')}>Send email to internal quality mgmt</button>
+                )}
+              </div>
+            </>
+          )}
+
+          {d.status === 'post_nudge_pending' && (isMediator || priv) && (
+            <>
+              <div style={label}>The evaluator did not decide in time (comment required)</div>
+              <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+              {!d.evaluator_is_kg && (
+                <input className="input" placeholder="Email subject" value={subject} onChange={e => setSubject(e.target.value)} style={{ width: '100%', marginTop: 8 }} />
+              )}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12, flexWrap: 'wrap' }}>
+                <button className="btn btn-ghost" disabled={busy} onClick={() => run('tl_cancel_after_nudge', { p_dispute_id: d.id, p_comment: comment.trim() || null }, 'Dispute cancelled')}>Cancel dispute</button>
+                {d.evaluator_is_kg
+                  ? <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_send_to_admin', { p_dispute_id: d.id, p_comment: comment.trim() }, 'Sent for final decision')}>Send it for final decision</button>
+                  : <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_send_to_bpo_final', { p_dispute_id: d.id, p_comment: comment.trim(), p_subject: subject.trim() || null }, 'Sent to internal quality management')}>Send email to internal quality mgmt</button>}
+              </div>
+            </>
+          )}
+
+          {d.status === 'bpo_final_pending' && (isEval || priv) && (
+            <>
+              <div style={label}>Final review (comment required)</div>
+              <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button className="btn btn-danger" disabled={busy} onClick={() => needComment() && run('bpo_final_decide', { p_dispute_id: d.id, p_approve: false, p_comment: comment.trim() }, 'Rejection maintained')}>Reject</button>
+                <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('bpo_final_decide', { p_dispute_id: d.id, p_approve: true, p_comment: comment.trim() }, 'Upheld — opening the evaluation to edit', true)}>Approve &amp; edit</button>
               </div>
             </>
           )}
