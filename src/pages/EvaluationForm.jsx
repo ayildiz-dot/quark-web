@@ -406,6 +406,7 @@ export default function EvaluationForm() {
             sectionTitle: section.title,
             questionTitle: routingQ.title,
             options: opts.map(o => o.label),
+            guidance: selectedScorecard?.ai_dsat_prompt || '',
           },
         })
         if (error) throw error

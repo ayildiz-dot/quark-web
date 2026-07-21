@@ -175,6 +175,7 @@ export default function ScorecardBuilder() {
         division: division,
         is_calibration: scorecard.is_calibration || false,
         ai_dsat_enabled: scorecard.ai_dsat_enabled || false,
+        ai_dsat_prompt: scorecard.ai_dsat_prompt || null,
         updated_at: new Date().toISOString()
       }).eq('id', id)
 
@@ -751,6 +752,7 @@ export default function ScorecardBuilder() {
                   division: division,
                   is_calibration: scorecard.is_calibration || false,
                   ai_dsat_enabled: scorecard.ai_dsat_enabled || false,
+                  ai_dsat_prompt: scorecard.ai_dsat_prompt || null,
                   updated_at: new Date().toISOString() })
                 .eq('id', id)
               if (error) return flash(error.message, false)
@@ -936,10 +938,23 @@ export default function ScorecardBuilder() {
               When enabled, evaluators paste the case transcript and the AI predicts the DSAT section chain (Controllability, Level 1, Level 2), and per-section accuracy is tracked. When disabled, this scorecard is evaluated manually - no case transcript, no AI.
             </span>
           </div>
+          {scorecard.ai_dsat_enabled && (
+            <div className="form-field" style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 13, fontWeight: 600 }}>AI Evaluation Prompt</label>
+              <textarea className="input" rows={6}
+                value={scorecard.ai_dsat_prompt || ''}
+                onChange={e => { setScorecard(s => ({ ...s, ai_dsat_prompt: e.target.value })); markChanged() }}
+                placeholder="Tell the AI how to judge this DSAT: e.g. what makes a case Controllable vs Non-Controllable, what counts as a Knowledge Gap, how to choose the information-type level, etc."
+                style={{ resize: 'vertical' }} />
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6, display: 'block' }}>
+                This guidance is sent to the AI with every section prediction for this scorecard.
+              </span>
+            </div>
+          )}
           {!isPublished && (
             <button className="btn btn-primary" onClick={async () => {
               const { error } = await supabase.from('scorecards')
-                .update({ ai_dsat_enabled: scorecard.ai_dsat_enabled || false, updated_at: new Date().toISOString() })
+                .update({ ai_dsat_enabled: scorecard.ai_dsat_enabled || false, ai_dsat_prompt: scorecard.ai_dsat_prompt || null, updated_at: new Date().toISOString() })
                 .eq('id', id)
               if (error) return flash(error.message, false)
               clearChanged()
