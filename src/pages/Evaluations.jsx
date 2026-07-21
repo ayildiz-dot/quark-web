@@ -177,6 +177,36 @@ function RaiseDisputeModal({ ev, profile, onClose, onSubmitted, flash }) {
   )
 }
 
+function RaiseDsatModal({ evalId, onClose, onSubmitted, flash }) {
+  const [comment, setComment] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    if (!comment.trim()) return flash('Please describe your dispute.', false)
+    setBusy(true)
+    const { error } = await supabase.rpc('raise_dsat_dispute', { p_eval_id: evalId, p_comment: comment.trim() })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    flash('Dispute sent to the KG QA'); onSubmitted(); onClose()
+  }
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+        <div className="modal-header"><h2>Dispute KG spot-check</h2><button className="btn-close" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <div className="form-field" style={{ marginBottom: 14 }}>
+            <label>Why are you disputing, and how do you think it should be?</label>
+            <textarea className="input" rows={4} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={submit}>Send dispute</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flash }) {
   const [d, setD] = useState(d0)
   const [events, setEvents] = useState([])
@@ -542,6 +572,7 @@ export default function Evaluations() {
   const [reviewModal, setReviewModal] = useState(null)
   const [myDisputes, setMyDisputes] = useState({})
   const [raiseDispute, setRaiseDispute] = useState(null)
+  const [raiseDsat, setRaiseDsat] = useState(null)
   const [disputeModal, setDisputeModal] = useState(null)
   const [view, setView] = useState('evaluations')
   const [msg, setMsg] = useState(null)
@@ -1287,6 +1318,7 @@ export default function Evaluations() {
       {reqModal && <EditRequestModal ev={reqModal} onClose={() => setReqModal(null)} onSubmitted={loadEditRequests} flash={flash} />}
       {reviewModal && <EditReviewModal request={reviewModal} onClose={() => setReviewModal(null)} onResolved={loadEditRequests} flash={flash} />}
       {raiseDispute && <RaiseDisputeModal ev={raiseDispute} profile={profile} onClose={() => setRaiseDispute(null)} onSubmitted={loadDisputes} flash={flash} />}
+      {raiseDsat && <RaiseDsatModal evalId={raiseDsat} onClose={() => setRaiseDsat(null)} onSubmitted={loadDisputes} flash={flash} />}
       {disputeModal && <DisputeModal dispute={disputeModal} profile={profile} navigate={navigate} onClose={() => setDisputeModal(null)} onChanged={loadDisputes} flash={flash} />}
 
       {/* DETAIL MODAL */}
@@ -1317,6 +1349,20 @@ export default function Evaluations() {
                     {dsp && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Dispute: {DISPUTE_STATUS[dsp.status]?.label || dsp.status}</span>}
                     {dsp && <button className="btn btn-ghost btn-sm" onClick={() => setDisputeModal(dsp)}>View dispute</button>}
                     {canRaise && <button className="btn btn-outline btn-sm" onClick={() => setRaiseDispute(detail)}>Dispute this evaluation</button>}
+                  </div>
+                )
+              })()}
+
+              {profile?.role !== 'viewer' && detail.deviation_source_evaluation_id && detail.evaluator_id === profile.id && (() => {
+                const kgId = detail.deviation_source_evaluation_id
+                const dsp = myDisputes[kgId]
+                const canRaise = !dsp || dsp.status === 'cancelled'
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, background: 'rgba(245,158,11,0.10)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>This DSAT was spot-checked by a KG QA.</span>
+                    {dsp && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Dispute: {DISPUTE_STATUS[dsp.status]?.label || dsp.status}</span>}
+                    {dsp && <button className="btn btn-ghost btn-sm" onClick={() => setDisputeModal(dsp)}>View dispute</button>}
+                    {canRaise && <button className="btn btn-outline btn-sm" onClick={() => setRaiseDsat(kgId)}>Dispute the KG spot-check</button>}
                   </div>
                 )
               })()}
