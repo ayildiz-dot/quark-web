@@ -370,3 +370,10 @@ body::before {
   .gov-tab { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .gov-tab > * { min-width: 840px; }
 }
+
+
+/* User Management tab: reach all columns on mobile via horizontal scroll (added by Claude) */
+@media (max-width: 768px) {
+  .um-tab { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .um-tab > * { min-width: 840px; }
+}

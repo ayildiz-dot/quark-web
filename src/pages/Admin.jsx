@@ -259,7 +259,7 @@ function UsersTab({ profile, flash }) {
   }
 
   return (
-    <div>
+    <div className="um-tab">
       {confirm && <ConfirmModal message={confirm.message} onYes={confirm.onYes} onNo={closeConfirm} />}
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
