@@ -6,7 +6,6 @@ import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 
 const CATEGORIES = {
-  'Evaluation & Scoring': ['Disagree with a score', 'Scorecard criteria', 'Calibration concern', 'Re-evaluation request'],
   'Coaching & Feedback': ['Session quality', 'Frequency', 'Coach behavior', 'Training request'],
   'Tools & Systems (Quark)': ['Bug/error', 'Feature request', 'Access/permissions', 'Performance'],
   'Processes & Policies': ['Dispute process', 'Quality process clarity', 'Workflow/SLAs', 'Fairness concern'],
