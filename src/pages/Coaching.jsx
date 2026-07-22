@@ -65,7 +65,7 @@ function ConfirmModal({ message, onYes, onNo }) {
 
 // ─── New Observation Session modal (floating, Calibration style) ────────────
 function NewObservationModal({ profile, isPrivileged, gov, parent, flash, onClose, onSaved }) {
-  const [divisionId, setDivId]  = useState('')
+  const [agentSearch, setAgentSearch] = useState('')
   const [agentId, setAgentId]   = useState(parent?.agent_id || '')
   const [ctxQueueId, setCtxQ]   = useState('')
   const [model, setModel]       = useState('GROW')
@@ -78,48 +78,36 @@ function NewObservationModal({ profile, isPrivileged, gov, parent, flash, onClos
   const [saving, setSaving]     = useState(false)
 
   // Governance-derived option lists
-  const divisions = useMemo(() => {
-    if (isPrivileged) return gov.divisions
-    const ids = new Set(gov.myContexts.map(c => c.division_id))
-    return gov.divisions.filter(d => ids.has(d.id))
+  const myQueues = useMemo(() => {
+    if (isPrivileged) return gov.queues
+    return gov.queues.filter(q => gov.myQueueIds.has(q.id))
   }, [gov, isPrivileged])
 
-  const divisionQueues = useMemo(() => {
-    if (!divisionId) return []
-    let qs = gov.queues.filter(q => gov.queueCtx[q.id]?.division_id === divisionId)
-    if (!isPrivileged) qs = qs.filter(q => gov.myQueueIds.has(q.id))
-    return qs
-  }, [divisionId, gov, isPrivileged])
-
   const agents = useMemo(() => {
-    if (!divisionId) return []
     if (isPrivileged) return gov.agents
-    const qids = new Set(divisionQueues.map(q => q.id))
+    const qids = new Set(myQueues.map(q => q.id))
     const agentIds = new Set(gov.userQueues.filter(uq => qids.has(uq.queue_id)).map(uq => uq.user_id))
     return gov.agents.filter(a => agentIds.has(a.id))
-  }, [divisionId, divisionQueues, gov, isPrivileged])
+  }, [myQueues, gov, isPrivileged])
 
   const candidateCtx = useMemo(() => {
-    if (!divisionId || !agentId) return []
+    if (!agentId) return []
     const agentQ = new Set(gov.userQueues.filter(uq => uq.user_id === agentId).map(uq => uq.queue_id))
-    return divisionQueues.filter(q => agentQ.has(q.id))
-  }, [divisionId, agentId, divisionQueues, gov])
+    return myQueues.filter(q => agentQ.has(q.id))
+  }, [agentId, myQueues, gov])
 
-  useEffect(() => { setAgentId(parent?.agent_id || ''); setCtxQ('') }, [divisionId])
   useEffect(() => { setCtxQ(candidateCtx.length === 1 ? candidateCtx[0].id : '') }, [candidateCtx])
 
   const setFocusField  = (i, v) => setFocus(f => f.map((x, j) => j === i ? { label: v } : x))
   const setActionField = (i, k, v) => setActions(a => a.map((x, j) => j === i ? { ...x, [k]: v } : x))
 
   const save = async (deliver) => {
-    if (!divisionId) return flash('Select a division.', false)
     if (!agentId) return flash('Select the agent being observed.', false)
     const cleanFocus   = focus.filter(f => f.label.trim())
     const cleanActions = actions.filter(a => a.description.trim())
     if (deliver && cleanFocus.length === 0) return flash('Add at least one focus area before delivering.', false)
     if (deliver && cleanActions.length === 0) return flash('Add at least one action item before delivering.', false)
 
-    const div = gov.divisions.find(d => d.id === divisionId)
     const ctx = ctxQueueId ? gov.queueCtx[ctxQueueId] : (candidateCtx.length === 1 ? gov.queueCtx[candidateCtx[0].id] : null)
 
     setSaving(true)
@@ -131,7 +119,7 @@ function NewObservationModal({ profile, isPrivileged, gov, parent, flash, onClos
       strengths: strengths.trim() || null,
       observations: observations.trim() || null,
       root_cause: rootCause.trim() || null,
-      division: div?.name || null,
+      division: ctx?.division_name || null,
       workspace_id: ctx?.workspace_id || null,
       hub_id: ctx?.hub_id || null,
       queue_id: ctxQueueId || (candidateCtx.length === 1 ? candidateCtx[0].id : null),
@@ -174,21 +162,28 @@ function NewObservationModal({ profile, isPrivileged, gov, parent, flash, onClos
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Follow-up to a previous session that was not sustained.</div>
           )}
 
-          <div style={{ display: 'flex', gap: 12 }}>
-            <div style={{ flex: 1 }}>
-              <label style={lbl}>Division *</label>
-              <select style={inp} value={divisionId} onChange={e => setDivId(e.target.value)}>
-                <option value="">— Select division —</option>
-                {divisions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </div>
-            <div style={{ flex: 1 }}>
-              <label style={lbl}>Agent being observed *</label>
-              <select style={inp} value={agentId} disabled={!divisionId || !!parent} onChange={e => setAgentId(e.target.value)}>
-                <option value="">{divisionId ? '— Select agent —' : 'Select division first'}</option>
-                {agents.map(a => <option key={a.id} value={a.id}>{a.name} ({a.email})</option>)}
-              </select>
-            </div>
+          <div>
+            <label style={lbl}>Agent being observed *</label>
+            {agentId ? (
+              <div style={{ ...inp, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>{(() => { const a = agents.find(x => x.id === agentId); return a ? `${a.name} (${a.email})` : 'Selected agent' })()}</span>
+                {!parent && <button type="button" onClick={() => { setAgentId(''); setAgentSearch('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 14 }}>✕</button>}
+              </div>
+            ) : (
+              <>
+                <input style={inp} placeholder="Type to search an agent in your queues…" value={agentSearch} onChange={e => setAgentSearch(e.target.value)} />
+                {agentSearch.trim() && (
+                  <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginTop: 4, background: 'var(--bg-secondary)' }}>
+                    {agents.filter(a => `${a.name} ${a.email}`.toLowerCase().includes(agentSearch.trim().toLowerCase())).slice(0, 50).map(a => (
+                      <div key={a.id} onClick={() => { setAgentId(a.id); setAgentSearch('') }} style={{ padding: '8px 10px', cursor: 'pointer', fontSize: 13 }}>{a.name} ({a.email})</div>
+                    ))}
+                    {agents.filter(a => `${a.name} ${a.email}`.toLowerCase().includes(agentSearch.trim().toLowerCase())).length === 0 && (
+                      <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-secondary)' }}>No matching agent in your queues.</div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {candidateCtx.length > 1 && (
@@ -519,6 +514,7 @@ function InsightsTab({ sessions, counts, govNames }) {
       _week: d ? isoWeek(d) : '',
       _bpo: s.workspace_id ? (govNames.ws[s.workspace_id] || '') : '',
       _hub: s.hub_id ? (govNames.hub[s.hub_id] || '') : '',
+      _queue: s.queue_id ? (govNames.queue?.[s.queue_id] || '') : '',
       _agent: s.agent?.name || '', _coach: s.coach?.name || '',
     }
   }), [sessions, govNames])
@@ -557,11 +553,11 @@ function InsightsTab({ sessions, counts, govNames }) {
       ;(fa || []).forEach(x => { (faMap[x.session_id] = faMap[x.session_id] || []).push(x.label) })
       ;(ap || []).forEach(x => { (apMap[x.session_id] = apMap[x.session_id] || []).push(x.description) })
     }
-    const headers = ['Date', 'Agent', 'Coach', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'ISO Week', 'Acknowledged', 'Actions resolved', 'Observation model', 'Strengths / what went well', 'Observations', 'Agreed root cause', 'Focus Areas', 'Action Plan']
+    const headers = ['Date', 'Agent', 'Coach', 'Division', 'BPO', 'Hub', 'Queue', 'Market', 'Status', 'ISO Week', 'Acknowledged', 'Actions resolved', 'Observation model', 'Strengths / what went well', 'Observations', 'Agreed root cause', 'Focus Areas', 'Action Plan']
     const lines = [headers.map(esc).join(',')]
     rows.forEach(r => {
       const c = counts[r.id] || { total: 0, done: 0 }
-      lines.push([esc(fmtDate(r._date)), esc(r._agent), esc(r._coach), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(STATUS[r.status]?.label), esc(r._week), esc(r.agent_acknowledged_at ? 'Yes' : 'No'), esc(`${c.done}/${c.total}`), esc(r.coaching_model), esc(r.strengths), esc(r.observations), esc(r.root_cause), esc((faMap[r.id] || []).join(', ')), esc((apMap[r.id] || []).join(' | '))].join(','))
+      lines.push([esc(fmtDate(r._date)), esc(r._agent), esc(r._coach), esc(r.division), esc(r._bpo), esc(r._hub), esc(r._queue), esc(r.market), esc(STATUS[r.status]?.label), esc(r._week), esc(r.agent_acknowledged_at ? 'Yes' : 'No'), esc(`${c.done}/${c.total}`), esc(r.coaching_model), esc(r.strengths), esc(r.observations), esc(r.root_cause), esc((faMap[r.id] || []).join(', ')), esc((apMap[r.id] || []).join(' | '))].join(','))
     })
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
@@ -1033,6 +1029,7 @@ export default function Coaching() {
       myQueueIds, myContexts,
       ws: Object.fromEntries((ws || []).map(w => [w.id, w.name])),
       hub: Object.fromEntries((hubs || []).map(h => [h.id, h.name])),
+      queue: Object.fromEntries((queues || []).map(q => [q.id, q.name])),
     })
   }
 
@@ -1061,7 +1058,7 @@ export default function Coaching() {
     loadSessions()
   }
 
-  const govNames = gov ? { ws: gov.ws, hub: gov.hub } : { ws: {}, hub: {} }
+  const govNames = gov ? { ws: gov.ws, hub: gov.hub, queue: gov.queue } : { ws: {}, hub: {}, queue: {} }
 
   const TABS = isCoach
     ? [['sessions', 'Observation Sessions'], ['insights', 'Observation Insights'], ['queue', 'Coaching Queue'], ['coaching_insights', 'Coaching Insights']]
