@@ -363,3 +363,10 @@ body::before {
   .modal-backdrop { padding: 10px; }
   .flash { min-width: 0; width: calc(100% - 24px); max-width: none; }
 }
+
+
+/* Governance tab: reach all columns on mobile via horizontal scroll (added by Claude) */
+@media (max-width: 768px) {
+  .gov-tab { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .gov-tab > * { min-width: 840px; }
+}
