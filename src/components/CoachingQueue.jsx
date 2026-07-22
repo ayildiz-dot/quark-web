@@ -16,7 +16,7 @@ const isControllable = (ev) => {
 const CSTATUS = {
   pending:      { label: 'Pending',      color: '#f59e0b', bg: '#f59e0b22' },
   in_progress:  { label: 'In progress',  color: '#6366f1', bg: '#6366f122' },
-  completed:    { label: 'Completed',    color: '#0ea5e9', bg: '#0ea5e922' },
+  completed:    { label: 'Pending Acknowledgement', color: '#0ea5e9', bg: '#0ea5e922' },
   acknowledged: { label: 'Acknowledged', color: '#22c55e', bg: '#22c55e22' },
 }
 const Badge = ({ s }) => {
