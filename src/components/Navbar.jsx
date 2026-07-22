@@ -24,6 +24,7 @@ export default function Navbar() {
   const [scheme, setScheme] = useState(() => localStorage.getItem('quark-scheme') || 'default')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [flash, setFlash] = useState(null)
+  const [navOpen, setNavOpen] = useState(false)
   const settingsRef = useRef(null)
   const persistTimer = useRef(null)
 
@@ -92,12 +93,16 @@ export default function Navbar() {
   const roleClass = profile?.role || 'viewer' // real CSS class (role-viewer, role-admin, etc.)
 
   const safeNavigate = (path) => {
+    setNavOpen(false)
     if (unsavedChanges) { setPendingNavPath(path); setShowNavModal(true) }
     else navigate(path)
   }
 
   return (
-    <nav className="navbar">
+    <>
+      <button className="nav-hamburger" aria-label="Menu" onClick={() => setNavOpen(v => !v)}>☰</button>
+      {navOpen && <div className="nav-overlay show" onClick={() => setNavOpen(false)} />}
+      <nav className={`navbar ${navOpen ? 'nav-open' : ''}`}>
       <div className="navbar-brand">
         <span className="brand-icon"><svg width="44" height="44" viewBox="0 0 90 90" style={{ flexShrink: 0 }}>
           <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(0 45 45)" />
@@ -239,5 +244,6 @@ export default function Navbar() {
         )}
       </div>
     </nav>
+    </>
   )
 }
