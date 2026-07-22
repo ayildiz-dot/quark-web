@@ -128,6 +128,13 @@ export default function Navbar() {
           <i className="ti ti-school" aria-hidden="true" />
           Coaching
         </button>
+        {['viewer', 'admin', 'owner'].includes(profile?.role) && (
+          <button className={`nav-item ${isActive('/contact') ? 'active' : ''}`}
+            onClick={() => safeNavigate('/contact')}>
+            <i className="ti ti-messages" aria-hidden="true" />
+            Contact Us
+          </button>
+        )}
         {profile?.email?.endsWith('@kaizengaming.com') && ['owner','admin','evaluator'].includes(profile?.role) && (
           <button className={`nav-item ${isActive('/calibration') ? 'active' : ''}`}
             onClick={() => safeNavigate('/calibration')}>
