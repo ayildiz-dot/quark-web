@@ -124,6 +124,7 @@ const DISPUTE_STATUS = {
   upheld:             { label: 'Upheld', color: '#22c55e' },
   accepted:           { label: 'Closed', color: '#64748b' },
   cancelled:          { label: 'Cancelled', color: '#64748b' },
+  bpo_review_pending: { label: 'Awaiting BPO review', color: '#f59e0b' },
   post_nudge_pending: { label: 'Awaiting mediator', color: '#f59e0b' },
   bpo_final_pending:  { label: 'Awaiting BPO final review', color: '#f59e0b' },
   rejected_final:     { label: 'Rejected (final)', color: '#ef4444' },
@@ -240,6 +241,7 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
   const needComment = () => { if (!comment.trim()) { flash('A comment is required.', false); return false } return true }
 
   const isTL = d.tl_id === me, isEval = d.evaluator_id === me
+  const isBpoReviewer = d.bpo_reviewer_id === me
   const isMediator = d.kind === 'dsat_spotcheck' ? d.agent_id === me : d.tl_id === me
   const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
   const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }
@@ -373,6 +375,17 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
                 <button className="btn btn-danger" disabled={busy} onClick={() => needComment() && run('bpo_final_decide', { p_dispute_id: d.id, p_approve: false, p_comment: comment.trim() }, 'Rejection maintained')}>Reject</button>
                 <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('bpo_final_decide', { p_dispute_id: d.id, p_approve: true, p_comment: comment.trim() }, 'Upheld — opening the evaluation to edit', true)}>Approve &amp; edit</button>
+              </div>
+            </>
+          )}
+
+          {d.status === 'bpo_review_pending' && (isBpoReviewer || priv) && (
+            <>
+              <div style={label}>Your review (comment required)</div>
+              <textarea className="input" rows={2} value={comment} onChange={e => setComment(e.target.value)} style={{ width: '100%', resize: 'vertical' }} />
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button className="btn btn-danger" disabled={busy} onClick={() => needComment() && run('bpo_review_decide', { p_dispute_id: d.id, p_approve: false, p_comment: comment.trim() }, 'Dispute rejected')}>Reject</button>
+                <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('bpo_review_decide', { p_dispute_id: d.id, p_approve: true, p_comment: comment.trim() }, 'Approved — sent to the evaluator')}>Approve</button>
               </div>
             </>
           )}
