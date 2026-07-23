@@ -140,13 +140,6 @@ export default function Navbar() {
             Calibration
           </button>
         )}
-        {['admin', 'owner'].includes(profile?.role) && (
-          <button className={`nav-item ${isActive('/admin') ? 'active' : ''}`}
-            onClick={() => safeNavigate('/admin')}>
-            <i className="ti ti-settings" aria-hidden="true" />
-            Control Room
-          </button>
-        )}
         {['viewer', 'admin', 'owner'].includes(profile?.role) && (
           <button className={`nav-item ${isActive('/contact') ? 'active' : ''}`}
             onClick={() => safeNavigate('/contact')}>
@@ -162,6 +155,16 @@ export default function Navbar() {
           </button>
         )}
       </div>
+
+      {['admin', 'owner'].includes(profile?.role) && (
+        <div className="navbar-admin-section" style={{ padding: '10px 12px', borderTop: '1px solid var(--border)' }}>
+          <button className={`nav-item ${isActive('/admin') ? 'active' : ''}`}
+            onClick={() => safeNavigate('/admin')}>
+            <i className="ti ti-settings" aria-hidden="true" />
+            Control Room
+          </button>
+        </div>
+      )}
 
       <div className="navbar-user" ref={settingsRef} style={{ position: 'relative' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

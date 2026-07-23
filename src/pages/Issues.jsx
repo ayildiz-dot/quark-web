@@ -72,6 +72,7 @@ function IssueDetail({ issueId, isAdmin, me, names, onChanged, onBack, showBack 
   const [authorNames, setAuthorNames] = useState({})
   const [loading, setLoading] = useState(true)
   const [reply, setReply] = useState('')
+  const [replyStep, setReplyStep] = useState(false)
   const [statusTarget, setStatusTarget] = useState('')
   const [resNote, setResNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -109,13 +110,19 @@ function IssueDetail({ issueId, isAdmin, me, names, onChanged, onBack, showBack 
     if (error) return flash(error.message, false)
     setReply(''); await refresh()
   }
-  const applyStatus = async () => {
-    if (!statusTarget || statusTarget === issue.status) return
+  // Combined reply → status step. Posts the message, then records the chosen status.
+  const submitReply = async () => {
+    if (!reply.trim()) return
     setBusy(true)
-    const { error } = await supabase.rpc('set_issue_status', { p_issue_id: issueId, p_status: statusTarget, p_note: statusTarget === 'resolved' ? (resNote.trim() || null) : null })
+    const { error: e1 } = await supabase.rpc('post_issue_message', { p_issue_id: issueId, p_body: reply.trim() })
+    if (e1) { setBusy(false); return flash(e1.message, false) }
+    if (statusTarget && statusTarget !== issue.status) {
+      const { error: e2 } = await supabase.rpc('set_issue_status', { p_issue_id: issueId, p_status: statusTarget, p_note: statusTarget === 'resolved' ? (resNote.trim() || null) : null })
+      if (e2) { setBusy(false); await refresh(); return flash(e2.message, false) }
+    }
     setBusy(false)
-    if (error) return flash(error.message, false)
-    flash('Status updated.'); await refresh()
+    setReply(''); setResNote(''); setReplyStep(false)
+    flash('Reply recorded.'); await refresh()
   }
   const reopen = async () => {
     setBusy(true)
@@ -168,27 +175,40 @@ function IssueDetail({ issueId, isAdmin, me, names, onChanged, onBack, showBack 
           <button className="btn btn-primary" disabled={busy} onClick={takeOver}>Take over</button>
         )}
 
-        {isAdmin && issue.status !== 'open' && (
-          <>
-            <div>
-              <textarea style={{ ...inp, minHeight: 80, resize: 'vertical' }} placeholder="Type a reply to the reporter…" value={reply} onChange={e => setReply(e.target.value)} />
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-                <button className="btn btn-primary btn-sm" disabled={busy || !reply.trim() || issue.status === 'resolved'} onClick={sendReply}>Send reply</button>
+        {isAdmin && issue.status !== 'open' && issue.status !== 'resolved' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <textarea style={{ ...inp, minHeight: 80, resize: 'vertical' }} placeholder="Type a reply to the reporter…" value={reply} onChange={e => setReply(e.target.value)} disabled={replyStep} />
+            {!replyStep ? (
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button className="btn btn-primary btn-sm" disabled={busy || !reply.trim()} onClick={() => { setStatusTarget(issue.status); setReplyStep(true) }}>Reply</button>
               </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Status:</span>
-              <select style={sel} value={statusTarget} onChange={e => setStatusTarget(e.target.value)}>
-                <option value="in_progress">In progress</option>
-                <option value="pending_action">Pending action</option>
-                <option value="resolved">Resolved</option>
-              </select>
-              {statusTarget === 'resolved' && (
-                <input style={{ ...inp, flex: 1, minWidth: 180, width: 'auto' }} placeholder="Resolution note (optional)" value={resNote} onChange={e => setResNote(e.target.value)} />
-              )}
-              <button className="btn btn-outline btn-sm" disabled={busy || statusTarget === issue.status} onClick={applyStatus}>Apply</button>
-            </div>
-          </>
+            ) : (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Set the ticket status:</span>
+                  <select style={sel} value={statusTarget} onChange={e => setStatusTarget(e.target.value)}>
+                    <option value="in_progress">In progress</option>
+                    <option value="pending_action">Pending action</option>
+                    <option value="resolved">Resolved</option>
+                  </select>
+                </div>
+                {statusTarget === 'resolved' && (
+                  <>
+                    <input style={inp} placeholder="Resolution note (Optional)" value={resNote} onChange={e => setResNote(e.target.value)} />
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Once resolved, the reporter can re-open this issue within 7 days.</div>
+                  </>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setReplyStep(false)}>Cancel</button>
+                  <button className="btn btn-primary btn-sm" disabled={busy} onClick={submitReply}>Done</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isAdmin && issue.status === 'resolved' && (
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>This issue is resolved. {canReopen ? 'The reporter can re-open it within 7 days.' : 'The re-open window has closed.'}</div>
         )}
 
         {!isAdmin && issue.status !== 'resolved' && (
@@ -348,7 +368,7 @@ const SUBTABS = [
   { key: 'resolved', label: 'Resolved', match: r => r.status === 'resolved' },
   { key: 'all',      label: 'All',      match: () => true },
 ]
-const emptyFilters = { search: '', status: '', reporter: '', assignee: '', division: '', workspace: '', hub: '', market: '' }
+const emptyFilters = { id: '', search: '', status: '', reporter: '', assignee: '', division: '', workspace: '', hub: '', market: '' }
 
 function ManageIssues({ initialOpenId }) {
   const isNarrow = useNarrow()
@@ -387,6 +407,7 @@ function ManageIssues({ initialOpenId }) {
   const opt = SUBTABS.find(t => t.key === subtab) || SUBTABS[0]
 
   const passFilters = r => {
+    if (filters.id) { const q = filters.id.replace(/[^0-9]/g, ''); if (q && !String(r.ref_no).includes(q)) return false }
     if (filters.search) { const q = filters.search.toLowerCase(); if (!(`#${r.ref_no} ${r.title} ${r.description}`.toLowerCase().includes(q))) return false }
     if (subtab === 'all' && filters.status && r.status !== filters.status) return false
     if (filters.reporter && r.reporter_id !== filters.reporter) return false
@@ -448,6 +469,7 @@ function ManageIssues({ initialOpenId }) {
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        <input style={{ ...sel, width: 90 }} placeholder="ID #" value={filters.id} onChange={e => setF({ id: e.target.value })} />
         <input style={{ ...sel, width: 200 }} placeholder="Search title / description" value={filters.search} onChange={e => setF({ search: e.target.value })} />
         {subtab === 'all' && (
           <select style={sel} value={filters.status} onChange={e => setF({ status: e.target.value })}>
@@ -513,7 +535,7 @@ export default function Issues() {
   if (isAdmin) {
     return (
       <div className="page" style={{ maxWidth: 1100 }}>
-        <div className="page-header"><div><h1>Issue Management</h1><p className="page-sub">Issues raised by evaluators and team leaders. Take one over, converse with the reporter, then resolve.</p></div></div>
+        <div className="page-header"><div><h1>Issue Management</h1></div></div>
         <ManageIssues initialOpenId={openId} />
       </div>
     )
