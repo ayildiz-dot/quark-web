@@ -154,6 +154,13 @@ export default function Navbar() {
             Contact Us
           </button>
         )}
+        {['evaluator', 'team_leader', 'admin', 'owner'].includes(profile?.role) && (
+          <button className={`nav-item ${isActive('/issues') ? 'active' : ''}`}
+            onClick={() => safeNavigate('/issues')}>
+            <i className="ti ti-bug" aria-hidden="true" />
+            Issue Management
+          </button>
+        )}
       </div>
 
       <div className="navbar-user" ref={settingsRef} style={{ position: 'relative' }}>

@@ -19,6 +19,7 @@ import DuckLoader from './components/DuckLoader'
 import Calibration from './pages/Calibration'
 import Coaching from './pages/Coaching'
 import ContactUs from './pages/ContactUs'
+import Issues from './pages/Issues'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -116,6 +117,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
                 <Route path="/calibration" element={isKgUser && ['owner','admin','evaluator'].includes(profile?.role) ? <Calibration /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/coaching" element={<Coaching />} />
                 <Route path="/contact" element={['viewer','admin','owner'].includes(profile?.role) ? <ContactUs /> : <Navigate to="/dashboard" replace />} />
+                <Route path="/issues" element={['evaluator','team_leader','admin','owner'].includes(profile?.role) ? <Issues /> : <Navigate to="/dashboard" replace />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </motion.div>
