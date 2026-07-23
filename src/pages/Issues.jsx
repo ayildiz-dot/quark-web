@@ -137,7 +137,7 @@ function IssueDetail({ issueId, isAdmin, me, names, onChanged, onBack, showBack 
       <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         {showBack && <button className="btn btn-ghost btn-sm" style={{ marginBottom: 8 }} onClick={onBack}>← Back</button>}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, flex: 1 }}>{issue.title}</div>
+          <div style={{ fontWeight: 700, fontSize: 16, flex: 1 }}><span style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', marginRight: 8 }}>#{issue.ref_no}</span>{issue.title}</div>
           <StatusBadge status={issue.status} />
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
@@ -225,6 +225,7 @@ function IssueList({ items, selectedId, onSelect, nameFor }) {
             style={{ textAlign: 'left', cursor: 'pointer', padding: '11px 13px', border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
               background: active ? 'var(--bg-hover)' : 'var(--bg-surface)', display: 'flex', flexDirection: 'column', gap: 5 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', fontFamily: 'monospace', flexShrink: 0 }}>#{r.ref_no}</span>
               <span style={{ fontWeight: 600, fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</span>
               <StatusBadge status={r.status} />
             </div>
@@ -386,7 +387,7 @@ function ManageIssues({ initialOpenId }) {
   const opt = SUBTABS.find(t => t.key === subtab) || SUBTABS[0]
 
   const passFilters = r => {
-    if (filters.search) { const q = filters.search.toLowerCase(); if (!(`${r.title} ${r.description}`.toLowerCase().includes(q))) return false }
+    if (filters.search) { const q = filters.search.toLowerCase(); if (!(`#${r.ref_no} ${r.title} ${r.description}`.toLowerCase().includes(q))) return false }
     if (subtab === 'all' && filters.status && r.status !== filters.status) return false
     if (filters.reporter && r.reporter_id !== filters.reporter) return false
     if (filters.assignee && r.assignee_id !== filters.assignee) return false
@@ -403,9 +404,10 @@ function ManageIssues({ initialOpenId }) {
     const ids = shown.map(r => r.id)
     const { data: mm } = await supabase.from('issue_messages').select('issue_id').in('issue_id', ids)
     const counts = (mm || []).reduce((a, m) => { a[m.issue_id] = (a[m.issue_id] || 0) + 1; return a }, {})
-    const header = ['Issue ID', 'Title', 'Description', 'Status', 'Reporter', 'Assignee', 'Division', 'Workspace', 'Hub', 'Market',
-      'Created', 'Taken over', 'Resolved', 'Resolution', 'Re-opened', 'Last activity', 'Replies']
+    const header = ['Ref', 'Title', 'Description', 'Status', 'Reporter', 'Assignee', 'Division', 'Workspace', 'Hub', 'Market',
+      'Created', 'Taken over', 'Resolved', 'Resolution', 'Re-opened', 'Last activity', 'Replies', 'Issue ID']
     const out = shown.map(r => ({
+      'Ref': '#' + r.ref_no,
       'Issue ID': r.id,
       'Title': r.title || '',
       'Description': r.description || '',
