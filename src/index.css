@@ -377,3 +377,10 @@ body::before {
   .um-tab { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .um-tab > * { min-width: 840px; }
 }
+
+
+/* MOBILE-TABLE-SWIPE: never clip tables — any overflow becomes horizontally swipeable (added by Claude) */
+@media (max-width: 768px) {
+  .main-content *:has(> table) { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+  .table-wrap { -webkit-overflow-scrolling: touch; }
+}
