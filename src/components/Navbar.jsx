@@ -104,15 +104,27 @@ export default function Navbar() {
       {navOpen && <div className="nav-overlay show" onClick={() => setNavOpen(false)} />}
       <nav className={`navbar ${navOpen ? 'nav-open' : ''}`}>
       <div className="navbar-brand">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <svg width="30" height="22" viewBox="0 0 44 32" style={{ flexShrink: 0 }} aria-hidden="true">
-            <polygon points="0,0 0,32 26,16" fill="#EE7623" />
-            <polygon points="44,6 44,26 29,16" fill="#1B368C" />
-          </svg>
-          <span style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1 }}>
-            <span style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-0.5px', color: 'var(--text-primary)' }}>kaizen</span>
-            <span style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '3px', color: 'var(--text-secondary)', alignSelf: 'flex-end', marginTop: 1 }}>GAMING</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span className="brand-icon" style={{ lineHeight: 0 }}>
+            <svg width="40" height="40" viewBox="0 0 90 90" style={{ flexShrink: 0 }} aria-hidden="true">
+              <g transform="rotate(0 45 45)">
+                <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" />
+                <circle r="5" fill="#3b82f6"><animateMotion dur="5s" repeatCount="indefinite" path="M83,45 A38,15 0 1 1 82.99,45" /></circle>
+              </g>
+              <g transform="rotate(60 45 45)">
+                <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" />
+                <circle r="5" fill="#10b981"><animateMotion dur="7s" repeatCount="indefinite" path="M83,45 A38,15 0 1 1 82.99,45" /></circle>
+              </g>
+              <g transform="rotate(120 45 45)">
+                <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" />
+                <circle r="5" fill="#f59e0b"><animateMotion dur="6s" repeatCount="indefinite" path="M83,45 A38,15 0 1 1 82.99,45" /></circle>
+              </g>
+              <circle cx="45" cy="45" r="11" fill="#d85a30">
+                <animate attributeName="r" values="11;12.4;11" dur="2.2s" repeatCount="indefinite" />
+              </circle>
+            </svg>
           </span>
+          <span className="brand-name" style={{ margin: 0 }}>Quark</span>
         </div>
         <span className="brand-sub" style={{ marginTop: 8 }}>Quality &amp; Control Team</span>
       </div>

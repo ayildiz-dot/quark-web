@@ -94,6 +94,13 @@ function AppShell({ user, profile, logout, fetchProfile }) {
     }}>
       <div className="app-shell">
         <UnsavedModal show={showNavModal} onLeave={handleLeave} onStay={handleStay} />
+        <div aria-hidden="true" style={{ position: 'fixed', top: 14, right: 22, zIndex: 30, display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'none' }}>
+          <svg width="24" height="17" viewBox="0 0 44 32"><polygon points="0,0 0,32 26,16" fill="#EE7623" /><polygon points="44,6 44,26 29,16" fill="#1B368C" /></svg>
+          <span style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.3px', color: 'var(--text-primary)' }}>kaizen</span>
+            <span style={{ fontSize: 7, fontWeight: 600, letterSpacing: '2.5px', color: 'var(--text-secondary)', alignSelf: 'flex-end', marginTop: 1 }}>GAMING</span>
+          </span>
+        </div>
         <Navbar />
         <main className="main-content">
           <AnimatePresence mode="wait">
