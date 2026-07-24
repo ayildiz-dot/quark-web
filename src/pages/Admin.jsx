@@ -123,9 +123,9 @@ function UsersTab({ profile, flash }) {
   }
 
   const loadGovernance = async () => {
-    const { data: ws }     = await supabase.from('workspaces').select('id, name, division_id').order('name')
-    const { data: hubs }   = await supabase.from('hubs').select('id, name, workspace_id').order('name')
-    const { data: queues } = await supabase.from('queues').select('id, name, hub_id').order('name')
+    const { data: ws }     = await supabase.from('workspaces').select('id, name, division_id').is('deleted_at', null).order('name')
+    const { data: hubs }   = await supabase.from('hubs').select('id, name, workspace_id').is('deleted_at', null).order('name')
+    const { data: queues } = await supabase.from('queues').select('id, name, hub_id').is('deleted_at', null).order('name')
     const { data: uq }     = await supabase.from('user_queues').select('user_id, queue_id')
     const { data: divs }   = await supabase.from('divisions').select('id, name').order('name')
     setDivisions(divs || [])
@@ -1687,7 +1687,6 @@ function ReferenceDataTab({ profile, flash }) {
   const [hubs, setHubs]       = useState([])
   const [loading, setLoading] = useState(true)
   const [newName, setNewName] = useState('')
-  const [mergeSel, setMergeSel] = useState({})
   const [busy, setBusy]       = useState(false)
 
   const load = async () => {
@@ -1742,19 +1741,6 @@ function ReferenceDataTab({ profile, flash }) {
     if (error) return flash(error.message, false)
     await load()
   }
-  const mergeMarket = async (from) => {
-    const to = markets.find(m => m.id === mergeSel[from.id])
-    if (!to) return
-    if (!window.confirm(`Merge "${from.name}" into "${to.name}"? All queues on "${from.name}" move to "${to.name}", and "${from.name}" is retired.`)) return
-    setBusy(true)
-    const { error } = await supabase.from('queues').update({ market_id: to.id, market_value: to.name }).eq('market_id', from.id)
-    if (!error) await supabase.from('markets').update({ is_active: false }).eq('id', from.id)
-    setBusy(false)
-    if (error) return flash(error.message, false)
-    setMergeSel(s => { const n = { ...s }; delete n[from.id]; return n })
-    await load(); flash(`Merged into ${to.name}.`)
-  }
-
   const hubRollup = hubs.map(h => ({ ...h, mkts: [...new Set(queues.filter(q => q.hub_id === h.id && q.market_value).map(q => q.market_value))].sort() }))
   const th = { textAlign: 'left', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, padding: '8px 10px', borderBottom: '1px solid var(--border)' }
   const td = { fontSize: 13, padding: '8px 10px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }
@@ -1778,10 +1764,10 @@ function ReferenceDataTab({ profile, flash }) {
         <div className="table-wrap">
           <table className="table" style={{ width: '100%' }}>
             <thead><tr>
-              <th style={th}>Market</th><th style={th}>Code</th><th style={th}>Status</th><th style={th}>Used by</th><th style={th}>Merge into</th>
+              <th style={th}>Market</th><th style={th}>Code</th><th style={th}>Status</th><th style={th}>Used by</th>
             </tr></thead>
             <tbody>
-              {markets.length === 0 && <tr><td style={td} colSpan={5}>No markets yet. Add one above, or run the Phase 1 SQL to seed from existing queues.</td></tr>}
+              {markets.length === 0 && <tr><td style={td} colSpan={4}>No markets yet. Add one above, or run the Phase 1 SQL to seed from existing queues.</td></tr>}
               {markets.map(m => {
                 const u = usageFor(m.id)
                 return (
@@ -1798,15 +1784,6 @@ function ReferenceDataTab({ profile, flash }) {
                     <td style={td}>
                       <div style={{ fontSize: 12 }}>{u.count} queue{u.count === 1 ? '' : 's'}</div>
                       {u.hubs.length > 0 && <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{u.hubs.join(', ')}</div>}
-                    </td>
-                    <td style={td}>
-                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                        <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={mergeSel[m.id] || ''} onChange={e => setMergeSel(s => ({ ...s, [m.id]: e.target.value }))}>
-                          <option value="">Select target…</option>
-                          {markets.filter(x => x.id !== m.id && x.is_active).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                        </select>
-                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} disabled={busy || !mergeSel[m.id]} onClick={() => mergeMarket(m)}>Merge</button>
-                      </div>
                     </td>
                   </tr>
                 )
@@ -1902,8 +1879,25 @@ function GovernanceTab({ profile, flash }) {
   const toggleWs    = (ws)  => ask(ws.is_active  ? `Deactivate "${ws.name}" workspace?`  : `Activate "${ws.name}" workspace?`,  async () => { closeConfirm(); await supabase.from('workspaces').update({ is_active: !ws.is_active  }).eq('id', ws.id);  await loadAll(); flash(`Workspace ${ws.is_active  ? 'deactivated' : 'activated'}`) })
   const toggleHub   = (hub) => ask(hub.is_active ? `Deactivate "${hub.name}" hub?`        : `Activate "${hub.name}" hub?`,        async () => { closeConfirm(); await supabase.from('hubs').update({ is_active: !hub.is_active }).eq('id', hub.id); await loadAll(); flash(`Hub ${hub.is_active ? 'deactivated' : 'activated'}`) })
   const toggleQueue = (q)   => ask(q.is_active   ? `Deactivate "${q.name}" queue?`        : `Activate "${q.name}" queue?`,        async () => { closeConfirm(); await supabase.from('queues').update({ is_active: !q.is_active   }).eq('id', q.id);   await loadAll(); flash(`Queue ${q.is_active   ? 'deactivated' : 'activated'}`) })
-  const deleteWs    = (ws)  => ask(`Permanently delete "${ws.name}"? All hubs and queues inside will also be deleted.`,  async () => { closeConfirm(); const { error } = await supabase.from('workspaces').update({ deleted_at: new Date().toISOString() }).eq('id', ws.id); if (error) return flash(error.message, false); await loadAll(); flash('Workspace deleted') })
-  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => { closeConfirm(); const { error } = await supabase.from('hubs').update({ deleted_at: new Date().toISOString() }).eq('id', hub.id); if (error) return flash(error.message, false); await loadAll(); flash('Hub deleted') })
+  const deleteWs    = (ws)  => ask(`Permanently delete "${ws.name}"? All hubs and queues inside will also be deleted.`,  async () => {
+    closeConfirm()
+    const now = new Date().toISOString()
+    const { data: hubRows } = await supabase.from('hubs').select('id').eq('workspace_id', ws.id)
+    const hubIds = (hubRows || []).map(h => h.id)
+    if (hubIds.length) await supabase.from('queues').update({ deleted_at: now }).in('hub_id', hubIds)
+    await supabase.from('hubs').update({ deleted_at: now }).eq('workspace_id', ws.id)
+    const { error } = await supabase.from('workspaces').update({ deleted_at: now }).eq('id', ws.id)
+    if (error) return flash(error.message, false)
+    await loadAll(); flash('Workspace deleted')
+  })
+  const deleteHub   = (hub) => ask(`Permanently delete "${hub.name}"? All queues inside will also be deleted.`,          async () => {
+    closeConfirm()
+    const now = new Date().toISOString()
+    await supabase.from('queues').update({ deleted_at: now }).eq('hub_id', hub.id)
+    const { error } = await supabase.from('hubs').update({ deleted_at: now }).eq('id', hub.id)
+    if (error) return flash(error.message, false)
+    await loadAll(); flash('Hub deleted')
+  })
   const deleteQueue = (q)   => ask(`Permanently delete "${q.name}"? This cannot be undone.`,                             async () => { closeConfirm(); const { error } = await supabase.from('queues').update({ deleted_at: new Date().toISOString() }).eq('id', q.id); if (error) return flash(error.message, false); await loadAll(); flash('Queue deleted') })
 
   const setWorkspaceDivision = async (wsId, divisionId) => {
