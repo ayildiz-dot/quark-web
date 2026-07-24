@@ -104,17 +104,17 @@ export default function Navbar() {
       {navOpen && <div className="nav-overlay show" onClick={() => setNavOpen(false)} />}
       <nav className={`navbar ${navOpen ? 'nav-open' : ''}`}>
       <div className="navbar-brand">
-        <span className="brand-icon"><svg width="44" height="44" viewBox="0 0 90 90" style={{ flexShrink: 0 }}>
-          <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(0 45 45)" />
-          <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(60 45 45)" />
-          <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" transform="rotate(120 45 45)" />
-          <circle cx="45" cy="45" r="11" fill="#d85a30" />
-          <circle cx="45" cy="7" r="5" fill="#3b82f6" />
-          <circle cx="7" cy="64" r="5" fill="#10b981" />
-          <circle cx="83" cy="64" r="5" fill="#f59e0b" />
-        </svg></span>
-        <span className="brand-name">Quark</span>
-        <span className="brand-sub">Kaizen Gaming · QC</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <svg width="30" height="22" viewBox="0 0 44 32" style={{ flexShrink: 0 }} aria-hidden="true">
+            <polygon points="0,0 0,32 26,16" fill="#EE7623" />
+            <polygon points="44,6 44,26 29,16" fill="#1B368C" />
+          </svg>
+          <span style={{ display: 'inline-flex', flexDirection: 'column', lineHeight: 1 }}>
+            <span style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-0.5px', color: 'var(--text-primary)' }}>kaizen</span>
+            <span style={{ fontSize: 8.5, fontWeight: 600, letterSpacing: '3px', color: 'var(--text-secondary)', alignSelf: 'flex-end', marginTop: 1 }}>GAMING</span>
+          </span>
+        </div>
+        <span className="brand-sub" style={{ marginTop: 8 }}>Quality &amp; Control Team</span>
       </div>
 
       <div className="navbar-links">
