@@ -1224,6 +1224,41 @@ export default function EvaluationForm() {
       : Object.values(answers).filter(a => a.score !== null).length
     const total = isDsat ? dsatQuestions.length : questions.length
     const pct = total > 0 ? Math.round((answered / total) * 100) : 0
+
+    // Live QC score from current selections. Same rules as calculateScore(), but the
+    // denominator counts only ANSWERED weighted questions — so it reads as the score
+    // "so far" and converges to the final score once everything is answered.
+    let liveScore = null, liveCriticalFail = false
+    if (!isDsat) {
+      for (const q of questions) {
+        if (q.is_form_critical && answers[q.id]?.score === 'fail') { liveCriticalFail = true; break }
+      }
+      const failedGroups = new Set()
+      for (const q of questions) {
+        if (q.group_id && q.is_group_critical && answers[q.id]?.score === 'fail') failedGroups.add(q.group_id)
+      }
+      let tw = 0, ew = 0, scoredAny = false
+      for (const q of questions) {
+        const ans = answers[q.id]?.score
+        if (ans == null) continue
+        scoredAny = true
+        if (ans === 'na' || !q.is_weighted) continue
+        const w = q.weight || 1
+        tw += w
+        if (ans === 'pass' && !(q.group_id && failedGroups.has(q.group_id))) ew += w
+      }
+      if (liveCriticalFail) liveScore = 0
+      else if (!scoredAny) liveScore = null
+      else liveScore = tw === 0 ? 100 : Math.round((ew / tw) * 100)
+    }
+    const qcColor = liveCriticalFail ? 'var(--danger)'
+      : liveScore == null ? 'var(--text-secondary)'
+      : liveScore >= 90 ? 'var(--success)'
+      : liveScore >= 75 ? '#b45309'
+      : 'var(--danger)'
+    const qcText = liveScore == null ? '—' : (liveCriticalFail ? '0% · critical fail' : liveScore + '%')
+    const qcTextShort = liveScore == null ? '—' : (liveCriticalFail ? '0%' : liveScore + '%')
+
     return (
       <div className="page">
         <div className="page-header">
@@ -1261,9 +1296,16 @@ export default function EvaluationForm() {
         </div>
         <div ref={barSentinelRef} style={{ height: 1 }} />
         <div style={{ marginBottom: 20 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 12, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)' }}>{answered}/{total} answered</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>{pct}%</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              {!isDsat && (
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                  Live QC Score: <span style={{ color: qcColor, fontWeight: 700 }}>{qcText}</span>
+                </span>
+              )}
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>{pct}%</span>
+            </div>
           </div>
           <div style={{ height: 4, background: 'var(--border)', borderRadius: 4 }}>
             <div style={{
@@ -1288,10 +1330,16 @@ export default function EvaluationForm() {
               }}
             >
               <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{answered}/{total}</span>
-              <div style={{ flex: 1, minWidth: 150, height: 5, background: 'var(--border)', borderRadius: 999 }}>
+              <div style={{ flex: 1, minWidth: 130, height: 5, background: 'var(--border)', borderRadius: 999 }}>
                 <div style={{ height: 5, borderRadius: 999, background: 'var(--accent)', width: `${pct}%`, transition: 'width 0.3s' }} />
               </div>
               <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>{pct}%</span>
+              {!isDsat && (
+                <>
+                  <span style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0 }} />
+                  <span title="Live QC score from your current selections" style={{ fontSize: 12, fontWeight: 700, color: qcColor, whiteSpace: 'nowrap' }}>QC {qcTextShort}</span>
+                </>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
