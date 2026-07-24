@@ -230,7 +230,7 @@ export default function ScorecardBuilder() {
           await supabase.from('scorecard_metadata_fields').update({
             label: f.label, field_type: f.field_type,
             is_required: f.is_required, options: f.options,
-            source: f.source || 'custom'
+            source: f.source || 'custom', position: f.position
           }).eq('id', f.id)
         }
       }
@@ -355,10 +355,31 @@ export default function ScorecardBuilder() {
   }
 
   const deleteMetaField = async (fieldId) => {
+    const field = metadata.find(f => f.id === fieldId)
+    // A field added but not yet saved exists only locally (temp id) — never hit the DB.
+    if (field?._isNew || String(fieldId).startsWith('temp_')) {
+      setMetadata(m => m.filter(f => f.id !== fieldId))
+      if (isPublished) markChanged()
+      return
+    }
     const { error } = await supabase.from('scorecard_metadata_fields').delete().eq('id', fieldId)
     if (error) return flash('Failed to delete field: ' + error.message, false)
     setMetadata(m => m.filter(f => f.id !== fieldId))
     if (isPublished) markChanged()
+  }
+
+  const handleMetaDragEnd = async (event) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const oldIndex = metadata.findIndex(f => f.id === active.id)
+    const newIndex = metadata.findIndex(f => f.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+    const reordered = arrayMove(metadata, oldIndex, newIndex).map((f, i) => ({ ...f, position: i + 1 }))
+    setMetadata(reordered)
+    if (isPublished) { markChanged(); return }
+    for (const f of reordered) {
+      if (!String(f.id).startsWith('temp_')) await supabase.from('scorecard_metadata_fields').update({ position: f.position }).eq('id', f.id)
+    }
   }
 
   const addGroup = async () => {
@@ -818,72 +839,13 @@ export default function ScorecardBuilder() {
               No metadata fields yet.
             </div>
           )}
-          {metadata.map(field => (
-            <div key={field.id} className="card" style={{ marginBottom: 12 }}>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                <div className="form-field" style={{ flex: 2, minWidth: 180 }}>
-                  <label>Field Label</label>
-                  <input className="input" value={field.label}
-                    onChange={e => updateMetaField(field.id, { label: e.target.value })} />
-                </div>
-                <div className="form-field" style={{ flex: 1, minWidth: 150 }}>
-                  <label>Source</label>
-                  <select className="select" value={field.source || 'custom'}
-                    onChange={e => updateMetaField(field.id, { source: e.target.value })}>
-                    <option value="custom">Custom</option>
-                    <option value="market">Linked · Market</option>
-                    <option value="hub">Linked · BPO-Hub</option>
-                    <option value="channel">Linked · Channel</option>
-                    <option value="agent_email">Linked · Agent's Email</option>
-                  </select>
-                </div>
-                {(field.source || 'custom') === 'custom' && (
-                  <div className="form-field" style={{ flex: 1, minWidth: 120 }}>
-                    <label>Type</label>
-                    <select className="select" value={field.field_type}
-                      onChange={e => updateMetaField(field.id, { field_type: e.target.value })}>
-                      <option value="text">Text</option>
-                      <option value="number">Number</option>
-                      <option value="dropdown">Dropdown</option>
-                      <option value="date">Date</option>
-                    </select>
-                  </div>
-                )}
-                <div className="form-field" style={{ flex: 1, minWidth: 120 }}>
-                  <label>Required?</label>
-                  <select className="select" value={field.is_required ? 'yes' : 'no'}
-                    onChange={e => updateMetaField(field.id, { is_required: e.target.value === 'yes' })}>
-                    <option value="yes">Required</option>
-                    <option value="no">Optional</option>
-                  </select>
-                </div>
-                {(field.source || 'custom') === 'custom' && field.field_type === 'dropdown' && (
-                  <div className="form-field" style={{ flex: 3, minWidth: 200 }}>
-                    <label>Options — type and press Enter or comma to add (max 50)</label>
-                    <DropdownOptionsEditor
-                      options={field.options || []}
-                      onChange={opts => updateMetaField(field.id, { options: opts })}
-                    />
-                  </div>
-                )}
-                {(field.source || 'custom') !== 'custom' && (
-                  <div className="form-field" style={{ flex: 3, minWidth: 220 }}>
-                    <label>Options</label>
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '7px 0', lineHeight: 1.5 }}>
-                      {field.source === 'agent_email'
-                        ? "Resolved per queue at evaluation time — no options to manage here."
-                        : 'Options come from the master list — manage them in Control Room → Reference Data.'}
-                    </div>
-                  </div>
-                )}
-                <div className="form-field form-field-btn">
-                  <label>&nbsp;</label>
-                  <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
-                    onClick={() => deleteMetaField(field.id)}>Remove</button>
-                </div>
-              </div>
-            </div>
-          ))}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleMetaDragEnd}>
+            <SortableContext items={metadata.map(f => f.id)} strategy={verticalListSortingStrategy}>
+              {metadata.map(field => (
+                <SortableMetaField key={field.id} field={field} updateMetaField={updateMetaField} deleteMetaField={deleteMetaField} />
+              ))}
+            </SortableContext>
+          </DndContext>
         </div>
       )}
 
@@ -1078,6 +1040,79 @@ function DroppableZone({ id, children }) {
       borderRadius: 8, padding: 4
     }}>
       {children}
+    </div>
+  )
+}
+
+function SortableMetaField({ field, updateMetaField, deleteMetaField }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, marginBottom: 12 }
+  return (
+    <div ref={setNodeRef} style={style} className="card">
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <span {...attributes} {...listeners} title="Drag to reorder"
+          style={{ cursor: 'grab', color: 'var(--text-secondary)', fontSize: 18, lineHeight: '34px', padding: '0 2px', userSelect: 'none', touchAction: 'none' }}>⠿</span>
+        <div className="form-field" style={{ flex: 2, minWidth: 170 }}>
+          <label>Field Label</label>
+          <input className="input" value={field.label}
+            onChange={e => updateMetaField(field.id, { label: e.target.value })} />
+        </div>
+        <div className="form-field" style={{ flex: 1, minWidth: 150 }}>
+          <label>Source</label>
+          <select className="select" value={field.source || 'custom'}
+            onChange={e => updateMetaField(field.id, { source: e.target.value })}>
+            <option value="custom">Custom</option>
+            <option value="market">Linked · Market</option>
+            <option value="hub">Linked · BPO-Hub</option>
+            <option value="channel">Linked · Channel</option>
+            <option value="agent_email">Linked · Agent's Email</option>
+          </select>
+        </div>
+        {(field.source || 'custom') === 'custom' && (
+          <div className="form-field" style={{ flex: 1, minWidth: 120 }}>
+            <label>Type</label>
+            <select className="select" value={field.field_type}
+              onChange={e => updateMetaField(field.id, { field_type: e.target.value })}>
+              <option value="text">Text</option>
+              <option value="number">Number</option>
+              <option value="dropdown">Dropdown</option>
+              <option value="date">Date</option>
+            </select>
+          </div>
+        )}
+        <div className="form-field" style={{ flex: 1, minWidth: 120 }}>
+          <label>Required?</label>
+          <select className="select" value={field.is_required ? 'yes' : 'no'}
+            onChange={e => updateMetaField(field.id, { is_required: e.target.value === 'yes' })}>
+            <option value="yes">Required</option>
+            <option value="no">Optional</option>
+          </select>
+        </div>
+        {(field.source || 'custom') === 'custom' && field.field_type === 'dropdown' && (
+          <div className="form-field" style={{ flex: 3, minWidth: 200 }}>
+            <label>Options — type and press Enter or comma to add (max 50)</label>
+            <DropdownOptionsEditor
+              options={field.options || []}
+              onChange={opts => updateMetaField(field.id, { options: opts })}
+            />
+          </div>
+        )}
+        {(field.source || 'custom') !== 'custom' && (
+          <div className="form-field" style={{ flex: 3, minWidth: 220 }}>
+            <label>Options</label>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '7px 0', lineHeight: 1.5 }}>
+              {field.source === 'agent_email'
+                ? "Resolved per queue at evaluation time — no options to manage here."
+                : 'Options come from the master list — manage them in Control Room → Reference Data.'}
+            </div>
+          </div>
+        )}
+        <div className="form-field form-field-btn">
+          <label>&nbsp;</label>
+          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--danger)' }}
+            onClick={() => deleteMetaField(field.id)}>Remove</button>
+        </div>
+      </div>
     </div>
   )
 }
