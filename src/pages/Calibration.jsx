@@ -754,29 +754,17 @@ function CalibrationAdmin() {
   useEffect(() => { if (profile) loadMetadataOptions() }, [profile])
 
   async function loadMetadataOptions() {
-    const { data, error } = await supabase.from('calibration_metadata_options').select('category, name').order('name')
-    if (error) {
-      console.error('Failed to load BPO/HUB/Market options:', error)
-      setMetadataLoadError(error.message)
-      return
-    }
+    // Unified sources: BPO = governance workspaces, HUB = governance hubs,
+    // Market = master markets list (Reference Data). No calibration-only lists.
+    const [{ data: wsp }, { data: hb }, { data: mk }] = await Promise.all([
+      supabase.from('workspaces').select('name').is('deleted_at', null).order('name'),
+      supabase.from('hubs').select('name').is('deleted_at', null).order('name'),
+      supabase.from('markets').select('name').eq('is_active', true).order('name'),
+    ])
+    setBpoOptions((wsp || []).map(w => w.name))
+    setHubOptions((hb || []).map(h => h.name))
+    setMarketOptions((mk || []).map(m => m.name))
     setMetadataLoadError(null)
-    const byCategory = cat => (data || []).filter(o => o.category === cat).map(o => o.name)
-    setBpoOptions(byCategory('bpo'))
-    setHubOptions(byCategory('hub'))
-    setMarketOptions(byCategory('market'))
-  }
-
-  async function addMetadataOption(category) {
-    const label = category.toUpperCase()
-    const name = window.prompt(`Enter a new ${label}:`)
-    if (!name || !name.trim()) return
-    const trimmed = name.trim()
-    const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('calibration_metadata_options').insert({ category, name: trimmed, created_by: user?.id })
-    if (error) { alert(`Error adding ${label}: ` + error.message); return }
-    await loadMetadataOptions()
-    setForm(f => ({ ...f, [category]: trimmed }))
   }
 
   async function openDetail(session) {
@@ -1119,35 +1107,23 @@ function CalibrationAdmin() {
               <div style={{ display: 'flex', gap: 12 }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>BPO</label>
-                  <select style={inputStyle} value={form.bpo} onChange={e => {
-                    if (e.target.value === '__add_new__') { addMetadataOption('bpo'); return }
-                    setForm(f => ({ ...f, bpo: e.target.value }))
-                  }}>
+                  <select style={inputStyle} value={form.bpo} onChange={e => setForm(f => ({ ...f, bpo: e.target.value }))}>
                     <option value="">— Select a BPO —</option>
                     {bpoOptions.map(name => <option key={name} value={name}>{name}</option>)}
-                    <option value="__add_new__">+ Add a new BPO</option>
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>HUB</label>
-                  <select style={inputStyle} value={form.hub} onChange={e => {
-                    if (e.target.value === '__add_new__') { addMetadataOption('hub'); return }
-                    setForm(f => ({ ...f, hub: e.target.value }))
-                  }}>
+                  <select style={inputStyle} value={form.hub} onChange={e => setForm(f => ({ ...f, hub: e.target.value }))}>
                     <option value="">— Select a HUB —</option>
                     {hubOptions.map(name => <option key={name} value={name}>{name}</option>)}
-                    <option value="__add_new__">+ Add a new HUB</option>
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Market</label>
-                  <select style={inputStyle} value={form.market} onChange={e => {
-                    if (e.target.value === '__add_new__') { addMetadataOption('market'); return }
-                    setForm(f => ({ ...f, market: e.target.value }))
-                  }}>
+                  <select style={inputStyle} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>
                     <option value="">— Select a Market —</option>
                     {marketOptions.map(name => <option key={name} value={name}>{name}</option>)}
-                    <option value="__add_new__">+ Add a new Market</option>
                   </select>
                 </div>
               </div>
@@ -1246,7 +1222,6 @@ function CalibrationInsights() {
   const [filterEvaluator, setFilterEvaluator] = useState('')
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo, setFilterDateTo] = useState('')
-  const [metaOptions, setMetaOptions] = useState({ bpo: [], hub: [], market: [] })
   const [questionLabels, setQuestionLabels] = useState([])
   const [expandedSessions, setExpandedSessions] = useState({})
 
@@ -1255,13 +1230,9 @@ function CalibrationInsights() {
   async function load() {
     setLoading(true)
 
-    // BPO/HUB/Market filter choices come from the shared metadata list (the same one
-    // used on the New Session form), not just from sessions that already have results —
-    // so a newly added BPO/HUB/Market shows up as a filter option right away, even
-    // before any session using it has been evaluated.
-    const { data: metaRows } = await supabase.from('calibration_metadata_options').select('category, name')
-    const metaByCategory = cat => [...new Set((metaRows || []).filter(o => o.category === cat).map(o => o.name))].sort()
-    setMetaOptions({ bpo: metaByCategory('bpo'), hub: metaByCategory('hub'), market: metaByCategory('market') })
+    // BPO/HUB/Market filter choices are derived from the sessions actually shown
+    // (below), so both old and new values remain filterable without depending on any
+    // calibration-only options table.
     // Same visibility rule as Manage Sessions: admins/owners see every session;
     // everyone else only sees sessions where they were the Gauge.
     const isPrivileged = ['admin', 'owner'].includes(profile?.role)
@@ -1360,9 +1331,9 @@ function CalibrationInsights() {
   // show up as filters as soon as they exist — even before any session using them has
   // been evaluated. Scorecard/Gauge/Evaluator options are derived from the data itself,
   // since those only make sense once there's actually something to filter.
-  const bpoOptions = metaOptions.bpo
-  const hubOptions = metaOptions.hub
-  const marketOptions = metaOptions.market
+  const bpoOptions = [...new Set(rows.map(r => r.bpo).filter(Boolean))].sort()
+  const hubOptions = [...new Set(rows.map(r => r.hub).filter(Boolean))].sort()
+  const marketOptions = [...new Set(rows.map(r => r.market).filter(Boolean))].sort()
   const scorecardOptions = [...new Set(rows.map(r => r.scorecardName).filter(Boolean))].sort()
   const sessionOptions = [...new Set(rows.map(r => r.sessionTitle).filter(Boolean))].sort()
   const gaugeOptions = [...new Set(rows.map(r => r.gaugeName).filter(Boolean))].sort()
