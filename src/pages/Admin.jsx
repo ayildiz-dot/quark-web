@@ -730,6 +730,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       parent_id: parentLocalId || null,
       dimension, value: isFallback ? null : '',
       sizing_mode: sizingMode, sizing_value: sizingMode === 'percentage' ? 10 : sizingMode === 'moe' ? 3 : 20,
+      confidence_level: 95,
       min_cases_per_agent: '', is_fallback: isFallback, position: rs.length,
     }])
   }
@@ -896,6 +897,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
             value: r.is_fallback ? null : (r.value || null),
             sizing_mode: r.sizing_mode,
             sizing_value: parseFloat(r.sizing_value) || 0,
+            confidence_level: parseInt(r.confidence_level) || 95,
             min_cases_per_agent: hasChildren(r._localId) ? null : ((r.min_cases_per_agent === '' || r.min_cases_per_agent == null) ? null : parseInt(r.min_cases_per_agent)),
             is_fallback: r.is_fallback,
             position: position++,
@@ -955,8 +957,11 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const smallLabel = { fontSize: 10, color: 'var(--text-secondary)', display: 'block', marginBottom: 3 }
 
   const renderAddToolbar = (parentLocalId) => {
-    const hasFallback = siblingsOf(parentLocalId).some(r => r.is_fallback)
+    const siblings = siblingsOf(parentLocalId)
+    const hasFallback = siblings.some(r => r.is_fallback)
+    const namedCount = siblings.filter(r => !r.is_fallback).length
     return (
+      <>
       <div style={{ display: 'flex', gap: 12, marginTop: 4, marginBottom: 8 }}>
         <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addNode(parentLocalId, false)}>
           {parentLocalId ? '+ Add Subconfiguration' : '+ Add Rule'}
@@ -970,6 +975,12 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           </span>
         )}
       </div>
+      {namedCount > 0 && !hasFallback && (
+        <div style={{ fontSize: 10, color: 'var(--warning, #b45309)', marginTop: -4, marginBottom: 8, maxWidth: 520 }}>
+          ⚠ No fallback in this group — cases outside these values won't be sampled (not collectively exhaustive). Add a Fallback to cover the remainder.
+        </div>
+      )}
+      </>
     )
   }
 
@@ -1040,8 +1051,14 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
             )}
           </div>
           {r.sizing_mode === 'moe' && (
-            <div style={{ width: '100%', fontSize: 10, color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: -2 }}>
-              Confidence level is set to 95% by default.
+            <div>
+              <label style={smallLabel}>Confidence</label>
+              <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.confidence_level ?? 95}
+                onChange={e => updateNode(r._localId, 'confidence_level', e.target.value)}>
+                <option value="90">90%</option>
+                <option value="95">95%</option>
+                <option value="99">99%</option>
+              </select>
             </div>
           )}
           {isLeaf && (
