@@ -44,3 +44,27 @@ export default function DuckLoader() {
     </div>
   )
 }
+
+// Compact inline "thinking" duck — same style as the loader, used for AI states.
+export function ThinkingDuck({ label = 'Quark is thinking…' }) {
+  return (
+    <span className="thinking-duck">
+      <svg className="thinking-duck-svg" width="30" height="28" viewBox="-12 12 76 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <g className="td-body">
+          <ellipse cx="54" cy="44" rx="8" ry="5" fill="#F5C842" transform="rotate(-20 54 44)"/>
+          <ellipse cx="32" cy="44" rx="22" ry="16" fill="#F5C842"/>
+          <ellipse cx="30" cy="44" rx="13" ry="8" fill="#E8B820" transform="rotate(-5 30 44)"/>
+          <ellipse cx="14" cy="34" rx="8" ry="11" fill="#2E8B3A"/>
+          <circle cx="10" cy="24" r="11" fill="#2E8B3A"/>
+          <circle cx="7" cy="21" r="2.5" fill="white"/>
+          <circle cx="6.5" cy="21" r="1.2" fill="#1a1a1a"/>
+          <circle cx="7.2" cy="20.3" r="0.5" fill="white"/>
+          <ellipse cx="0" cy="25" rx="7" ry="3.5" fill="#FF9B21" transform="rotate(-10 0 25)"/>
+          <ellipse cx="13" cy="33" rx="8" ry="3" fill="#F5C842"/>
+        </g>
+      </svg>
+      {label && <span className="thinking-duck-label">{label}</span>}
+      <span className="thinking-duck-dots"><span>●</span><span>●</span><span>●</span></span>
+    </span>
+  )
+}

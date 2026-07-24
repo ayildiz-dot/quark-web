@@ -78,3 +78,23 @@
   letter-spacing: 0.04em;
   margin: 0;
 }
+
+/* Compact inline thinking duck (AI states) */
+.thinking-duck { display: inline-flex; align-items: center; gap: 8px; }
+.thinking-duck-svg { flex-shrink: 0; overflow: visible; }
+.thinking-duck .td-body {
+  animation: td-nod 0.9s ease-in-out infinite alternate;
+  transform-origin: 28px 44px;
+}
+@keyframes td-nod {
+  0%   { transform: rotate(-5deg) translateY(0px); }
+  100% { transform: rotate(5deg) translateY(-2px); }
+}
+.thinking-duck-label { color: var(--text-secondary); }
+.thinking-duck-dots span {
+  animation: blink 1.2s ease-in-out infinite;
+  color: var(--text-muted, #94a3b8);
+  margin: 0 1px;
+}
+.thinking-duck-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-duck-dots span:nth-child(3) { animation-delay: 0.4s; }

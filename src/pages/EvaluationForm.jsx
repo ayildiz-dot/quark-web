@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
+import { ThinkingDuck } from '../components/DuckLoader'
 
 export default function EvaluationForm() {
   const { profile } = useAuth()
@@ -1403,7 +1404,7 @@ export default function EvaluationForm() {
                       ✨ AI Prediction
                     </div>
                     {aiDsatLoading && (
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={12} />Quark is thinking…</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 }}><ThinkingDuck /></div>
                     )}
                     {aiDsatError && (
                       <div style={{ fontSize: 12, color: 'var(--danger)' }}>{aiDsatError}</div>
@@ -1511,12 +1512,11 @@ export default function EvaluationForm() {
               <div className="card" style={{ marginBottom: 20, background: 'var(--bg-secondary)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                   <div style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {aiLoading && <Spinner />}
                     {aiLoading
-                      ? '✨ Quark is thinking…'
-                      : Object.keys(aiSuggestions).length > 0
+                      ? <ThinkingDuck />
+                      : (Object.keys(aiSuggestions).length > 0
                         ? '✨ AI suggestions applied below — review each before submitting.'
-                        : '✨ This scorecard has AI-assisted attributes.'}
+                        : '✨ This scorecard has AI-assisted attributes.')}
                   </div>
                   <button className="btn btn-ghost btn-sm" disabled={aiLoading || !caseTranscript.trim()}
                     onClick={runAiAttributes}>

@@ -609,6 +609,62 @@ function ScrollToTopButton() {
 }
 
 // ─── Queue Settings panel (top-level component — preserves its own state across re-renders) ───
+// Read-only reference: the company's stratified sampling guide, shown in a modal.
+function StratGuideModal({ onClose }) {
+  const h = { fontSize: 14, fontWeight: 700, margin: '18px 0 6px', color: 'var(--text-primary)' }
+  const p = { fontSize: 13, lineHeight: 1.65, color: 'var(--text-secondary)', margin: '0 0 8px' }
+  const li = { fontSize: 13, lineHeight: 1.6, color: 'var(--text-secondary)', marginBottom: 4 }
+  const code = { display: 'block', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap', margin: '4px 0 10px', color: 'var(--text-primary)' }
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} className="card" style={{ maxWidth: 780, width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '22px 26px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>A Comprehensive Guide to Stratified Sampling</h2>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} style={{ flexShrink: 0 }}>✕ Close</button>
+        </div>
+        <p style={p}>Stratified sampling is a probability sampling technique widely used in statistical analysis, market research, and quality assurance. It ensures that specific subgroups within a broader population are adequately represented in the final sample, giving higher precision and accuracy than simple random sampling.</p>
+
+        <h3 style={h}>1. Core Principles</h3>
+        <p style={p}>Divide a heterogeneous population into smaller, more homogeneous groups called <strong>strata</strong> (singular: stratum), formed on shared characteristics — e.g. call type, customer tier, agent location. To be rigorous the strata must be:</p>
+        <ul style={{ margin: '0 0 8px 18px' }}>
+          <li style={li}><strong>Mutually exclusive:</strong> every data point belongs to one and only one stratum — no overlap.</li>
+          <li style={li}><strong>Collectively exhaustive:</strong> no data point is left out — the strata together equal the whole population.</li>
+        </ul>
+
+        <h3 style={h}>2. Step-by-Step Execution</h3>
+        <ul style={{ margin: '0 0 8px 18px' }}>
+          <li style={li}>Define the target population (e.g. all calls received in July).</li>
+          <li style={li}>Identify the stratification variable — the characteristic most relevant to the objective (call type, tier, location), ideally correlated with the metric being measured.</li>
+          <li style={li}>Partition the population into non-overlapping strata based on that variable.</li>
+          <li style={li}>Determine the overall sample size for the desired confidence level and margin of error.</li>
+          <li style={li}>Calculate allocation per stratum — proportionate or disproportionate.</li>
+          <li style={li}>Draw randomly within each stratum (simple or systematic random sampling).</li>
+        </ul>
+
+        <h3 style={h}>3. Types of Allocation</h3>
+        <p style={p}><strong>A. Proportionate</strong> — each stratum's sample size is proportional to its share of the population, so the sampling fraction is constant across strata. Best when you want the sample to be a miniature replica of the population.</p>
+        <div style={code}>{'n_h = (N_h / N) * n\n\nn_h = sample size for stratum h\nN_h = population of stratum h\nN   = total population\nn   = total desired sample size'}</div>
+        <p style={p}><strong>B. Disproportionate — Neyman (optimum)</strong> — the sampling fraction varies; strata are deliberately over- or under-sampled based on both size and internal variability (standard deviation). Best when small but critical strata (e.g. fraudulent transactions) or highly variable strata need a larger sample.</p>
+        <div style={code}>{'n_h = n * [ (N_h * S_h) / Σ (N_i * S_i) ]\n\nS_h = standard deviation within stratum h\nS_i = standard deviation of each stratum i'}</div>
+
+        <h3 style={h}>4. Stratified vs. Alternatives</h3>
+        <ul style={{ margin: '0 0 8px 18px' }}>
+          <li style={li}><strong>Stratified:</strong> guarantees every subgroup is represented; highest precision / lowest standard error; needs prior knowledge of the population; more complex.</li>
+          <li style={li}><strong>Simple random:</strong> may under-represent minor subgroups by chance; moderate precision; easy if an exhaustive list exists.</li>
+          <li style={li}><strong>Cluster:</strong> only represents randomly chosen clusters; lower precision; cheap and efficient for dispersed populations.</li>
+        </ul>
+
+        <h3 style={h}>5. Advantages &amp; Limitations</h3>
+        <p style={p}><strong>Pros:</strong> superior precision when strata are homogeneous; lets you draw conclusions about specific subgroups; ensures minority/outlier segments aren't overlooked.</p>
+        <p style={p}><strong>Cons:</strong> needs accurate classification data for the whole population up front; fully mutually-exclusive criteria can be hard in practice; takes more time to organise and extract than simple random methods.</p>
+
+        <h3 style={h}>6. Conclusion</h3>
+        <p style={p}>Stratified sampling is the gold standard for QA monitoring when a population contains diverse but distinct sub-populations. With proportionate (or optimally disproportionate) representation, results can be generalised back to the whole population with a minimal margin of error.</p>
+      </div>
+    </div>
+  )
+}
+
 function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved, onToggleActive, onDelete }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
   const [market, setMarket] = useState(queue.market_value || '')
@@ -647,6 +703,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const [notifyAgent, setNotifyAgent] = useState(queue.notify_agent_on_evaluation || false)
 
   const [saving, setSaving] = useState(false)
+  const [showGuide, setShowGuide] = useState(false)
 
   const WEEKDAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
   const DIMENSIONS = [
@@ -731,7 +788,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 
   const addNode = (parentLocalId, isFallback) => {
     const siblings = siblingsOf(parentLocalId)
-    if (isFallback && siblings.some(r => r.is_fallback)) return flash('This group already has a fallback rule.', false)
+    if (isFallback && siblings.some(r => r.is_fallback)) return flash('This group already has a fallback stratum.', false)
     const dimension = siblings.length > 0 ? groupDimension(parentLocalId) : ''
     const sizingMode = siblings.length > 0 ? groupSizingMode(parentLocalId) : 'percentage'
     setSamplingRules(rs => [...rs, {
@@ -847,7 +904,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
     if (!team)   return flash('Select a Team (Kaizen or BPO) for this queue.', false)
     if (!manualSampling && cycleFrequency === 'weekly' && !runDay) return flash('Select a run day for the weekly cycle.', false)
     if (!manualSampling && cycleFrequency === 'weekly' && captureDays.length === 0) return flash('Select at least one capture day.', false)
-    if (!manualSampling && incompleteRuleCount > 0) return flash(incompleteRuleCount + ' stratification rule(s) are missing a dimension, value, or sizing amount — fill them in or remove them.', false)
+    if (!manualSampling && incompleteRuleCount > 0) return flash('Some strata are missing a dimension, value, or sizing amount (' + incompleteRuleCount + ' outlined in red) — fill them in or remove them.', false)
     if (!manualSampling && minTotalCases !== '' && maxTotalCases !== '' && parseInt(minTotalCases) > parseInt(maxTotalCases)) return flash('Min Total Cases cannot exceed Max Total Cases.', false)
     if (!manualSampling && allocationStrategy !== 'manual' && (targetSampleSize === '' || parseInt(targetSampleSize) <= 0)) return flash('Enter a target total sample size for the chosen allocation strategy.', false)
     if (!manualSampling && incompleteAssignmentCount > 0) return flash(incompleteAssignmentCount + ' assignment condition(s) are incomplete or empty — fill them in or remove the group.', false)
@@ -918,7 +975,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
           const { data: inserted, error: insertError } = await supabase.from('sampling_stratification_rules').insert(row).select().single()
           if (insertError) {
             setSaving(false)
-            if (insertError.code === '23505') return flash('Only one fallback rule is allowed per group.', false)
+            if (insertError.code === '23505') return flash('Only one fallback stratum is allowed per group.', false)
             return flash(insertError.message, false)
           }
           localIdToDbId[r._localId] = inserted.id
@@ -977,14 +1034,14 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       <>
       <div style={{ display: 'flex', gap: 12, marginTop: 4, marginBottom: 8 }}>
         <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addNode(parentLocalId, false)}>
-          {parentLocalId ? '+ Add Subconfiguration' : '+ Add Rule'}
+          {parentLocalId ? '+ Add Sub-stratum' : '+ Add Stratum'}
         </button>
         {!hasFallback && (
           <span style={{ display: 'inline-flex', alignItems: 'center' }}>
             <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => addNode(parentLocalId, true)}>
-              {parentLocalId ? '+ Add Fallback Subconfiguration' : '+ Add Fallback Rule'}
+              {parentLocalId ? '+ Add Fallback Sub-stratum' : '+ Add Fallback Stratum'}
             </button>
-            <InfoTooltip text="Catches whatever isn't claimed by the named rules in this group (e.g. any category not explicitly listed). Sized the same way as its siblings — percentage or fixed count." />
+            <InfoTooltip text="Catches whatever isn't claimed by the named strata in this group (e.g. any category not explicitly listed). Sized the same way as its siblings — percentage or fixed count." />
           </span>
         )}
       </div>
@@ -1203,11 +1260,15 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
         ) : (
           <>
             <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: 8 }}>Stratification Rules</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, margin: 0 }}>Strata</label>
+                <button type="button" className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => setShowGuide(true)}>📘 Stratified Sampling Guide</button>
+              </div>
+              {showGuide && <StratGuideModal onClose={() => setShowGuide(false)} />}
 
               {siblingsOf(null).length === 0 ? (
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: 8 }}>
-                  No stratification rules yet — leaving this empty means a fully randomized sample will be drawn from this queue's market-filtered population once the Echo integration provides case data.
+                  No strata defined yet — leaving this empty means a fully randomized sample will be drawn from this queue's market-filtered population once the Echo integration provides case data.
                 </div>
               ) : (
                 <div>{siblingsOf(null).map(r => renderNode(r, 0))}</div>
@@ -1216,7 +1277,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 
               {incompleteRuleCount > 0 && (
                 <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>
-                  {incompleteRuleCount} rule(s) outlined in red are missing a dimension, value, or sizing amount.
+                  {incompleteRuleCount} stratum(s) outlined in red are missing a dimension, value, or sizing amount.
                 </div>
               )}
             </div>
@@ -1451,6 +1512,15 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
   const wsExpanded = expanded[ws.id] ?? true
   const hubs = ws.hubs || []
 
+  const expandAllInWs = () => {
+    setExpanded(e => ({ ...e, [ws.id]: true }))
+    setExpandedH(e => { const n = { ...e }; hubs.forEach(h => { n[h.id] = true }); return n })
+  }
+  const collapseAllInWs = () => {
+    setExpandedH(e => { const n = { ...e }; hubs.forEach(h => { n[h.id] = false }); return n })
+    setExpandedS(e => { const n = { ...e }; hubs.forEach(h => (h.queues || []).forEach(q => { n[q.id] = false })); return n })
+  }
+
   return (
     <div className="card" style={{ marginBottom: 12, padding: 0, overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
@@ -1474,6 +1544,12 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
         )}
         {!isEditing(ws.id) && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {hubs.length > 0 && (
+              <>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={expandAllInWs} title="Expand all hubs in this workspace">Expand all</button>
+                <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={collapseAllInWs} title="Collapse all hubs in this workspace">Collapse all</button>
+              </>
+            )}
             <button className="btn btn-ghost btn-sm" onClick={() => startAdd('hub', ws.id)}>+ Hub</button>
             <RowMenu isActive={ws.is_active} onToggleActive={() => toggleWs(ws)} onDelete={() => deleteWs(ws)}
               extraContent={
@@ -1575,7 +1651,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                                       backgroundColor: '#8b5cf622', color: '#8b5cf6', border: '1px solid #8b5cf644',
                                       display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                                       🎯 {samplingByQueue[q.id] === 'weekly' ? 'Weekly' : 'Daily'} Cycle
-                                      <InfoTooltip text={`This queue automatically pulls a stratified sample of cases on a ${samplingByQueue[q.id]} cycle, based on its configured sampling rules.`} />
+                                      <InfoTooltip text={`This queue automatically pulls a stratified sample of cases on a ${samplingByQueue[q.id]} cycle, based on its configured strata.`} />
                                     </span>
                                   )}
                                 </span>
@@ -1645,7 +1721,8 @@ function GovernanceTab({ profile, flash }) {
         ...w,
         hubs: (w.hubs || [])
           .filter(h => !h.deleted_at)
-          .map(h => ({ ...h, queues: (h.queues || []).filter(q => !q.deleted_at) }))
+          .map(h => ({ ...h, queues: (h.queues || []).filter(q => !q.deleted_at).sort((a, b) => (a.name || '').localeCompare(b.name || '')) }))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       }))
     setWorkspaces(activeWs)
     setDivisions(divs || [])
