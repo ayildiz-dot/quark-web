@@ -665,7 +665,7 @@ function StratGuideModal({ onClose }) {
   )
 }
 
-function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, flash, onMappingSaved, onToggleActive, onDelete }) {
+function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, markets = [], profile, flash, onMappingSaved, onToggleActive, onDelete }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
   const [market, setMarket] = useState(queue.market_value || '')
   const [team, setTeam]     = useState(queue.team || '')
@@ -911,8 +911,9 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 
     setSaving(true)
 
+    const marketId = (markets.find(m => m.name === market) || {}).id || null
     const { error: mapError } = await supabase.from('queues').update({
-      scorecard_id: scId, market_value: market, hub_id: hub.id, workspace_id: ws.id, manual_sampling: manualSampling,
+      scorecard_id: scId, market_value: market, market_id: marketId, hub_id: hub.id, workspace_id: ws.id, manual_sampling: manualSampling,
       notify_agent_on_evaluation: notifyAgent, team,
     }).eq('id', queue.id)
     if (mapError) {
@@ -1167,30 +1168,19 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
         <div style={{ minWidth: 220 }}>
           <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Scorecard</label>
           <select className="select select-sm" value={scId}
-            onChange={e => {
-              const next = e.target.value
-              setScId(next)
-              const opts = scMarkets[next] || []
-              if (market && !opts.includes(market)) setMarket('')
-            }} style={{ width: '100%', maxWidth: 240 }}>
+            onChange={e => setScId(e.target.value)} style={{ width: '100%', maxWidth: 240 }}>
             <option value="">Select scorecard…</option>
             {scorecards.map(s => <option key={s.id} value={s.id}>{s.name} ({s.type === 'quality' ? 'Quality' : 'DSAT'})</option>)}
           </select>
         </div>
         <div style={{ minWidth: 220 }}>
           <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Market</label>
-          {!scId ? (
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0' }}>Select a scorecard first.</div>
-          ) : marketOptions.length === 0 && !market ? (
-            <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '7px 0', maxWidth: 220 }}>
-              This scorecard has no markets defined. Add them in the scorecard builder's Market field.
-            </div>
-          ) : (
-            <select className="select select-sm" value={market} onChange={e => setMarket(e.target.value)} style={{ maxWidth: 200 }}>
-              <option value="">Select market…</option>
-              {optionsToShow.map(m => <option key={m} value={m}>{m}{marketOptions.includes(m) ? '' : ' (not in scorecard)'}</option>)}
-            </select>
-          )}
+          <select className="select select-sm" value={market} onChange={e => setMarket(e.target.value)} style={{ maxWidth: 200 }}>
+            <option value="">Select market…</option>
+            {markets.filter(m => m.is_active || m.name === market).map(m => <option key={m.id} value={m.name}>{m.name}{m.is_active ? '' : ' (retired)'}</option>)}
+            {market && !markets.some(m => m.name === market) && <option value={market}>{market} (unlisted)</option>}
+          </select>
+          <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 4, maxWidth: 220 }}>From the master list · manage in Reference Data.</div>
         </div>
         <div style={{ minWidth: 220 }}>
           <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'block', marginBottom: 6 }}>Team</label>
@@ -1505,7 +1495,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
 }
 
 // ─── Workspace card (top-level component — preserves its own state across re-renders) ───
-function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, ui, actions, samplingByQueue }) {
+function WorkspaceCard({ ws, divisions, scorecards, scMarkets, markets, profile, flash, ui, actions, samplingByQueue }) {
   const { expanded, setExpanded, expandedH, setExpandedH, expandedS, setExpandedS, adding, addName, setAddName, editing, editName, setEditName } = ui
   const { isAdding, isEditing, startAdd, cancelAdd, confirmAdd, startEdit, cancelEdit, confirmEdit, toggleWs, toggleHub, toggleQueue, deleteWs, deleteHub, deleteQueue, setWorkspaceDivision, scorecardById, reloadAll } = actions
 
@@ -1665,7 +1655,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
                             )}
                           </div>
                           {mapOpen && (
-                            <QueueMappingPanel queue={q} hub={hub} ws={ws} scorecards={scorecards} scMarkets={scMarkets}
+                            <QueueMappingPanel queue={q} hub={hub} ws={ws} scorecards={scorecards} scMarkets={scMarkets} markets={markets}
                               profile={profile} flash={flash} onMappingSaved={reloadAll}
                               onToggleActive={() => toggleQueue(q)} onDelete={() => deleteQueue(q)} />
                           )}
@@ -1690,11 +1680,168 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, profile, flash, u
 }
 
 // ─── Governance Tab ────────────────────────────────────────────────────────────
+// ─── Reference Data Tab (master lists) ──────────────────────────────────────
+function ReferenceDataTab({ profile, flash }) {
+  const [markets, setMarkets] = useState([])
+  const [queues, setQueues]   = useState([])
+  const [hubs, setHubs]       = useState([])
+  const [loading, setLoading] = useState(true)
+  const [newName, setNewName] = useState('')
+  const [mergeSel, setMergeSel] = useState({})
+  const [busy, setBusy]       = useState(false)
+
+  const load = async () => {
+    setLoading(true)
+    const [{ data: mk }, { data: qs }, { data: hb }] = await Promise.all([
+      supabase.from('markets').select('*').order('name'),
+      supabase.from('queues').select('id, name, hub_id, market_id, market_value').is('deleted_at', null),
+      supabase.from('hubs').select('id, name').is('deleted_at', null),
+    ])
+    setMarkets(mk || []); setQueues(qs || []); setHubs(hb || [])
+    setLoading(false)
+  }
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [])
+
+  const hubName = (id) => (hubs.find(h => h.id === id) || {}).name || '—'
+  const usageFor = (mId) => {
+    const qs = queues.filter(q => q.market_id === mId)
+    return { count: qs.length, hubs: [...new Set(qs.map(q => hubName(q.hub_id)))] }
+  }
+
+  const addMarket = async () => {
+    const name = newName.trim()
+    if (!name) return
+    if (markets.some(m => m.name.toLowerCase() === name.toLowerCase())) return flash('That market already exists.', false)
+    setBusy(true)
+    const { error } = await supabase.from('markets').insert({ name })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    setNewName(''); await load(); flash('Market added.')
+  }
+  const renameMarket = async (m, name) => {
+    const n = name.trim()
+    if (!n || n === m.name) return
+    if (markets.some(x => x.id !== m.id && x.name.toLowerCase() === n.toLowerCase())) return flash('Another market already has that name.', false)
+    setBusy(true)
+    const { error } = await supabase.from('markets').update({ name: n }).eq('id', m.id)
+    if (!error) await supabase.from('queues').update({ market_value: n }).eq('market_id', m.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load(); flash('Market renamed.')
+  }
+  const updateCode = async (m, code) => {
+    const c = code.trim()
+    if (c === (m.code || '')) return
+    await supabase.from('markets').update({ code: c || null }).eq('id', m.id)
+    await load()
+  }
+  const toggleActive = async (m) => {
+    setBusy(true)
+    const { error } = await supabase.from('markets').update({ is_active: !m.is_active }).eq('id', m.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load()
+  }
+  const mergeMarket = async (from) => {
+    const to = markets.find(m => m.id === mergeSel[from.id])
+    if (!to) return
+    if (!window.confirm(`Merge "${from.name}" into "${to.name}"? All queues on "${from.name}" move to "${to.name}", and "${from.name}" is retired.`)) return
+    setBusy(true)
+    const { error } = await supabase.from('queues').update({ market_id: to.id, market_value: to.name }).eq('market_id', from.id)
+    if (!error) await supabase.from('markets').update({ is_active: false }).eq('id', from.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    setMergeSel(s => { const n = { ...s }; delete n[from.id]; return n })
+    await load(); flash(`Merged into ${to.name}.`)
+  }
+
+  const hubRollup = hubs.map(h => ({ ...h, mkts: [...new Set(queues.filter(q => q.hub_id === h.id && q.market_value).map(q => q.market_value))].sort() }))
+  const th = { textAlign: 'left', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, padding: '8px 10px', borderBottom: '1px solid var(--border)' }
+  const td = { fontSize: 13, padding: '8px 10px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }
+
+  if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontWeight: 600, fontSize: 15 }}>Reference Data</div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>Master lists that feed metadata everywhere. Add, rename, retire, or merge markets — changes apply across scorecards, queues, calibration and dashboards.</div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600, fontSize: 13, marginRight: 'auto' }}>Markets ({markets.length})</span>
+          <input className="input" style={{ height: 32, fontSize: 13, width: 200 }} placeholder="New market name" value={newName}
+            onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addMarket() }} />
+          <button className="btn btn-primary btn-sm" disabled={busy || !newName.trim()} onClick={addMarket}>+ Add market</button>
+        </div>
+        <div className="table-wrap">
+          <table className="table" style={{ width: '100%' }}>
+            <thead><tr>
+              <th style={th}>Market</th><th style={th}>Code</th><th style={th}>Status</th><th style={th}>Used by</th><th style={th}>Merge into</th>
+            </tr></thead>
+            <tbody>
+              {markets.length === 0 && <tr><td style={td} colSpan={5}>No markets yet. Add one above, or run the Phase 1 SQL to seed from existing queues.</td></tr>}
+              {markets.map(m => {
+                const u = usageFor(m.id)
+                return (
+                  <tr key={m.id} style={{ opacity: m.is_active ? 1 : 0.55 }}>
+                    <td style={td}>
+                      <input className="input" style={{ height: 30, fontSize: 13, width: 180 }} defaultValue={m.name} onBlur={e => renameMarket(m, e.target.value)} />
+                    </td>
+                    <td style={td}>
+                      <input className="input" style={{ height: 30, fontSize: 13, width: 70 }} defaultValue={m.code || ''} placeholder="—" onBlur={e => updateCode(m, e.target.value)} />
+                    </td>
+                    <td style={td}>
+                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: m.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => toggleActive(m)}>{m.is_active ? '● Active' : '○ Retired'}</button>
+                    </td>
+                    <td style={td}>
+                      <div style={{ fontSize: 12 }}>{u.count} queue{u.count === 1 ? '' : 's'}</div>
+                      {u.hubs.length > 0 && <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{u.hubs.join(', ')}</div>}
+                    </td>
+                    <td style={td}>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={mergeSel[m.id] || ''} onChange={e => setMergeSel(s => ({ ...s, [m.id]: e.target.value }))}>
+                          <option value="">Select target…</option>
+                          {markets.filter(x => x.id !== m.id && x.is_active).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                        </select>
+                        <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} disabled={busy || !mergeSel[m.id]} onClick={() => mergeMarket(m)}>Merge</button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 13 }}>Hubs → markets (read-only)</div>
+        <div className="table-wrap">
+          <table className="table" style={{ width: '100%' }}>
+            <thead><tr><th style={th}>Hub</th><th style={th}>Markets hosted</th></tr></thead>
+            <tbody>
+              {hubRollup.length === 0 && <tr><td style={td} colSpan={2}>No hubs.</td></tr>}
+              {hubRollup.map(h => (
+                <tr key={h.id}><td style={td}>{h.name}</td><td style={td}>{h.mkts.length ? h.mkts.join(', ') : <span style={{ color: 'var(--text-secondary)' }}>—</span>}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--text-secondary)' }}>Hubs are managed in Governance; markets are assigned per queue and roll up here.</div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Governance Tab ─────────────────────────────────────────────────────────
 function GovernanceTab({ profile, flash }) {
   const [workspaces, setWorkspaces] = useState([])
   const [divisions,  setDivisions]  = useState([])
   const [scorecards, setScorecards] = useState([])
   const [scMarkets,  setScMarkets]  = useState({})
+  const [markets,    setMarkets]    = useState([])
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
   const [expandedS,  setExpandedS]  = useState({})
@@ -1727,6 +1874,8 @@ function GovernanceTab({ profile, flash }) {
     setWorkspaces(activeWs)
     setDivisions(divs || [])
     setScorecards(sc || [])
+    const { data: mkts } = await supabase.from('markets').select('*').order('name')
+    setMarkets(mkts || [])
     const sbq = {}
     ;(sampCfgs || []).forEach(row => { sbq[row.queue_id] = row.cycle_frequency })
     setSamplingByQueue(sbq)
@@ -1887,7 +2036,7 @@ function GovernanceTab({ profile, flash }) {
               wsList.length === 0
                 ? <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 0 8px 28px' }}>No workspaces in this division.</div>
                 : <div style={{ paddingLeft: 4 }}>{wsList.map(ws => (
-                    <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets}
+                    <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets} markets={markets}
                       profile={profile} flash={flash} ui={ui} actions={actions} samplingByQueue={samplingByQueue} />
                   ))}</div>
             )}
@@ -1910,7 +2059,7 @@ function GovernanceTab({ profile, flash }) {
           </div>
           {(expandedDiv['__none__'] ?? true) && (
             <div style={{ paddingLeft: 4 }}>{unassignedWs.map(ws => (
-              <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets}
+              <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets} markets={markets}
                 profile={profile} flash={flash} ui={ui} actions={actions} samplingByQueue={samplingByQueue} />
             ))}</div>
           )}
@@ -2252,10 +2401,12 @@ export default function Admin() {
         <button className={`tab ${tab === 'users'      ? 'active' : ''}`} onClick={() => setTab('users')}>User Management</button>
         <button className={`tab ${tab === 'scorecards' ? 'active' : ''}`} onClick={() => setTab('scorecards')}>Scorecards</button>
         <button className={`tab ${tab === 'governance' ? 'active' : ''}`} onClick={() => setTab('governance')}>Governance</button>
+        <button className={`tab ${tab === 'reference'  ? 'active' : ''}`} onClick={() => setTab('reference')}>Reference Data</button>
       </div>
       {tab === 'users'      && <UsersTab      profile={profile} flash={flash} />}
       {tab === 'scorecards' && <ScorecardsTab profile={profile} flash={flash} />}
       {tab === 'governance' && <GovernanceTab profile={profile} flash={flash} />}
+      {tab === 'reference'  && <ReferenceDataTab profile={profile} flash={flash} />}
     </div>
   )
 }

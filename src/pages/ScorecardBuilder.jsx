@@ -223,12 +223,14 @@ export default function ScorecardBuilder() {
         if (f._isNew) {
           await supabase.from('scorecard_metadata_fields').insert({
             scorecard_id: id, label: f.label, field_type: f.field_type,
-            is_required: f.is_required, options: f.options, position: f.position
+            is_required: f.is_required, options: f.options, position: f.position,
+            source: f.source || 'custom'
           })
         } else {
           await supabase.from('scorecard_metadata_fields').update({
             label: f.label, field_type: f.field_type,
-            is_required: f.is_required, options: f.options
+            is_required: f.is_required, options: f.options,
+            source: f.source || 'custom'
           }).eq('id', f.id)
         }
       }
@@ -315,7 +317,7 @@ export default function ScorecardBuilder() {
     if (metadata.length >= 10) return flash('Maximum 10 metadata fields allowed.', false)
     if (isPublished) {
       const tempId = 'temp_m_' + Date.now()
-      setMetadata(m => [...m, { id: tempId, scorecard_id: id, label: 'New Field', field_type: 'text', is_required: true, position: m.length + 1, _isNew: true }])
+      setMetadata(m => [...m, { id: tempId, scorecard_id: id, label: 'New Field', field_type: 'text', is_required: true, position: m.length + 1, source: 'custom', _isNew: true }])
       markChanged()
     } else {
       const { data, error } = await supabase.from('scorecard_metadata_fields').insert({
@@ -797,16 +799,28 @@ export default function ScorecardBuilder() {
                   <input className="input" value={field.label}
                     onChange={e => updateMetaField(field.id, { label: e.target.value })} />
                 </div>
-                <div className="form-field" style={{ flex: 1, minWidth: 120 }}>
-                  <label>Type</label>
-                  <select className="select" value={field.field_type}
-                    onChange={e => updateMetaField(field.id, { field_type: e.target.value })}>
-                    <option value="text">Text</option>
-                    <option value="number">Number</option>
-                    <option value="dropdown">Dropdown</option>
-                    <option value="date">Date</option>
+                <div className="form-field" style={{ flex: 1, minWidth: 150 }}>
+                  <label>Source</label>
+                  <select className="select" value={field.source || 'custom'}
+                    onChange={e => updateMetaField(field.id, { source: e.target.value })}>
+                    <option value="custom">Custom</option>
+                    <option value="market">Linked · Market</option>
+                    <option value="hub">Linked · BPO-Hub</option>
+                    <option value="agent_email">Linked · Agent's Email</option>
                   </select>
                 </div>
+                {(field.source || 'custom') === 'custom' && (
+                  <div className="form-field" style={{ flex: 1, minWidth: 120 }}>
+                    <label>Type</label>
+                    <select className="select" value={field.field_type}
+                      onChange={e => updateMetaField(field.id, { field_type: e.target.value })}>
+                      <option value="text">Text</option>
+                      <option value="number">Number</option>
+                      <option value="dropdown">Dropdown</option>
+                      <option value="date">Date</option>
+                    </select>
+                  </div>
+                )}
                 <div className="form-field" style={{ flex: 1, minWidth: 120 }}>
                   <label>Required?</label>
                   <select className="select" value={field.is_required ? 'yes' : 'no'}
@@ -815,13 +829,23 @@ export default function ScorecardBuilder() {
                     <option value="no">Optional</option>
                   </select>
                 </div>
-                {field.field_type === 'dropdown' && (
+                {(field.source || 'custom') === 'custom' && field.field_type === 'dropdown' && (
                   <div className="form-field" style={{ flex: 3, minWidth: 200 }}>
                     <label>Options — type and press Enter or comma to add (max 50)</label>
                     <DropdownOptionsEditor
                       options={field.options || []}
                       onChange={opts => updateMetaField(field.id, { options: opts })}
                     />
+                  </div>
+                )}
+                {(field.source || 'custom') !== 'custom' && (
+                  <div className="form-field" style={{ flex: 3, minWidth: 220 }}>
+                    <label>Options</label>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '7px 0', lineHeight: 1.5 }}>
+                      {field.source === 'agent_email'
+                        ? "Resolved per queue at evaluation time — no options to manage here."
+                        : 'Options come from the master list — manage them in Control Room → Reference Data.'}
+                    </div>
                   </div>
                 )}
                 <div className="form-field form-field-btn">
