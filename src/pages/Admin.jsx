@@ -636,6 +636,9 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
   const [globalMin, setGlobalMin]           = useState('')
   const [minTotalCases, setMinTotalCases]   = useState('')
   const [maxTotalCases, setMaxTotalCases]   = useState('')
+  const [allocationStrategy, setAllocationStrategy] = useState('manual')
+  const [targetSampleSize, setTargetSampleSize]     = useState('')
+  const [varianceMetric, setVarianceMetric]         = useState('quality_score')
 
   const [evaluators, setEvaluators]         = useState([])
   const [assignmentRules, setAssignmentRules] = useState({})
@@ -664,6 +667,9 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       setGlobalMin(cfg.global_min_cases_per_agent ?? '')
       setMinTotalCases(cfg.min_total_cases ?? '')
       setMaxTotalCases(cfg.max_total_cases ?? '')
+      setAllocationStrategy(cfg.allocation_strategy || 'manual')
+      setTargetSampleSize(cfg.target_sample_size ?? '')
+      setVarianceMetric(cfg.variance_metric || 'quality_score')
       const { data: rules } = await supabase.from('sampling_stratification_rules').select('*').eq('sampling_configuration_id', cfg.id).order('position')
       setSamplingRules((rules || []).map(r => ({ ...r, _localId: r.id })))
     } else {
@@ -674,6 +680,9 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       setGlobalMin('')
       setMinTotalCases('')
       setMaxTotalCases('')
+      setAllocationStrategy('manual')
+      setTargetSampleSize('')
+      setVarianceMetric('quality_score')
       setSamplingRules([])
     }
   }
@@ -840,6 +849,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
     if (!manualSampling && cycleFrequency === 'weekly' && captureDays.length === 0) return flash('Select at least one capture day.', false)
     if (!manualSampling && incompleteRuleCount > 0) return flash(incompleteRuleCount + ' stratification rule(s) are missing a dimension, value, or sizing amount — fill them in or remove them.', false)
     if (!manualSampling && minTotalCases !== '' && maxTotalCases !== '' && parseInt(minTotalCases) > parseInt(maxTotalCases)) return flash('Min Total Cases cannot exceed Max Total Cases.', false)
+    if (!manualSampling && allocationStrategy !== 'manual' && (targetSampleSize === '' || parseInt(targetSampleSize) <= 0)) return flash('Enter a target total sample size for the chosen allocation strategy.', false)
     if (!manualSampling && incompleteAssignmentCount > 0) return flash(incompleteAssignmentCount + ' assignment condition(s) are incomplete or empty — fill them in or remove the group.', false)
 
     setSaving(true)
@@ -866,6 +876,9 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
       global_min_cases_per_agent: globalMin === '' ? null : parseInt(globalMin),
       min_total_cases: minTotalCases === '' ? null : parseInt(minTotalCases),
       max_total_cases: maxTotalCases === '' ? null : parseInt(maxTotalCases),
+      allocation_strategy: allocationStrategy,
+      target_sample_size: (allocationStrategy === 'manual' || targetSampleSize === '') ? null : parseInt(targetSampleSize),
+      variance_metric: allocationStrategy === 'neyman' ? varianceMetric : null,
       cycle_frequency: cycleFrequency,
       run_day: cycleFrequency === 'weekly' ? runDay : null,
       capture_days: captureDays,
@@ -1204,6 +1217,46 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, profile, fla
               {incompleteRuleCount > 0 && (
                 <div style={{ fontSize: 11, color: 'var(--danger)', marginTop: 4 }}>
                   {incompleteRuleCount} rule(s) outlined in red are missing a dimension, value, or sizing amount.
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginBottom: 18, paddingTop: 16, borderTop: '1px dashed var(--border)' }}>
+              <label style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: 8 }}>
+                Allocation Strategy
+                <InfoTooltip text="How the total sample is split across the strata above. Manual = each rule uses its own sizing. Proportionate = split a target total across strata in proportion to each stratum's volume. Neyman (optimum) = also weights by how variable each stratum is, so small/critical/noisy strata get more cases." />
+              </label>
+              <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div>
+                  <label style={smallLabel}>Method</label>
+                  <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={allocationStrategy} onChange={e => setAllocationStrategy(e.target.value)}>
+                    <option value="manual">Manual (per-rule sizing)</option>
+                    <option value="proportionate">Proportionate</option>
+                    <option value="neyman">Disproportionate — Neyman (optimum)</option>
+                  </select>
+                </div>
+                {allocationStrategy !== 'manual' && (
+                  <div>
+                    <label style={smallLabel}>Target total sample size</label>
+                    <input type="number" className="input" style={{ width: 120, height: 30, fontSize: 12 }} min={1}
+                      value={targetSampleSize} placeholder="e.g. 200" onChange={e => setTargetSampleSize(e.target.value)} />
+                  </div>
+                )}
+                {allocationStrategy === 'neyman' && (
+                  <div>
+                    <label style={smallLabel}>Variance metric</label>
+                    <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={varianceMetric} onChange={e => setVarianceMetric(e.target.value)}>
+                      <option value="quality_score">Quality score</option>
+                      <option value="dsat_rate">DSAT rate</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+              {allocationStrategy !== 'manual' && (
+                <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 6, maxWidth: 560 }}>
+                  {allocationStrategy === 'proportionate'
+                    ? 'Echo splits the target total across the strata above in proportion to each stratum’s case volume. Per-rule sizing values are ignored — the rules only define the strata.'
+                    : 'Echo splits the target total using Neyman allocation — proportional to each stratum’s volume × its historical variability in the chosen metric — so small but critical or noisy strata get more cases. Per-rule sizing values are ignored.'}
                 </div>
               )}
             </div>
