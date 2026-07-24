@@ -720,8 +720,9 @@ function CalibrationAdmin() {
   const [detail, setDetail]         = useState(null)
   const [creating, setCreating]     = useState(false)
   const [bpoOptions, setBpoOptions]       = useState([])
-  const [hubOptions, setHubOptions]       = useState([])
-  const [marketOptions, setMarketOptions] = useState([])
+  const [wsList, setWsList]               = useState([])
+  const [hubsAll, setHubsAll]             = useState([])
+  const [queuesAll, setQueuesAll]         = useState([])
   const [metadataLoadError, setMetadataLoadError] = useState(null)
 
   const [form, setForm] = useState({
@@ -754,17 +755,28 @@ function CalibrationAdmin() {
   useEffect(() => { if (profile) loadMetadataOptions() }, [profile])
 
   async function loadMetadataOptions() {
-    // Unified sources: BPO = governance workspaces, HUB = governance hubs,
-    // Market = master markets list (Reference Data). No calibration-only lists.
-    const [{ data: wsp }, { data: hb }, { data: mk }] = await Promise.all([
-      supabase.from('workspaces').select('name').is('deleted_at', null).order('name'),
-      supabase.from('hubs').select('name').is('deleted_at', null).order('name'),
-      supabase.from('markets').select('name').eq('is_active', true).order('name'),
+    // Cascading sources: BPO (workspace) -> HUB (hubs in that workspace) -> Market
+    // (markets operated by that hub's queues). Governance / Reference Data only.
+    const [{ data: wsp }, { data: hb }, { data: qs }] = await Promise.all([
+      supabase.from('workspaces').select('id, name').is('deleted_at', null).order('name'),
+      supabase.from('hubs').select('id, name, workspace_id').is('deleted_at', null).order('name'),
+      supabase.from('queues').select('hub_id, market_value').is('deleted_at', null),
     ])
+    setWsList(wsp || [])
+    setHubsAll(hb || [])
+    setQueuesAll(qs || [])
     setBpoOptions((wsp || []).map(w => w.name))
-    setHubOptions((hb || []).map(h => h.name))
-    setMarketOptions((mk || []).map(m => m.name))
     setMetadataLoadError(null)
+  }
+
+  // Cascading choices for the create modal.
+  const hubChoices = () => {
+    const w = wsList.find(x => x.name === form.bpo)
+    return w ? hubsAll.filter(h => h.workspace_id === w.id) : []
+  }
+  const marketChoicesFor = () => {
+    const h = hubsAll.find(x => x.name === form.hub)
+    return h ? [...new Set(queuesAll.filter(q => q.hub_id === h.id).map(q => q.market_value).filter(Boolean))].sort() : []
   }
 
   async function openDetail(session) {
@@ -1107,23 +1119,25 @@ function CalibrationAdmin() {
               <div style={{ display: 'flex', gap: 12 }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>BPO</label>
-                  <select style={inputStyle} value={form.bpo} onChange={e => setForm(f => ({ ...f, bpo: e.target.value }))}>
+                  <select style={inputStyle} value={form.bpo} onChange={e => setForm(f => ({ ...f, bpo: e.target.value, hub: '', market: '' }))}>
                     <option value="">— Select a BPO —</option>
                     {bpoOptions.map(name => <option key={name} value={name}>{name}</option>)}
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>HUB</label>
-                  <select style={inputStyle} value={form.hub} onChange={e => setForm(f => ({ ...f, hub: e.target.value }))}>
-                    <option value="">— Select a HUB —</option>
-                    {hubOptions.map(name => <option key={name} value={name}>{name}</option>)}
+                  <select style={{ ...inputStyle, opacity: form.bpo ? 1 : 0.5 }} value={form.hub} disabled={!form.bpo}
+                    onChange={e => setForm(f => ({ ...f, hub: e.target.value, market: '' }))}>
+                    <option value="">{form.bpo ? '— Select a HUB —' : 'Select a BPO first'}</option>
+                    {hubChoices().map(h => <option key={h.id} value={h.name}>{h.name}</option>)}
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Market</label>
-                  <select style={inputStyle} value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>
-                    <option value="">— Select a Market —</option>
-                    {marketOptions.map(name => <option key={name} value={name}>{name}</option>)}
+                  <select style={{ ...inputStyle, opacity: form.hub ? 1 : 0.5 }} value={form.market} disabled={!form.hub}
+                    onChange={e => setForm(f => ({ ...f, market: e.target.value }))}>
+                    <option value="">{form.hub ? '— Select a Market —' : 'Select a HUB first'}</option>
+                    {marketChoicesFor().map(name => <option key={name} value={name}>{name}</option>)}
                   </select>
                 </div>
               </div>
