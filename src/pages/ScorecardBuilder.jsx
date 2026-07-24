@@ -806,6 +806,7 @@ export default function ScorecardBuilder() {
                     <option value="custom">Custom</option>
                     <option value="market">Linked · Market</option>
                     <option value="hub">Linked · BPO-Hub</option>
+                    <option value="channel">Linked · Channel</option>
                     <option value="agent_email">Linked · Agent's Email</option>
                   </select>
                 </div>

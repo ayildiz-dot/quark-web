@@ -16,6 +16,8 @@ export default function EvaluationForm() {
   const [groups, setGroups] = useState([])
   const [questions, setQuestions] = useState([])
   const [metaValues, setMetaValues] = useState({})
+  const [channels, setChannels] = useState([])
+  useEffect(() => { supabase.from('channels').select('name, is_active').order('name').then(({ data }) => setChannels(data || [])) }, [])
   const [answers, setAnswers] = useState({})
   const [msg, setMsg] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -494,6 +496,7 @@ export default function EvaluationForm() {
   // Connection 1: BPO-Hub + Market options derived from the user's valid queues.
   const bpoHubOptionsFromQueues = () =>
     [...new Set(validQueuesForScorecard().map(q => q.hub_name).filter(Boolean))].sort()
+  const channelOptions = () => channels.filter(c => c.is_active).map(c => c.name)
   const marketOptionsFromQueues = () =>
     [...new Set(validQueuesForScorecard().map(q => q.market_value).filter(Boolean))].sort()
 
@@ -1138,6 +1141,7 @@ export default function EvaluationForm() {
                     field.label === 'BPO - Hub' ? bpoHubOptionsFromQueues()
                     : field.label === 'Market'  ? marketOptionsFromQueues()
                     : field.label === "Agent's Email" ? agentEmailOptions()
+                    : (field.source === 'channel' || field.label === 'Channel') ? channelOptions()
                     : (field.options || [])
                   }
                   value={metaValues[field.id] || ''}

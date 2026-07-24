@@ -665,7 +665,7 @@ function StratGuideModal({ onClose }) {
   )
 }
 
-function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, markets = [], profile, flash, onMappingSaved, onToggleActive, onDelete }) {
+function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, markets = [], channels = [], profile, flash, onMappingSaved, onToggleActive, onDelete }) {
   const [scId, setScId]     = useState(queue.scorecard_id || '')
   const [market, setMarket] = useState(queue.market_value || '')
   const [team, setTeam]     = useState(queue.team || '')
@@ -1082,11 +1082,8 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, markets = []
                 <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={r.value || ''}
                   onChange={e => updateNode(r._localId, 'value', e.target.value)}>
                   <option value="">Select…</option>
-                  <option value="chat">Chat</option>
-                  <option value="email">Email</option>
-                  <option value="phone">Phone</option>
-                  <option value="whatsapp">WhatsApp</option>
-                  <option value="social">Social Media</option>
+                  {channels.filter(c => c.is_active || c.name === r.value).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  {r.value && !channels.some(c => c.name === r.value) && <option value={r.value}>{r.value} (unlisted)</option>}
                 </select>
               ) : (
                 <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={r.value || ''}
@@ -1431,11 +1428,8 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, markets = []
                                       <select className="select select-sm" style={{ height: 30, fontSize: 12 }} value={c.value}
                                         onChange={e => updateCondition(ev.id, g._localId, c._localId, 'value', e.target.value)}>
                                         <option value="">Select…</option>
-                                        <option value="chat">Chat</option>
-                                        <option value="email">Email</option>
-                                        <option value="phone">Phone</option>
-                                        <option value="whatsapp">WhatsApp</option>
-                                        <option value="social">Social Media</option>
+                                        {channels.filter(ch => ch.is_active || ch.name === c.value).map(ch => <option key={ch.id} value={ch.name}>{ch.name}</option>)}
+                                        {c.value && !channels.some(ch => ch.name === c.value) && <option value={c.value}>{c.value} (unlisted)</option>}
                                       </select>
                                     ) : (
                                       <input className="input" style={{ width: 140, height: 30, fontSize: 12 }} value={c.value}
@@ -1495,7 +1489,7 @@ function QueueMappingPanel({ queue, hub, ws, scorecards, scMarkets, markets = []
 }
 
 // ─── Workspace card (top-level component — preserves its own state across re-renders) ───
-function WorkspaceCard({ ws, divisions, scorecards, scMarkets, markets, profile, flash, ui, actions, samplingByQueue }) {
+function WorkspaceCard({ ws, divisions, scorecards, scMarkets, markets, channels, profile, flash, ui, actions, samplingByQueue }) {
   const { expanded, setExpanded, expandedH, setExpandedH, expandedS, setExpandedS, adding, addName, setAddName, editing, editName, setEditName } = ui
   const { isAdding, isEditing, startAdd, cancelAdd, confirmAdd, startEdit, cancelEdit, confirmEdit, toggleWs, toggleHub, toggleQueue, deleteWs, deleteHub, deleteQueue, setWorkspaceDivision, scorecardById, reloadAll } = actions
 
@@ -1655,7 +1649,7 @@ function WorkspaceCard({ ws, divisions, scorecards, scMarkets, markets, profile,
                             )}
                           </div>
                           {mapOpen && (
-                            <QueueMappingPanel queue={q} hub={hub} ws={ws} scorecards={scorecards} scMarkets={scMarkets} markets={markets}
+                            <QueueMappingPanel queue={q} hub={hub} ws={ws} scorecards={scorecards} scMarkets={scMarkets} markets={markets} channels={channels}
                               profile={profile} flash={flash} onMappingSaved={reloadAll}
                               onToggleActive={() => toggleQueue(q)} onDelete={() => deleteQueue(q)} />
                           )}
@@ -1685,18 +1679,21 @@ function ReferenceDataTab({ profile, flash }) {
   const [markets, setMarkets] = useState([])
   const [queues, setQueues]   = useState([])
   const [hubs, setHubs]       = useState([])
+  const [channels, setChannels] = useState([])
   const [loading, setLoading] = useState(true)
   const [newName, setNewName] = useState('')
+  const [newChannel, setNewChannel] = useState('')
   const [busy, setBusy]       = useState(false)
 
   const load = async () => {
     setLoading(true)
-    const [{ data: mk }, { data: qs }, { data: hb }] = await Promise.all([
+    const [{ data: mk }, { data: qs }, { data: hb }, { data: ch }] = await Promise.all([
       supabase.from('markets').select('*').order('name'),
       supabase.from('queues').select('id, name, hub_id, market_id, market_value').is('deleted_at', null),
       supabase.from('hubs').select('id, name').is('deleted_at', null),
+      supabase.from('channels').select('*').order('name'),
     ])
-    setMarkets(mk || []); setQueues(qs || []); setHubs(hb || [])
+    setMarkets(mk || []); setQueues(qs || []); setHubs(hb || []); setChannels(ch || [])
     setLoading(false)
   }
   useEffect(() => { load() /* eslint-disable-next-line */ }, [])
@@ -1741,6 +1738,34 @@ function ReferenceDataTab({ profile, flash }) {
     if (error) return flash(error.message, false)
     await load()
   }
+  const addChannel = async () => {
+    const name = newChannel.trim()
+    if (!name) return
+    if (channels.some(c => c.name.toLowerCase() === name.toLowerCase())) return flash('That channel already exists.', false)
+    setBusy(true)
+    const { error } = await supabase.from('channels').insert({ name })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    setNewChannel(''); await load(); flash('Channel added.')
+  }
+  const renameChannel = async (c, name) => {
+    const n = name.trim()
+    if (!n || n === c.name) return
+    if (channels.some(x => x.id !== c.id && x.name.toLowerCase() === n.toLowerCase())) return flash('Another channel already has that name.', false)
+    setBusy(true)
+    const { error } = await supabase.from('channels').update({ name: n }).eq('id', c.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load(); flash('Channel renamed.')
+  }
+  const toggleChannel = async (c) => {
+    setBusy(true)
+    const { error } = await supabase.from('channels').update({ is_active: !c.is_active }).eq('id', c.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load()
+  }
+
   const hubRollup = hubs.map(h => ({ ...h, mkts: [...new Set(queues.filter(q => q.hub_id === h.id && q.market_value).map(q => q.market_value))].sort() }))
   const th = { textAlign: 'left', fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, padding: '8px 10px', borderBottom: '1px solid var(--border)' }
   const td = { fontSize: 13, padding: '8px 10px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }
@@ -1793,6 +1818,29 @@ function ReferenceDataTab({ profile, flash }) {
         </div>
       </div>
 
+      <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600, fontSize: 13, marginRight: 'auto' }}>Channels ({channels.length})</span>
+          <input className="input" style={{ height: 32, fontSize: 13, width: 200 }} placeholder="New channel name" value={newChannel}
+            onChange={e => setNewChannel(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addChannel() }} />
+          <button className="btn btn-primary btn-sm" disabled={busy || !newChannel.trim()} onClick={addChannel}>+ Add channel</button>
+        </div>
+        <div className="table-wrap">
+          <table className="table" style={{ width: '100%' }}>
+            <thead><tr><th style={th}>Channel</th><th style={th}>Status</th></tr></thead>
+            <tbody>
+              {channels.length === 0 && <tr><td style={td} colSpan={2}>No channels yet. Add one above, or run the Phase 2 SQL to seed the standard set.</td></tr>}
+              {channels.map(c => (
+                <tr key={c.id} style={{ opacity: c.is_active ? 1 : 0.55 }}>
+                  <td style={td}><input className="input" style={{ height: 30, fontSize: 13, width: 180 }} defaultValue={c.name} onBlur={e => renameChannel(c, e.target.value)} /></td>
+                  <td style={td}><button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: c.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => toggleChannel(c)}>{c.is_active ? '● Active' : '○ Retired'}</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 13 }}>Hubs → markets (read-only)</div>
         <div className="table-wrap">
@@ -1819,6 +1867,7 @@ function GovernanceTab({ profile, flash }) {
   const [scorecards, setScorecards] = useState([])
   const [scMarkets,  setScMarkets]  = useState({})
   const [markets,    setMarkets]    = useState([])
+  const [channels,   setChannels]   = useState([])
   const [expanded,   setExpanded]   = useState({})
   const [expandedH,  setExpandedH]  = useState({})
   const [expandedS,  setExpandedS]  = useState({})
@@ -1853,6 +1902,8 @@ function GovernanceTab({ profile, flash }) {
     setScorecards(sc || [])
     const { data: mkts } = await supabase.from('markets').select('*').order('name')
     setMarkets(mkts || [])
+    const { data: chs } = await supabase.from('channels').select('*').order('name')
+    setChannels(chs || [])
     const sbq = {}
     ;(sampCfgs || []).forEach(row => { sbq[row.queue_id] = row.cycle_frequency })
     setSamplingByQueue(sbq)
@@ -2030,7 +2081,7 @@ function GovernanceTab({ profile, flash }) {
               wsList.length === 0
                 ? <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontStyle: 'italic', padding: '4px 0 8px 28px' }}>No workspaces in this division.</div>
                 : <div style={{ paddingLeft: 4 }}>{wsList.map(ws => (
-                    <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets} markets={markets}
+                    <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets} markets={markets} channels={channels}
                       profile={profile} flash={flash} ui={ui} actions={actions} samplingByQueue={samplingByQueue} />
                   ))}</div>
             )}
@@ -2053,7 +2104,7 @@ function GovernanceTab({ profile, flash }) {
           </div>
           {(expandedDiv['__none__'] ?? true) && (
             <div style={{ paddingLeft: 4 }}>{unassignedWs.map(ws => (
-              <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets} markets={markets}
+              <WorkspaceCard key={ws.id} ws={ws} divisions={divisions} scorecards={scorecards} scMarkets={scMarkets} markets={markets} channels={channels}
                 profile={profile} flash={flash} ui={ui} actions={actions} samplingByQueue={samplingByQueue} />
             ))}</div>
           )}
