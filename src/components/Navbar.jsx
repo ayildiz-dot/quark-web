@@ -109,15 +109,15 @@ export default function Navbar() {
             <svg width="40" height="40" viewBox="0 0 90 90" style={{ flexShrink: 0 }} aria-hidden="true">
               <g transform="rotate(0 45 45)">
                 <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" />
-                <circle r="5" fill="#3b82f6"><animateMotion dur="5s" repeatCount="indefinite" path="M83,45 A38,15 0 1 1 82.99,45" /></circle>
+                <circle r="5" fill="#3b82f6"><animateMotion dur="5s" repeatCount="indefinite" path="M83,45 A38,15 0 0 1 7,45 A38,15 0 0 1 83,45" /></circle>
               </g>
               <g transform="rotate(60 45 45)">
                 <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" />
-                <circle r="5" fill="#10b981"><animateMotion dur="7s" repeatCount="indefinite" path="M83,45 A38,15 0 1 1 82.99,45" /></circle>
+                <circle r="5" fill="#10b981"><animateMotion dur="7s" repeatCount="indefinite" path="M83,45 A38,15 0 0 1 7,45 A38,15 0 0 1 83,45" /></circle>
               </g>
               <g transform="rotate(120 45 45)">
                 <ellipse cx="45" cy="45" rx="38" ry="15" fill="none" stroke="#5f6d85" strokeWidth="2.2" />
-                <circle r="5" fill="#f59e0b"><animateMotion dur="6s" repeatCount="indefinite" path="M83,45 A38,15 0 1 1 82.99,45" /></circle>
+                <circle r="5" fill="#f59e0b"><animateMotion dur="6s" repeatCount="indefinite" path="M83,45 A38,15 0 0 1 7,45 A38,15 0 0 1 83,45" /></circle>
               </g>
               <circle cx="45" cy="45" r="11" fill="#d85a30">
                 <animate attributeName="r" values="11;12.4;11" dur="2.2s" repeatCount="indefinite" />
