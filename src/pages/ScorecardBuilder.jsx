@@ -313,6 +313,24 @@ export default function ScorecardBuilder() {
   flash(newVal ? 'Scorecard published' : 'Scorecard unpublished')
   }
 
+  const [fieldTemplates, setFieldTemplates] = useState([])
+  useEffect(() => { supabase.from('metadata_field_templates').select('*').eq('is_active', true).order('position').then(({ data }) => setFieldTemplates(data || [])) }, [])
+
+  const addFromLibrary = async (tplId) => {
+    const tpl = fieldTemplates.find(t => t.id === tplId)
+    if (!tpl) return
+    if (metadata.length >= 10) return flash('Maximum 10 metadata fields allowed.', false)
+    const base = { scorecard_id: id, label: tpl.label, field_type: tpl.field_type, is_required: tpl.is_required, options: tpl.options || [], source: tpl.source || 'custom', position: metadata.length + 1 }
+    if (isPublished) {
+      const tempId = 'temp_m_' + Date.now()
+      setMetadata(m => [...m, { id: tempId, ...base, _isNew: true }]); markChanged()
+    } else {
+      const { data, error } = await supabase.from('scorecard_metadata_fields').insert(base).select().single()
+      if (error) return flash(error.message, false)
+      setMetadata(m => [...m, data])
+    }
+  }
+
   const addMetaField = async () => {
     if (metadata.length >= 10) return flash('Maximum 10 metadata fields allowed.', false)
     if (isPublished) {
@@ -780,11 +798,20 @@ export default function ScorecardBuilder() {
               </span>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 8, flexWrap: 'wrap' }}>
             <p style={{ color: 'var(--text-secondary)' }}>{metadata.length}/10 metadata fields</p>
-            <button className="btn btn-primary btn-sm" onClick={addMetaField} disabled={metadata.length >= 10}>
-              + Add Field
-            </button>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {fieldTemplates.length > 0 && (
+                <select className="select select-sm" value="" disabled={metadata.length >= 10}
+                  onChange={e => { const v = e.target.value; if (v) { addFromLibrary(v); e.target.value = '' } }}>
+                  <option value="">+ Add from library…</option>
+                  {fieldTemplates.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+                </select>
+              )}
+              <button className="btn btn-primary btn-sm" onClick={addMetaField} disabled={metadata.length >= 10}>
+                + Add Field
+              </button>
+            </div>
           </div>
           {metadata.length === 0 && (
             <div className="card" style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 40 }}>

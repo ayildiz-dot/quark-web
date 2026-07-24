@@ -1680,9 +1680,11 @@ function ReferenceDataTab({ profile, flash }) {
   const [queues, setQueues]   = useState([])
   const [hubs, setHubs]       = useState([])
   const [channels, setChannels] = useState([])
+  const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
   const [newName, setNewName] = useState('')
   const [newChannel, setNewChannel] = useState('')
+  const [newTpl, setNewTpl]   = useState({ label: '', source: 'custom', field_type: 'text', is_required: true })
   const [busy, setBusy]       = useState(false)
 
   const load = async () => {
@@ -1693,7 +1695,8 @@ function ReferenceDataTab({ profile, flash }) {
       supabase.from('hubs').select('id, name').is('deleted_at', null),
       supabase.from('channels').select('*').order('name'),
     ])
-    setMarkets(mk || []); setQueues(qs || []); setHubs(hb || []); setChannels(ch || [])
+    const { data: tpl } = await supabase.from('metadata_field_templates').select('*').order('position')
+    setMarkets(mk || []); setQueues(qs || []); setHubs(hb || []); setChannels(ch || []); setTemplates(tpl || [])
     setLoading(false)
   }
   useEffect(() => { load() /* eslint-disable-next-line */ }, [])
@@ -1761,6 +1764,26 @@ function ReferenceDataTab({ profile, flash }) {
   const toggleChannel = async (c) => {
     setBusy(true)
     const { error } = await supabase.from('channels').update({ is_active: !c.is_active }).eq('id', c.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load()
+  }
+
+  const SRC_LABEL = { custom: 'Custom', market: 'Linked · Market', hub: 'Linked · BPO-Hub', channel: 'Linked · Channel', agent_email: "Linked · Agent's Email" }
+  const addTemplate = async () => {
+    const label = newTpl.label.trim()
+    if (!label) return
+    if (templates.some(t => t.label.toLowerCase() === label.toLowerCase())) return flash('A template with that label already exists.', false)
+    setBusy(true)
+    const ft = newTpl.source === 'custom' ? newTpl.field_type : (newTpl.source === 'agent_email' ? 'text' : 'dropdown')
+    const { error } = await supabase.from('metadata_field_templates').insert({ label, source: newTpl.source, field_type: ft, is_required: newTpl.is_required, position: templates.length + 1 })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    setNewTpl({ label: '', source: 'custom', field_type: 'text', is_required: true }); await load(); flash('Field added to the library.')
+  }
+  const updateTemplate = async (t, patch) => {
+    setBusy(true)
+    const { error } = await supabase.from('metadata_field_templates').update(patch).eq('id', t.id)
     setBusy(false)
     if (error) return flash(error.message, false)
     await load()
@@ -1839,6 +1862,53 @@ function ReferenceDataTab({ profile, flash }) {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Field Library ({templates.length})</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input className="input" style={{ height: 32, fontSize: 13, width: 170 }} placeholder="New field label" value={newTpl.label}
+              onChange={e => setNewTpl(t => ({ ...t, label: e.target.value }))} />
+            <select className="select select-sm" style={{ height: 32, fontSize: 13 }} value={newTpl.source} onChange={e => setNewTpl(t => ({ ...t, source: e.target.value }))}>
+              <option value="custom">Custom</option>
+              <option value="market">Linked · Market</option>
+              <option value="hub">Linked · BPO-Hub</option>
+              <option value="channel">Linked · Channel</option>
+              <option value="agent_email">Linked · Agent's Email</option>
+            </select>
+            {newTpl.source === 'custom' && (
+              <select className="select select-sm" style={{ height: 32, fontSize: 13 }} value={newTpl.field_type} onChange={e => setNewTpl(t => ({ ...t, field_type: e.target.value }))}>
+                <option value="text">Text</option>
+                <option value="number">Number</option>
+                <option value="dropdown">Dropdown</option>
+                <option value="date">Date</option>
+              </select>
+            )}
+            <label style={{ fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input type="checkbox" checked={newTpl.is_required} onChange={e => setNewTpl(t => ({ ...t, is_required: e.target.checked }))} /> Required
+            </label>
+            <button className="btn btn-primary btn-sm" disabled={busy || !newTpl.label.trim()} onClick={addTemplate}>+ Add field</button>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table className="table" style={{ width: '100%' }}>
+            <thead><tr><th style={th}>Field</th><th style={th}>Source</th><th style={th}>Type</th><th style={th}>Required</th><th style={th}>Status</th></tr></thead>
+            <tbody>
+              {templates.length === 0 && <tr><td style={td} colSpan={5}>No templates yet. Add one above, or run the Field Library SQL to seed the standard set.</td></tr>}
+              {templates.map(t => (
+                <tr key={t.id} style={{ opacity: t.is_active ? 1 : 0.55 }}>
+                  <td style={td}><input className="input" style={{ height: 30, fontSize: 13, width: 170 }} defaultValue={t.label} onBlur={e => { const v = e.target.value.trim(); if (v && v !== t.label) updateTemplate(t, { label: v }) }} /></td>
+                  <td style={td}>{SRC_LABEL[t.source] || t.source}</td>
+                  <td style={td}>{t.source === 'custom' ? t.field_type : '—'}</td>
+                  <td style={td}><button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => updateTemplate(t, { is_required: !t.is_required })}>{t.is_required ? 'Required' : 'Optional'}</button></td>
+                  <td style={td}><button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: t.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => updateTemplate(t, { is_active: !t.is_active })}>{t.is_active ? '● Active' : '○ Retired'}</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--text-secondary)' }}>Attach these in Scorecard Builder → Metadata → "Add from library". Attaching copies the template; later edits here don't change existing scorecards.</div>
       </div>
 
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
