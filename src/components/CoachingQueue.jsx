@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { getEvaluatorScope } from '../lib/evaluatorScope'
+import { AgentEmailChip } from './AgentPerfModal'
 
 const getMeta = (ev, label) => {
   const m = (ev?.metadata_values || []).find(x => x.label?.toLowerCase() === label.toLowerCase())
@@ -82,7 +83,7 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
             {!isDsat && <span><b>Score:</b> {ev.score}%</span>}
             {isDsat && <span><b>Controllability:</b> {ev.deviated_controllability ?? 'Controllable'}</span>}
             <span><b>Scorecard:</b> {ev.scorecards?.name || '—'}</span>
-            <span><b>Agent:</b> {getMeta(ev, "Agent's Email") || '—'}</span>
+            <span><b>Agent:</b> {(() => { const ae = getMeta(ev, "Agent's Email"); return ae && ae !== '—' ? <AgentEmailChip email={ae} /> : '—' })()}</span>
             <span style={{ color: 'var(--text-secondary)' }}>{new Date(ev.submitted_at).toLocaleDateString()}</span>
           </div>
 
