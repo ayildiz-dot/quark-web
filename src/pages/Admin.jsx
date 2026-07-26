@@ -1827,7 +1827,7 @@ function ReferenceDataTab({ profile, flash }) {
                       <input className="input" style={{ height: 30, fontSize: 13, width: 70 }} defaultValue={m.code || ''} placeholder="—" onBlur={e => updateCode(m, e.target.value)} />
                     </td>
                     <td style={td}>
-                      <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: m.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => toggleActive(m)}>{m.is_active ? '● Active' : '○ Retired'}</button>
+                      <button className="btn btn-outline btn-sm" title="Click to change status" style={{ fontSize: 11, color: m.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => toggleActive(m)}>{m.is_active ? '● Active ⇄' : '○ Retired ⇄'}</button>
                     </td>
                     <td style={td}>
                       <div style={{ fontSize: 12 }}>{u.count} queue{u.count === 1 ? '' : 's'}</div>
@@ -1856,7 +1856,7 @@ function ReferenceDataTab({ profile, flash }) {
               {channels.map(c => (
                 <tr key={c.id} style={{ opacity: c.is_active ? 1 : 0.55 }}>
                   <td style={td}><input className="input" style={{ height: 30, fontSize: 13, width: 180 }} defaultValue={c.name} onBlur={e => renameChannel(c, e.target.value)} /></td>
-                  <td style={td}><button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: c.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => toggleChannel(c)}>{c.is_active ? '● Active' : '○ Retired'}</button></td>
+                  <td style={td}><button className="btn btn-outline btn-sm" title="Click to change status" style={{ fontSize: 11, color: c.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => toggleChannel(c)}>{c.is_active ? '● Active ⇄' : '○ Retired ⇄'}</button></td>
                 </tr>
               ))}
             </tbody>
@@ -1901,8 +1901,8 @@ function ReferenceDataTab({ profile, flash }) {
                   <td style={td}><input className="input" style={{ height: 30, fontSize: 13, width: 170 }} defaultValue={t.label} onBlur={e => { const v = e.target.value.trim(); if (v && v !== t.label) updateTemplate(t, { label: v }) }} /></td>
                   <td style={td}>{SRC_LABEL[t.source] || t.source}</td>
                   <td style={td}>{t.source === 'custom' ? t.field_type : '—'}</td>
-                  <td style={td}><button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={() => updateTemplate(t, { is_required: !t.is_required })}>{t.is_required ? 'Required' : 'Optional'}</button></td>
-                  <td style={td}><button className="btn btn-ghost btn-sm" style={{ fontSize: 11, color: t.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => updateTemplate(t, { is_active: !t.is_active })}>{t.is_active ? '● Active' : '○ Retired'}</button></td>
+                  <td style={td}><button className="btn btn-outline btn-sm" title="Click to toggle" style={{ fontSize: 11 }} onClick={() => updateTemplate(t, { is_required: !t.is_required })}>{t.is_required ? 'Required ⇄' : 'Optional ⇄'}</button></td>
+                  <td style={td}><button className="btn btn-outline btn-sm" title="Click to change status" style={{ fontSize: 11, color: t.is_active ? 'var(--success)' : 'var(--text-secondary)' }} onClick={() => updateTemplate(t, { is_active: !t.is_active })}>{t.is_active ? '● Active ⇄' : '○ Retired ⇄'}</button></td>
                 </tr>
               ))}
             </tbody>
