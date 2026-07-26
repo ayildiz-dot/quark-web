@@ -111,11 +111,29 @@ export function AgentPerfModal({ email, onClose }) {
 
 export function AgentEmailChip({ email }) {
   const [open, setOpen] = useState(false)
+  const [hover, setHover] = useState(false)
   if (!email) return <span>—</span>
   return (
     <>
-      <button onClick={() => setOpen(true)} title="View 30-day performance"
-        style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent)', cursor: 'pointer', textDecoration: 'underline', font: 'inherit' }}>{email}</button>
+      <button
+        onClick={() => setOpen(true)}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        title="View 30-day performance"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5, maxWidth: '100%',
+          font: 'inherit', color: 'var(--accent)', cursor: 'pointer',
+          background: hover ? 'var(--accent-light)' : 'transparent',
+          border: '1px solid transparent', borderRadius: 6, padding: '2px 7px',
+          transition: 'background 0.12s',
+        }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</span>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.8 }} aria-hidden="true">
+          <line x1="6" y1="20" x2="6" y2="13" />
+          <line x1="12" y1="20" x2="12" y2="8" />
+          <line x1="18" y1="20" x2="18" y2="4" />
+        </svg>
+      </button>
       {open && <AgentPerfModal email={email} onClose={() => setOpen(false)} />}
     </>
   )
