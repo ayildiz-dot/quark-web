@@ -270,7 +270,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
                   <tr key={ev.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ ...tdStyle, fontFamily: 'monospace', color: 'var(--text-secondary)' }}>#{ev.eval_id || ev.id}</td>
                     <td style={tdStyle}>{isDsat ? 'DSAT' : 'Quality'}</td>
-                    <td style={tdStyle}>{it._agent || '—'}</td>
+                    <td style={tdStyle}>{it._agent ? <AgentEmailChip email={it._agent} /> : '—'}</td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{ev.scorecards?.name || '—'}</td>
                     <td style={tdStyle}>{isDsat ? (ev.deviated_controllability ?? 'Controllable') : `${ev.score}%`}</td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{new Date(ev.submitted_at).toLocaleDateString()}</td>
