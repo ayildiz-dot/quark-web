@@ -5,6 +5,21 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 import { ThinkingDuck } from '../components/DuckLoader'
 
+// One ticket may only be evaluated once per scorecard. Enforced in the database by two
+// partial unique indexes on (scorecard_id, ticket_id_extracted):
+//   evaluations_dsat_ticket_unique     — DSAT, submitted rows
+//   evaluations_quality_ticket_unique  — Quality, submitted rows
+// A raw 23505 is meaningless to an evaluator, so translate it into plain language.
+// Applied to every insert AND update path (an edit can also collide with an existing ticket).
+const friendlyDuplicateError = (err) => {
+  const isTicketClash = err?.code === '23505' && (
+    err.message?.includes('evaluations_dsat_ticket_unique') ||
+    err.message?.includes('evaluations_quality_ticket_unique')
+  )
+  if (!isTicketClash) return err
+  return new Error('This ticket has already been evaluated on this scorecard. This can only be corrected by an admin or owner — please contact one to make the change.')
+}
+
 export default function EvaluationForm() {
   const { profile } = useAuth()
   const navigate = useNavigate()
@@ -892,7 +907,7 @@ export default function EvaluationForm() {
             queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
             last_edit_date: new Date().toISOString(),
           }).eq('id', editingEvalId)
-          if (upErr) throw upErr
+          if (upErr) throw friendlyDuplicateError(upErr)
         } else {
           const { data: insertedDsatEval, error: evalError } = await supabase.from('evaluations').insert({
             scorecard_id: selectedScorecard.id,
@@ -906,12 +921,7 @@ export default function EvaluationForm() {
             submitted_at: new Date().toISOString(),
             ...aiControllabilityFields,
           }).select().single()
-          if (evalError) {
-            if (evalError.code === '23505' && evalError.message?.includes('evaluations_dsat_ticket_unique')) {
-              throw new Error('This ticket has already been evaluated on this scorecard. This can only be corrected by an admin or owner — please contact one to make the change.')
-            }
-            throw evalError
-          }
+          if (evalError) throw friendlyDuplicateError(evalError)
 
           // ── Reconciliation resolver (spot-check only) ────────────────────
           // Runs once, right here at submit, for KG - DSAT Evaluation submissions
@@ -943,7 +953,7 @@ export default function EvaluationForm() {
             overall_comment: overallComment.trim(),
             last_edit_date: new Date().toISOString(),
           }).eq('id', editingEvalId)
-          if (upErr) throw upErr
+          if (upErr) throw friendlyDuplicateError(upErr)
           await supabase.from('evaluation_scores').delete().eq('evaluation_id', editingEvalId)
           const newScoreRows = questions.map(q => ({
             evaluation_id: editingEvalId,
@@ -968,7 +978,7 @@ export default function EvaluationForm() {
             scorecard_version: selectedScorecard.version || 1,
             submitted_at: new Date().toISOString()
           }).select().single()
-          if (evalError) throw evalError
+          if (evalError) throw friendlyDuplicateError(evalError)
           const scoreRows = questions.map(q => ({
             evaluation_id: evaluation.id,
             question_id: q.id,
