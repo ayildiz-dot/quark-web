@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
 import CoachingQueue from '../components/CoachingQueue'
@@ -723,7 +724,7 @@ function AgentCoachingDetail({ c, onClose, onAck, busy }) {
   )
 }
 
-function AgentEvalCoachings({ profile, flash }) {
+function AgentEvalCoachings({ profile, flash, openId }) {
   const [loading, setLoading] = useState(true)
   const [rows, setRows]       = useState([])
   const [detail, setDetail]   = useState(null)
@@ -746,6 +747,16 @@ function AgentEvalCoachings({ profile, flash }) {
     setLoading(false)
   }
   useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
+
+  // ?coaching=<id> — arrived from the "acknowledge your coaching" notification.
+  // Open that coaching straight away instead of leaving the agent to find the row.
+  // Keyed on rows as well as openId so it still fires if the rows load afterwards.
+  useEffect(() => {
+    if (!openId || !rows.length) return
+    const target = rows.find(c => String(c.id) === String(openId))
+    if (target) setDetail(target)
+    window.history.replaceState({}, '', '/coaching')
+  }, [openId, rows])
 
   const acknowledge = async (c) => {
     setBusy(true)
@@ -976,6 +987,13 @@ export default function Coaching() {
   const [gov, setGov]           = useState(null)
   const [agentTab, setAgentTab] = useState('coaching')
 
+  // Deep link from the "acknowledge your coaching" notification: /coaching?coaching=<id>.
+  // Read from the router (not window.location) so it also fires when the agent is already
+  // on this page — a same-route navigation doesn't remount the component.
+  const location = useLocation()
+  const coachingParam = new URLSearchParams(location.search).get('coaching')
+  useEffect(() => { if (coachingParam) setAgentTab('coaching') }, [coachingParam])
+
   const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }
 
   const loadSessions = async () => {
@@ -1081,7 +1099,7 @@ export default function Coaching() {
           ))}
         </div>
         {agentTab === 'coaching'
-          ? <AgentEvalCoachings profile={profile} flash={flash} />
+          ? <AgentEvalCoachings profile={profile} flash={flash} openId={coachingParam} />
           : (loading
               ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading...</div>
               : <SessionsTable rows={own.filter(s => s.status !== 'draft')} counts={counts} onView={setDetail} />)}

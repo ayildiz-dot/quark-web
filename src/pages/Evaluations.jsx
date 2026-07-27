@@ -678,6 +678,16 @@ export default function Evaluations() {
     // eslint-disable-next-line
   }, [profile])
 
+  // ?eval=<id> — opened from the "review your evaluation" notification. Open that
+  // evaluation's detail modal immediately so the agent doesn't have to find the row.
+  useEffect(() => {
+    const eid = new URLSearchParams(window.location.search).get('eval')
+    if (!eid || !profile?.id) return
+    openDetail(eid)
+    window.history.replaceState({}, '', '/evaluations')
+    // eslint-disable-next-line
+  }, [profile])
+
   useEffect(() => { if (profile?.id) fetchEvals(1) /* eslint-disable-next-line */ }, [includeArchived, archivedScIds])
 
   // Evaluation ID + Status filter immediately as you type / choose.
@@ -1363,8 +1373,8 @@ export default function Evaluations() {
                 return (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
                     {dsp && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Dispute: {DISPUTE_STATUS[dsp.status]?.label || dsp.status}</span>}
-                    {dsp && <button className="btn btn-ghost btn-sm" onClick={() => setDisputeModal(dsp)}>View dispute</button>}
-                    {canRaise && <button className="btn btn-outline btn-sm" onClick={() => setRaiseDispute(detail)}>Dispute this evaluation</button>}
+                    {dsp && <button className="btn btn-ghost btn-sm" onClick={() => { setDisputeModal(dsp); setDetail(null) }}>View dispute</button>}
+                    {canRaise && <button className="btn btn-outline btn-sm" onClick={() => { setRaiseDispute(detail); setDetail(null) }}>Dispute this evaluation</button>}
                   </div>
                 )
               })()}
@@ -1377,8 +1387,8 @@ export default function Evaluations() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, background: 'rgba(245,158,11,0.10)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>This DSAT was spot-checked by a KG QA.</span>
                     {dsp && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Dispute: {DISPUTE_STATUS[dsp.status]?.label || dsp.status}</span>}
-                    {dsp && <button className="btn btn-ghost btn-sm" onClick={() => setDisputeModal(dsp)}>View dispute</button>}
-                    {canRaise && <button className="btn btn-outline btn-sm" onClick={() => setRaiseDsat(kgId)}>Dispute the KG spot-check</button>}
+                    {dsp && <button className="btn btn-ghost btn-sm" onClick={() => { setDisputeModal(dsp); setDetail(null) }}>View dispute</button>}
+                    {canRaise && <button className="btn btn-outline btn-sm" onClick={() => { setRaiseDsat(kgId); setDetail(null) }}>Dispute the KG spot-check</button>}
                   </div>
                 )
               })()}

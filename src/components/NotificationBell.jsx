@@ -104,6 +104,10 @@ export default function NotificationBell() {
     }
     if (item.type === 'edit_request' && item.entity_id) navigate('/evaluations?req=' + item.entity_id)
     else if (isDispute && item.entity_id) navigate('/evaluations?dispute=' + item.entity_id)
+    // Deep-link straight into the record the agent is being asked to act on, rather than
+    // dropping them on the list page to hunt for it themselves.
+    else if (item.type === 'evaluation_read' && item.entity_id) navigate('/evaluations?eval=' + item.entity_id)
+    else if (item.type === 'eval_coaching' && item.entity_id) navigate('/coaching?coaching=' + item.entity_id)
     else if (item.link) navigate(item.link)
   }
 
