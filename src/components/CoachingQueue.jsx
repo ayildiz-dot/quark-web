@@ -3,15 +3,40 @@ import { supabase } from '../lib/supabase'
 import { getEvaluatorScope } from '../lib/evaluatorScope'
 import { AgentEmailChip } from './AgentPerfModal'
 
-const getMeta = (ev, label) => {
+// Exported so Coaching Insights derives its case list from the same definition of
+// "coachable" that this queue uses — two copies would drift and the SLA figures would
+// stop matching the queue they describe.
+export const getMeta = (ev, label) => {
   const m = (ev?.metadata_values || []).find(x => x.label?.toLowerCase() === label.toLowerCase())
   return m?.value || ''
 }
 // Effective controllability matches the dashboard: deviated_controllability if stamped,
 // else derived from whether any metadata answer equals 'Controllable'.
-const isControllable = (ev) => {
+export const isControllable = (ev) => {
   const eff = ev.deviated_controllability ?? ((ev.metadata_values || []).some(e => e?.value === 'Controllable') ? 'Controllable' : 'Non-Controllable')
   return eff === 'Controllable'
+}
+
+// A submitted evaluation is coachable when Quality scored under 100% or a DSAT is
+// effectively controllable. Used by both the queue and Coaching Insights.
+export const isCoachable = (ev) =>
+  ev.evaluation_type === 'quality' ? (ev.score ?? 100) < 100 : isControllable(ev)
+
+// 48-hour coaching SLA. Clock starts when the evaluation is submitted (the moment the
+// case became coachable — the eval_coachings row doesn't exist until someone takes it
+// over, so its created_at would measure nothing) and stops when the coach completes.
+// Returns 'met', 'breached' (completed late, or still uncoached past the window),
+// 'open' (uncoached but still inside the window) or 'unknown'.
+export const COACHING_SLA_HOURS = 48
+export const coachingSla = (submittedAt, completedAt) => {
+  if (!submittedAt) return { hours: null, state: 'unknown' }
+  const start = new Date(submittedAt).getTime()
+  const end = completedAt ? new Date(completedAt).getTime() : null
+  const hours = ((end ?? Date.now()) - start) / 3600000
+  const state = end
+    ? (hours <= COACHING_SLA_HOURS ? 'met' : 'breached')
+    : (hours > COACHING_SLA_HOURS ? 'breached' : 'open')
+  return { hours: Math.round(hours * 10) / 10, state }
 }
 
 const CSTATUS = {
@@ -179,7 +204,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       .limit(500)
     if (hubIds) q = q.in('hub_id', hubIds)
     const { data: evs } = await q
-    const candidates = (evs || []).filter(e => e.evaluation_type === 'quality' ? (e.score ?? 100) < 100 : isControllable(e))
+    const candidates = (evs || []).filter(isCoachable)
     const ids = candidates.map(e => e.id)
     const coachMap = {}
     if (ids.length) {

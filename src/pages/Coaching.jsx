@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
-import CoachingQueue from '../components/CoachingQueue'
+import CoachingQueue, { getMeta, isCoachable, coachingSla } from '../components/CoachingQueue'
 import { getEvaluatorScope } from '../lib/evaluatorScope'
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -812,14 +812,21 @@ function AgentEvalCoachings({ profile, flash, openId }) {
 
 // ─── Coaching Insights (per-evaluation coachings from the Coaching Queue) ─────
 const EC_STATUS = {
+  pending:      { label: 'Not started',              color: '#94a3b8' },
   in_progress:  { label: 'In progress',              color: '#6366f1' },
   completed:    { label: 'Awaiting acknowledgement', color: '#f59e0b' },
   acknowledged: { label: 'Acknowledged',             color: '#22c55e' },
 }
-function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
+// Wording used in the export and the SLA filter, matching the 24h Critical Cases language.
+const SLA_LABEL = {
+  met:      'Met',
+  breached: 'Breached',
+  open:     'Still within 48h',
+  unknown:  '—',
+}
+function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
   const [loading, setLoading] = useState(true)
   const [rows, setRows]       = useState([])
-  const [evalMap, setEvalMap] = useState({})
   const [fCoach, setFCoach] = useState('')
   const [fDiv, setFDiv]     = useState('')
   const [fBpo, setFBpo]     = useState('')
@@ -827,9 +834,15 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
   const [fMarket, setFMkt]  = useState('')
   const [fType, setFType]   = useState('')
   const [fStatus, setFStat] = useState('')
+  const [fSla, setFSla]     = useState('')
   const [fFrom, setFrom]    = useState('')
   const [fTo, setTo]        = useState('')
 
+  // Loads every COACHABLE CASE, not just cases someone already picked up. A case nobody
+  // touched for three days is exactly what a 48-hour SLA exists to surface, and it has no
+  // eval_coachings row at all — so the old "read eval_coachings" approach could never see
+  // it. Candidates come from the shared isCoachable() the Coaching Queue uses, so the two
+  // screens always describe the same population.
   const load = async () => {
     setLoading(true)
     let hubIds = null
@@ -838,55 +851,85 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
       hubIds = scope.hubIds || []
       if (!hubIds.length) { setRows([]); setLoading(false); return }
     }
-    let q = supabase.from('eval_coachings')
-      .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
-      .order('created_at', { ascending: false }).limit(3000)
-    if (hubIds) q = q.in('hub_id', hubIds)
-    const { data } = await q
-    const list = data || []
-    const evIds = [...new Set(list.map(c => c.evaluation_id).filter(Boolean))]
-    const em = {}
-    if (evIds.length) {
-      const { data: evs } = await supabase.from('evaluations').select('id, eval_id').in('id', evIds)
-      ;(evs || []).forEach(e => { em[e.id] = e.eval_id })
+    let eq = supabase.from('evaluations')
+      .select('id, eval_id, score, evaluation_type, metadata_values, submitted_at, hub_id, workspace_id, queue_id, deviated_controllability')
+      .eq('status', 'submitted')
+      .or('and(evaluation_type.eq.quality,score.lt.100),evaluation_type.eq.dsat')
+      .order('submitted_at', { ascending: false })
+      .limit(3000)
+    if (hubIds) eq = eq.in('hub_id', hubIds)
+    const { data: evs } = await eq
+    const candidates = (evs || []).filter(isCoachable)
+
+    const ids = candidates.map(e => e.id)
+    const cMap = {}
+    if (ids.length) {
+      const { data: cs } = await supabase.from('eval_coachings')
+        .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
+        .in('evaluation_id', ids)
+      ;(cs || []).forEach(c => { cMap[c.evaluation_id] = c })
     }
-    setEvalMap(em); setRows(list); setLoading(false)
+    setRows(candidates.map(ev => ({ ev, coaching: cMap[ev.id] || null })))
+    setLoading(false)
   }
   useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
 
-  const base = useMemo(() => (rows || []).map(r => {
-    const d = r.completed_at || r.taken_over_at || r.created_at
-    return { ...r,
-      _date: d ? String(d).slice(0, 10) : '',
-      _bpo: r.workspace_id ? (govNames.ws[r.workspace_id] || '') : '',
-      _hub: r.hub_id ? (govNames.hub[r.hub_id] || '') : '',
-      _coach: r.coach?.name || '',
-      _type: r.eval_type === 'dsat' ? 'DSAT' : 'Quality',
-      _evalNo: evalMap[r.evaluation_id] || r.evaluation_id,
+  const base = useMemo(() => (rows || []).map(({ ev, coaching: c }) => {
+    const ctx = (gov && gov.queueCtx && gov.queueCtx[ev.queue_id]) || {}
+    const { hours, state } = coachingSla(ev.submitted_at, c?.completed_at)
+    return { ...(c || {}),
+      status: c ? c.status : 'pending',
+      // Dated by the evaluation, since that is when the 48-hour clock starts.
+      _date: ev.submitted_at ? String(ev.submitted_at).slice(0, 10) : '',
+      _submitted: ev.submitted_at,
+      _bpo: ctx.workspace_name || (ev.workspace_id ? (govNames.ws[ev.workspace_id] || '') : ''),
+      _hub: ctx.hub_name || (ev.hub_id ? (govNames.hub[ev.hub_id] || '') : ''),
+      _div: c?.division || ctx.division_name || '',
+      _market: c?.market || ctx.market || getMeta(ev, 'Market') || '',
+      _agent: c?.agent_email || getMeta(ev, "Agent's Email") || '',
+      _coach: c?.coach?.name || '',
+      _type: ev.evaluation_type === 'dsat' ? 'DSAT' : 'Quality',
+      _evalNo: ev.eval_id || ev.id,
+      _slaHours: hours,
+      _sla: state,
     }
-  }), [rows, evalMap, govNames])
+  }), [rows, govNames, gov])
 
   const opts = (key) => [...new Set(base.map(r => r[key]).filter(Boolean))].sort()
   const flt = base.filter(r =>
-    (!fCoach || r._coach === fCoach) && (!fDiv || r.division === fDiv) && (!fBpo || r._bpo === fBpo) &&
-    (!fHub || r._hub === fHub) && (!fMarket || r.market === fMarket) && (!fType || r._type === fType) &&
-    (!fStatus || r.status === fStatus) && (!fFrom || (r._date && r._date >= fFrom)) && (!fTo || (r._date && r._date <= fTo)))
+    (!fCoach || r._coach === fCoach) && (!fDiv || r._div === fDiv) && (!fBpo || r._bpo === fBpo) &&
+    (!fHub || r._hub === fHub) && (!fMarket || r._market === fMarket) && (!fType || r._type === fType) &&
+    (!fStatus || r.status === fStatus) && (!fSla || r._sla === fSla) &&
+    (!fFrom || (r._date && r._date >= fFrom)) && (!fTo || (r._date && r._date <= fTo)))
 
   const total = flt.length
+  const nPending = flt.filter(r => r.status === 'pending').length
   const nProg = flt.filter(r => r.status === 'in_progress').length
   const nAwait = flt.filter(r => r.status === 'completed').length
   const nAck = flt.filter(r => r.status === 'acknowledged').length
   const delivered = nAwait + nAck
   const ackRate = delivered ? Math.round((nAck / delivered) * 100) : 0
 
+  // 48-hour SLA. The rate deliberately excludes cases still inside the window and not yet
+  // coached ('open') — their outcome isn't decided, and counting them as failures would
+  // make the current period always look bad. Uncoached cases past 48h ARE counted, as
+  // breaches, which is the whole point of measuring this.
+  const nMet = flt.filter(r => r._sla === 'met').length
+  const nBreach = flt.filter(r => r._sla === 'breached').length
+  const nOpen = flt.filter(r => r._sla === 'open').length
+  const slaDecided = nMet + nBreach
+  const slaRate = slaDecided ? Math.round((nMet / slaDecided) * 100) : 0
+
   const byCoach = useMemo(() => {
     const m = {}
     flt.forEach(r => {
-      const k = r._coach || '—'
-      m[k] = m[k] || { coach: k, total: 0, delivered: 0, ack: 0 }
+      const k = r._coach || 'Unassigned'
+      m[k] = m[k] || { coach: k, total: 0, delivered: 0, ack: 0, met: 0, breach: 0 }
       m[k].total++
       if (r.status === 'completed' || r.status === 'acknowledged') m[k].delivered++
       if (r.status === 'acknowledged') m[k].ack++
+      if (r._sla === 'met') m[k].met++
+      if (r._sla === 'breached') m[k].breach++
     })
     return Object.values(m).sort((a, b) => b.total - a.total)
   }, [flt])
@@ -900,16 +943,26 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
 
   const exportCsv = () => {
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const headers = ['Evaluation', 'Type', 'Coach', 'Agent', 'Division', 'BPO', 'Hub', 'Market', 'Status', 'Taken over', 'Completed', 'Acknowledged', 'Coaching notes']
+    const headers = ['Evaluation', 'Type', 'Coach', 'Agent', 'Division', 'BPO', 'Hub', 'Market', 'Status',
+      'Evaluation submitted', 'Taken over', 'Completed', 'Acknowledged',
+      'Hours to coach', 'Within 48h', 'Coaching notes']
     const lines = [headers.map(esc).join(',')]
-    flt.forEach(r => lines.push([esc('#' + r._evalNo), esc(r._type), esc(r._coach), esc(r.agent_email), esc(r.division), esc(r._bpo), esc(r._hub), esc(r.market), esc(EC_STATUS[r.status]?.label || r.status), esc(fmtDate(r.taken_over_at)), esc(fmtDate(r.completed_at)), esc(fmtDate(r.acknowledged_at)), esc(r.notes)].join(',')))
+    flt.forEach(r => lines.push([
+      esc('#' + r._evalNo), esc(r._type), esc(r._coach || 'Unassigned'), esc(r._agent), esc(r._div),
+      esc(r._bpo), esc(r._hub), esc(r._market), esc(EC_STATUS[r.status]?.label || r.status),
+      esc(fmtDate(r._submitted)), esc(fmtDate(r.taken_over_at)), esc(fmtDate(r.completed_at)), esc(fmtDate(r.acknowledged_at)),
+      // Elapsed so far when not yet coached, so an overdue case shows how overdue it is.
+      esc(r._slaHours == null ? '' : r._slaHours),
+      esc(SLA_LABEL[r._sla] || ''),
+      esc(r.notes),
+    ].join(',')))
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
     a.download = `coaching-insights-${new Date().toISOString().split('T')[0]}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
 
-  const clearAll = () => { setFCoach(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFType(''); setFStat(''); setFrom(''); setTo('') }
-  const anyFilter = fCoach || fDiv || fBpo || fHub || fMarket || fType || fStatus || fFrom || fTo
+  const clearAll = () => { setFCoach(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFType(''); setFStat(''); setFSla(''); setFrom(''); setTo('') }
+  const anyFilter = fCoach || fDiv || fBpo || fHub || fMarket || fType || fStatus || fSla || fFrom || fTo
 
   if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
 
@@ -921,12 +974,18 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
       <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
         <select style={sel} value={fCoach} onChange={e => setFCoach(e.target.value)}><option value="">All Coaches</option>{opts('_coach').map(o => <option key={o}>{o}</option>)}</select>
-        <select style={sel} value={fDiv} onChange={e => setFDiv(e.target.value)}><option value="">All Divisions</option>{opts('division').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fDiv} onChange={e => setFDiv(e.target.value)}><option value="">All Divisions</option>{opts('_div').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fBpo} onChange={e => setFBpo(e.target.value)}><option value="">All BPOs</option>{opts('_bpo').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fHub} onChange={e => setFHub(e.target.value)}><option value="">All Hubs</option>{opts('_hub').map(o => <option key={o}>{o}</option>)}</select>
-        <select style={sel} value={fMarket} onChange={e => setFMkt(e.target.value)}><option value="">All Markets</option>{opts('market').map(o => <option key={o}>{o}</option>)}</select>
+        <select style={sel} value={fMarket} onChange={e => setFMkt(e.target.value)}><option value="">All Markets</option>{opts('_market').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fType} onChange={e => setFType(e.target.value)}><option value="">All Types</option><option>Quality</option><option>DSAT</option></select>
         <select style={sel} value={fStatus} onChange={e => setFStat(e.target.value)}><option value="">All Statuses</option>{Object.entries(EC_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
+        <select style={sel} value={fSla} onChange={e => setFSla(e.target.value)}>
+          <option value="">All 48h SLA</option>
+          <option value="met">Met</option>
+          <option value="breached">Breached</option>
+          <option value="open">Still within 48h</option>
+        </select>
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>from</span>
         <input type="date" style={sel} value={fFrom} onChange={e => setFrom(e.target.value)} />
         <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>to</span>
@@ -934,23 +993,42 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
         {anyFilter && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear filters</button>}
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
-        <div className="card" style={card}><div style={cnum}>{total}</div><div style={clbl}>Coachings</div></div>
+      <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <div className="card" style={card}><div style={cnum}>{total}</div><div style={clbl}>Coachable cases</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#94a3b8' }}>{nPending}</div><div style={clbl}>Not started</div></div>
         <div className="card" style={card}><div style={{ ...cnum, color: '#6366f1' }}>{nProg}</div><div style={clbl}>In progress</div></div>
         <div className="card" style={card}><div style={{ ...cnum, color: '#f59e0b' }}>{nAwait}</div><div style={clbl}>Awaiting ack</div></div>
         <div className="card" style={card}><div style={{ ...cnum, color: '#22c55e' }}>{nAck}</div><div style={clbl}>Acknowledged</div></div>
         <div className="card" style={card}><div style={{ ...cnum, color: ackRate >= 70 ? '#22c55e' : '#dc2626' }}>{ackRate}%</div><div style={clbl}>Ack rate</div></div>
       </div>
 
+      <div style={{ display: 'flex', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#22c55e' }}>{nMet}</div><div style={clbl}>Coached within 48h</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#dc2626' }}>{nBreach}</div><div style={clbl}>48h breached</div></div>
+        <div className="card" style={card}><div style={{ ...cnum, color: '#94a3b8' }}>{nOpen}</div><div style={clbl}>Still within 48h</div></div>
+        <div className="card" style={card}>
+          <div style={{ ...cnum, color: slaRate >= 90 ? '#22c55e' : slaRate >= 70 ? '#f59e0b' : '#dc2626' }}>{slaRate}%</div>
+          <div style={clbl}>48h coaching rate</div>
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 24 }}>
+        The 48-hour clock starts when the evaluation is submitted and stops when the coach completes the coaching.
+        The rate is met ÷ (met + breached) — cases still inside the window are excluded until their outcome is decided,
+        but uncoached cases past 48 hours count as breaches.
+      </div>
+
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
-            <th style={thStyle}>Coach</th><th style={thStyle}>Coachings</th><th style={thStyle}>Delivered</th><th style={thStyle}>Acknowledged</th><th style={thStyle}>Ack rate</th>
+            <th style={thStyle}>Coach</th><th style={thStyle}>Cases</th><th style={thStyle}>Delivered</th><th style={thStyle}>Acknowledged</th><th style={thStyle}>Ack rate</th>
+            <th style={thStyle}>Within 48h</th><th style={thStyle}>Breached</th><th style={thStyle}>48h rate</th>
           </tr></thead>
           <tbody>
-            {byCoach.length === 0 && <tr><td colSpan="5" style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>No coachings match the selected filters.</td></tr>}
+            {byCoach.length === 0 && <tr><td colSpan="8" style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>No cases match the selected filters.</td></tr>}
             {byCoach.map(c => {
               const rate = c.delivered ? Math.round((c.ack / c.delivered) * 100) : 0
+              const decided = c.met + c.breach
+              const sRate = decided ? Math.round((c.met / decided) * 100) : null
               return (
                 <tr key={c.coach} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ ...tdStyle, fontWeight: 500 }}>{c.coach}</td>
@@ -958,6 +1036,11 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames }) {
                   <td style={tdStyle}>{c.delivered}</td>
                   <td style={tdStyle}>{c.ack}</td>
                   <td style={{ ...tdStyle, fontWeight: 600, color: rate >= 70 ? 'var(--success)' : 'var(--danger)' }}>{rate}%</td>
+                  <td style={tdStyle}>{c.met}</td>
+                  <td style={{ ...tdStyle, color: c.breach ? 'var(--danger)' : 'var(--text-secondary)' }}>{c.breach}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600, color: sRate == null ? 'var(--text-secondary)' : sRate >= 90 ? 'var(--success)' : sRate >= 70 ? '#f59e0b' : 'var(--danger)' }}>
+                    {sRate == null ? '—' : `${sRate}%`}
+                  </td>
                 </tr>
               )
             })}
@@ -1151,7 +1234,7 @@ export default function Coaching() {
           )}
           {tab === 'insights' && <InsightsTab sessions={mine} counts={counts} govNames={govNames} />}
           {tab === 'queue' && <CoachingQueue profile={profile} isPrivileged={isPrivileged} flash={flash} gov={gov} />}
-          {tab === 'coaching_insights' && <CoachingInsightsTab profile={profile} isPrivileged={isPrivileged} govNames={govNames} />}
+          {tab === 'coaching_insights' && <CoachingInsightsTab profile={profile} isPrivileged={isPrivileged} govNames={govNames} gov={gov} />}
         </>
       )}
 
