@@ -390,52 +390,34 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
 
   // ── Delta + certification logic (Step 6) ──────────────────────────────────
 
-  async function runDeltaForOne(evalSubId, evalScore, evalId, gaugeSubId, gaugeScore) {
-    const [{ data: evalAns }, { data: gaugeAns }] = await Promise.all([
-      supabase.from('calibration_answers').select('question_id, answer_value, is_critical').eq('submission_id', evalSubId),
-      supabase.from('calibration_answers').select('question_id, answer_value').eq('submission_id', gaugeSubId),
-    ])
-
-    const gaugeMap = Object.fromEntries((gaugeAns || []).map(a => [a.question_id, a.answer_value]))
-
-    let criticalFail = false
-    for (const ea of (evalAns || [])) {
-      if (!ea.is_critical) continue
-      const ga = gaugeMap[ea.question_id]
-      if (ga && ea.answer_value !== 'na' && ga !== 'na' && ea.answer_value !== ga) {
-        criticalFail = true
-        break
-      }
-    }
-
-    const delta = Math.abs((evalScore || 0) - (gaugeScore || 0)) / 100
-    const isCalibrated = !criticalFail && delta <= 0.10
-
-    await supabase.from('calibration_submissions')
-      .update({ delta, is_calibrated: isCalibrated, status: 'evaluated' })
-      .eq('id', evalSubId)
-
-    // Append-only: every result is recorded and tagged to this specific scorecard_id,
-    // never overwritten. Current certification status is derived from this history
-    // in CalibrationHome, not stored/cached here — see calibration_certification_history.
-    await supabase.from('calibration_certification_history').insert({
-      evaluator_id: evalId,
-      scorecard_id: session.scorecard_id,
-      session_id: session.id,
-      is_calibrated: isCalibrated,
-      delta,
+  // Computes delta + the calibrated flag for ONE participant submission and appends its
+  // certification-history row. Runs server-side via SECURITY DEFINER RPC.
+  //
+  // Why server-side: the calculation needs the Gauge's submission and answers, which RLS
+  // deliberately hides from participants — the Gauge's answer sheet is the reference key,
+  // and a participant able to read it could copy it before submitting, which would make
+  // calibration meaningless. Previously this ran in the browser, so once RLS was enabled
+  // a participant's submit silently produced no delta at all.
+  async function evaluateSubmission(submissionId) {
+    const { error } = await supabase.rpc('evaluate_calibration_submission', {
+      p_submission_id: submissionId,
     })
+    if (error) console.error('delta calculation failed:', error.message)
   }
 
-  async function runDeltaForAll(gaugeSubId, gaugeScore) {
+  // Scores every participant submission still waiting, then re-checks completion.
+  // Called on the Gauge's own submit — until the Gauge has scored there is no reference
+  // to compare anyone against. The per-submission maths lives in the RPC above, so the
+  // Gauge and participant paths share one implementation instead of two that can drift.
+  async function runDeltaForAll() {
     const { data: evalSubs } = await supabase.from('calibration_submissions')
-      .select('id, evaluator_id, overall_score')
+      .select('id')
       .eq('session_id', session.id)
       .eq('is_gauge', false)
       .eq('status', 'submitted')
 
     for (const es of (evalSubs || [])) {
-      await runDeltaForOne(es.id, es.overall_score, es.evaluator_id, gaugeSubId, gaugeScore)
+      await evaluateSubmission(es.id)
     }
 
     await checkSessionCompletion()
@@ -535,18 +517,14 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
       await supabase.from('calibration_answers').insert(ansRows)
 
       if (isGauge) {
-        await runDeltaForAll(subId, score)
+        await runDeltaForAll()
       } else {
-        const { data: gaugeSub } = await supabase.from('calibration_submissions')
-          .select('id, overall_score')
-          .eq('session_id', session.id)
-          .eq('is_gauge', true)
-          .eq('status', 'submitted')
-          .maybeSingle()
-        if (gaugeSub) {
-          await runDeltaForOne(subId, score, uid, gaugeSub.id, gaugeSub.overall_score)
-          await checkSessionCompletion()
-        }
+        // No client-side lookup of the Gauge's submission any more — RLS hides it from
+        // participants by design. The RPC finds it server-side and returns false if the
+        // Gauge hasn't scored yet, in which case this submission is picked up later by
+        // the Gauge's own runDeltaForAll.
+        await evaluateSubmission(subId)
+        await checkSessionCompletion()
       }
 
       onSubmitted?.()
