@@ -446,19 +446,19 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
   // (runDeltaForAll, above) and the regular-evaluator submit path below — previously this
   // only ran inside runDeltaForAll, so a session where the Gauge submitted before all
   // participants finished would silently stay stuck on "Scoring" forever.
+  //
+  // Now runs server-side via SECURITY DEFINER RPC. Row-Level Security on
+  // calibration_sessions permits UPDATE only by privileged users and the Gauge, and RLS
+  // cannot be restricted to a single column — so a participant completing the last
+  // submission could not flip the status from the client, and the write failed silently
+  // (the old code ignored its error), reintroducing the stuck-on-"Scoring" bug.
+  // The RPC performs its own authorisation check and applies the same completion
+  // condition. Errors are logged rather than swallowed.
   async function checkSessionCompletion() {
-    const { data: gaugeSub } = await supabase.from('calibration_submissions')
-      .select('id').eq('session_id', session.id).eq('is_gauge', true).eq('status', 'submitted').maybeSingle()
-    if (!gaugeSub) return
-
-    const { data: allParts } = await supabase.from('calibration_participants')
-      .select('evaluator_id').eq('session_id', session.id)
-    const { data: evalDone } = await supabase.from('calibration_submissions')
-      .select('id').eq('session_id', session.id).eq('is_gauge', false).eq('status', 'evaluated')
-
-    if ((evalDone?.length || 0) >= (allParts?.length || 1) && (allParts?.length || 0) > 0) {
-      await supabase.from('calibration_sessions').update({ status: 'completed' }).eq('id', session.id)
-    }
+    const { error } = await supabase.rpc('complete_calibration_session_if_ready', {
+      p_session_id: session.id,
+    })
+    if (error) console.error('session completion check failed:', error.message)
   }
 
   // "Looks Good to Me" — bulk-marks every attribute as Pass, then jumps
