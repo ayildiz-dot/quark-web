@@ -4,6 +4,16 @@ import { supabase } from '../lib/supabase'
 
 // ── Shared ───────────────────────────────────────────────────────────────────
 
+// Today as YYYY-MM-DD in the user's local timezone. Built from local date parts rather
+// than toISOString(), which converts to UTC first and can hand back yesterday for anyone
+// west of UTC late in the evening.
+const TODAY_STR = (() => {
+  const d = new Date()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+})()
+
 function TypeBadge({ type }) {
   const isDsat = type === 'dsat'
   return (
@@ -31,7 +41,6 @@ function ResultBadge({ calibrated }) {
 function CalibrationHome({ onScore }) {
   const { profile } = useAuth()
   const uid = profile?.id
-  const [certs, setCerts]           = useState([])
   const [activeSessions, setActive] = useState([])
   const [pastResults, setPast]      = useState([])
   const [loading, setLoading]       = useState(true)
@@ -41,53 +50,10 @@ function CalibrationHome({ onScore }) {
   async function load() {
     setLoading(true)
 
-    // Append-only history, one row per (evaluator, scorecard, session). Status per
-    // scorecard is derived below from the ordered history — never a single mutable
-    // row, so different scorecards of the same type (e.g. per-division Quality
-    // scorecards) never overwrite or mix into each other. Only RELEASED sessions count
-    // toward the displayed status — otherwise a freshly-scored result would show up here
-    // before the evaluator is meant to see it, ahead of "Release Results" in Manage Sessions.
-    const { data: certHistory } = await supabase
-      .from('calibration_certification_history')
-      .select('scorecard_id, session_id, is_calibrated, delta, recorded_at')
-      .eq('evaluator_id', uid)
-      .order('recorded_at', { ascending: false })
-
-    const historySessionIds = [...new Set((certHistory || []).map(h => h.session_id))]
-    let releasedSessionIds = new Set()
-    if (historySessionIds.length > 0) {
-      const { data: histSessions } = await supabase
-        .from('calibration_sessions')
-        .select('id, results_released')
-        .in('id', historySessionIds)
-      releasedSessionIds = new Set((histSessions || []).filter(s => s.results_released).map(s => s.id))
-    }
-    const releasedHistory = (certHistory || []).filter(h => releasedSessionIds.has(h.session_id))
-
-    const scorecardIds = [...new Set(releasedHistory.map(h => h.scorecard_id))]
-    let scorecardMap = {}
-    if (scorecardIds.length > 0) {
-      const { data: scs } = await supabase.from('scorecards').select('id, name, type').in('id', scorecardIds)
-      scorecardMap = Object.fromEntries((scs || []).map(s => [s.id, s]))
-    }
-
-    const derivedCerts = scorecardIds.map(scId => {
-      const rows = releasedHistory.filter(h => h.scorecard_id === scId) // already sorted newest first
-      const latest = rows[0]
-      let consecutiveFailures = 0
-      for (const r of rows) {
-        if (r.is_calibrated) break
-        consecutiveFailures++
-      }
-      const lastPass = rows.find(r => r.is_calibrated)
-      return {
-        scorecard: scorecardMap[scId],
-        isActive: !!latest?.is_calibrated,
-        consecutiveFailures,
-        lastCalibratedAt: lastPass?.recorded_at || null,
-      }
-    })
-    setCerts(derivedCerts)
+    // The per-scorecard Certification Status cards were removed from this page, so the
+    // certification-history derivation that fed them is gone too — it was three queries
+    // per page load doing nothing. The history table itself is untouched and still
+    // written on every scoring; Insights and the certification ledger still use it.
 
     const { data: parts } = await supabase
       .from('calibration_participants')
@@ -164,40 +130,6 @@ function CalibrationHome({ onScore }) {
     setLoading(false)
   }
 
-  function CertCard({ cert }) {
-    const label = cert.scorecard?.name || 'Unknown scorecard'
-    return (
-      <div className="card" style={{ flex: 1, minWidth: 220, textAlign: 'center' }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 14, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          {label}
-        </div>
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          padding: '6px 18px', borderRadius: 20, fontSize: 13, fontWeight: 700,
-          backgroundColor: cert.isActive ? 'rgba(22,163,74,0.14)' : 'rgba(220,38,38,0.14)',
-          color: cert.isActive ? '#16a34a' : '#dc2626',
-          border: `1px solid ${cert.isActive ? 'rgba(22,163,74,0.35)' : 'rgba(220,38,38,0.35)'}`,
-          marginBottom: 10,
-        }}>
-          {cert.isActive ? '✓ Certified' : '✗ Not Certified'}
-        </div>
-        {cert.lastCalibratedAt && (
-          <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-            Last calibrated: {new Date(cert.lastCalibratedAt).toLocaleDateString()}
-          </div>
-        )}
-        {!cert.isActive && cert.consecutiveFailures >= 3 && (
-          <div style={{
-            fontSize: 11, color: '#dc2626', marginTop: 10, padding: '6px 10px',
-            background: 'rgba(220,38,38,0.1)', borderRadius: 6, fontWeight: 500,
-          }}>
-            Recertification required · {cert.consecutiveFailures} consecutive failures
-          </div>
-        )}
-      </div>
-    )
-  }
-
   if (loading) return (
     <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>Loading…</div>
   )
@@ -207,21 +139,6 @@ function CalibrationHome({ onScore }) {
 
   return (
     <div>
-      <section style={{ marginBottom: 28 }}>
-        <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Certification Status
-        </h2>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          {certs.length === 0 ? (
-            <div className="card" style={{ textAlign: 'center', padding: 36, color: 'var(--text-secondary)', fontSize: 14, width: '100%' }}>
-              No calibration data yet
-            </div>
-          ) : (
-            certs.map(cert => <CertCard key={cert.scorecard?.id || Math.random()} cert={cert} />)
-          )}
-        </div>
-      </section>
-
       <section style={{ marginBottom: 28 }}>
         <h2 style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           Active Sessions
@@ -722,7 +639,9 @@ function CalibrationAdmin() {
     const [{ data: sess }, { data: scs }, { data: us }] = await Promise.all([
       sessionsQuery,
       supabase.from('scorecards').select('id, name, type').eq('is_calibration', true).eq('is_published', true).order('name'),
-      supabase.from('users').select('id, name, email').ilike('email', '%@kaizengaming.com').order('email'),
+      // Participants must be KG evaluators/TLs/admins — never agents. `viewer` is the
+      // Agent role, and an agent has no business scoring a calibration case.
+      supabase.from('users').select('id, name, email, role').ilike('email', '%@kaizengaming.com').neq('role', 'viewer').order('email'),
     ])
     setSessions(sess || [])
     setScorecards(scs || [])
@@ -798,6 +717,21 @@ function CalibrationAdmin() {
   async function handleCreate() {
     if (!form.title || !form.scorecard_id) {
       alert('Title and scorecard are required.')
+      return
+    }
+    // `min` on a date input only constrains the picker — a typed value slips past it,
+    // so the rule is enforced here too.
+    const today = TODAY_STR
+    if (form.session_date && form.session_date < today) {
+      alert('The session date cannot be in the past.')
+      return
+    }
+    if (form.scoring_deadline && form.scoring_deadline < today) {
+      alert('The scoring deadline cannot be in the past.')
+      return
+    }
+    if (form.scoring_deadline && form.session_date && form.scoring_deadline < form.session_date) {
+      alert('The scoring deadline cannot be earlier than the session date.')
       return
     }
     setCreating(true)
@@ -1064,11 +998,15 @@ function CalibrationAdmin() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 5, color: 'var(--text-secondary)' }}>Session Date</label>
-                  <input type="date" style={inputStyle} value={form.session_date} onChange={e => setForm(f => ({ ...f, session_date: e.target.value }))} />
+                  {/* A calibration can't be scheduled into the past. `min` stops the date
+                      picker offering earlier dates; handleCreate re-checks, because a typed
+                      value can bypass `min`. */}
+                  <input type="date" style={inputStyle} min={TODAY_STR} value={form.session_date} onChange={e => setForm(f => ({ ...f, session_date: e.target.value }))} />
             </div>
             <div style={{ marginTop: 8 }}>
             <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Scoring Deadline</label>
-            <input type="date" style={inputStyle} value={form.scoring_deadline}
+            {/* Not before today, and never before the session date itself. */}
+            <input type="date" style={inputStyle} min={form.session_date && form.session_date > TODAY_STR ? form.session_date : TODAY_STR} value={form.scoring_deadline}
               onChange={e => setForm(f => ({ ...f, scoring_deadline: e.target.value }))} />
                 </div>
               </div>
@@ -1165,14 +1103,29 @@ function WeeklyDeltaChart({ data }) {
   const innerWidth = width - marginLeft - marginRight
   const innerHeight = height - marginTop - marginBottom
 
-  const maxDelta = Math.max(0.15, ...data.map(d => d.avgDelta)) * 1.15
+  if (!data.length) return (
+    <div style={{ padding: 36, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 13 }}>
+      No scored submissions in this range.
+    </div>
+  )
+
+  // The y-axis is derived from the data instead of a fixed 0-30% ladder. The old version
+  // hard-coded gridValues up to 0.30, so any average delta above 30% drew the line above
+  // every gridline with nothing to read it against, and the labels bunched into the lower
+  // half of the plot. Now: pick a step giving ~5 ticks, then round the top up to a whole
+  // step so the highest gridline is always at or above the highest point.
+  const rawMax = Math.max(0.15, ...data.map(d => d.avgDelta))
+  const step = [0.05, 0.1, 0.2, 0.25, 0.5, 1].find(s => rawMax / s <= 5) || 1
+  const maxDelta = Math.ceil(rawMax / step) * step
+
   const xFor = i => data.length === 1 ? marginLeft + innerWidth / 2 : marginLeft + (i / (data.length - 1)) * innerWidth
   const yFor = delta => marginTop + innerHeight - (delta / maxDelta) * innerHeight
 
   const points = data.map((d, i) => `${xFor(i)},${yFor(d.avgDelta)}`).join(' ')
   const thresholdY = yFor(0.10)
   const labelStep = Math.max(1, Math.ceil(data.length / 8))
-  const gridValues = [0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30].filter(v => v <= maxDelta)
+  const gridValues = []
+  for (let v = 0; v <= maxDelta + 1e-9; v += step) gridValues.push(Number(v.toFixed(4)))
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
