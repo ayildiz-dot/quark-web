@@ -55,6 +55,32 @@ function computeMeasure(measureKey, evals, scorecard) {
   const n = evals.length
   switch (measureKey) {
     case 'eval_count': return { display: String(n) }
+
+    // Criticality. A Highly Critical case is still ONE critical mistake — the escalated
+    // count is a SUBSET of critical_count, never an addition, so the two are never summed.
+    case 'critical_count': {
+      const c = evals.filter(e => e._crit).length
+      return { display: String(c), detail: c ? 'Form Critical attribute failed' : 'None in this view',
+               color: c ? '#d97706' : 'var(--success)' }
+    }
+    case 'highly_critical_count': {
+      const c = evals.filter(e => e._crit?.severity === 'highly_critical').length
+      // Deliberately labelled "of which" in the catalog: this is a SUBSET of
+      // critical_count, so the two must never be added together.
+      return { display: String(c), detail: c ? 'Subset of Critical Cases' : 'None in this view',
+               color: c ? 'var(--danger)' : 'var(--success)' }
+    }
+    case 'criticality_rate': {
+      // INTERIM. The real rate is criticals / total handled interactions, which Quark
+      // has no source for until Echo lands. Labelled "(per evaluation)" in the widget
+      // title so it is never mistaken for the true figure.
+      if (!n) return { display: '—' }
+      const c = evals.filter(e => e._crit).length
+      const pct = Math.round((c / n) * 1000) / 10
+      return { display: pct + '%',
+               detail: c + ' of ' + n + ' evaluations · interim, true rate needs Echo',
+               color: pct <= 5 ? 'var(--success)' : pct <= 10 ? '#d97706' : 'var(--danger)' }
+    }
     case 'avg_quality_score': {
       if (!n) return { display: '—' }
       const sum = evals.reduce((a, e) => a + (e.score ?? 0), 0)
@@ -177,6 +203,10 @@ const WIDGET_CATALOG = {
     { widget_type: 'stat_card',  title: '# Evaluations with minimum 1 AI Attribute', config: { measure: 'ai_eval_count' }, aiOnly: true },
     { widget_type: 'line_chart', title: 'Quality \u2014 Week over Week', config: {} },
     { widget_type: 'bar_chart',  title: 'Quality Score by Agent',    config: { measure: 'avg_quality_score' } },
+    { widget_type: 'stat_card',  title: 'Critical Cases',            config: { measure: 'critical_count' } },
+    { widget_type: 'stat_card',  title: 'of which Highly Critical',  config: { measure: 'highly_critical_count' } },
+    { widget_type: 'stat_card',  title: 'Criticality Rate (per evaluation)', config: { measure: 'criticality_rate' } },
+    { widget_type: 'top_critical_attributes', title: 'Most breached critical attributes', config: {} },
     { widget_type: 'ai_attribute_accuracy', title: 'AI Attribute Accuracy',             config: {}, aiOnly: true },
     { widget_type: 'ai_comparison_table',   title: 'AI vs Human — Recent Comparisons',  config: {}, aiOnly: true },
   ],
@@ -185,6 +215,10 @@ const WIDGET_CATALOG = {
     { widget_type: 'stat_card',  title: 'Total DSATs Evaluated',         config: { measure: 'eval_count' } },
     { widget_type: 'line_chart', title: 'Controllability \u2014 Week over Week', config: {} },
     { widget_type: 'bar_chart',  title: 'Controllability by Agent',      config: { measure: 'controllability_rate' } },
+    { widget_type: 'stat_card',  title: 'Critical Cases',                config: { measure: 'critical_count' } },
+    { widget_type: 'stat_card',  title: 'of which Highly Critical',      config: { measure: 'highly_critical_count' } },
+    { widget_type: 'stat_card',  title: 'Criticality Rate (per evaluation)', config: { measure: 'criticality_rate' } },
+    { widget_type: 'top_critical_attributes', title: 'Most breached critical attributes', config: {} },
     { widget_type: 'stat_card',  title: 'Alignment Rate',                config: { measure: 'alignment_rate' } },
     { widget_type: 'stat_card',  title: 'Deviated Controllability Rate', config: { measure: 'deviated_controllability_rate' } },
     { widget_type: 'line_chart', title: 'Alignment Rate \u2014 Week over Week', config: { measure: 'alignment_rate' } },
@@ -774,6 +808,7 @@ export default function ScorecardDashboard() {
   // titles, and any evaluation_scores rows against them that have an AI suggestion
   // recorded. Empty for DSAT scorecards (accuracy there comes straight off `evals`).
   const [aiQuestionTitles, setAiQuestionTitles] = useState({})
+  const [critAttrTitles, setCritAttrTitles] = useState({})
   const [aiScoreRows, setAiScoreRows] = useState([])
   // Vendor-shaped rows for the two spot-check measures (Alignment Rate, Deviated
   // Controllability). On the Vendor (non-spot-check) scorecard's own dashboard,
@@ -852,7 +887,33 @@ export default function ScorecardDashboard() {
         id: q.id, hub_id: q.hub_id, hub_name: q.hubs?.name || '', market_value: q.market_value,
       }))
 
-      setScorecard(sc); setMetadataFields(mf || []); setWidgets(w || []); setEvals(ev || [])
+      // Criticality, attached to each evaluation so the measure engine stays a pure
+      // function of `evals`. Read from the register, which the Phase 1 trigger keeps in
+      // step — so a corrected evaluation or an upheld dispute drops out of these numbers
+      // with no extra work here.
+      let evWithCrit = ev || []
+      const critTitles = {}
+      if (evWithCrit.length) {
+        const { data: ccs, error: ccErr } = await supabase
+          .from('critical_cases')
+          .select('evaluation_id, severity, critical_attribute_ids')
+          .in('evaluation_id', evWithCrit.map(e => e.id))
+          .is('deleted_at', null)
+        if (ccErr) console.error('criticality failed to load:', ccErr.message)
+        const byEval = {}
+        ;(ccs || []).forEach(c => { byEval[c.evaluation_id] = c })
+        evWithCrit = evWithCrit.map(e => ({ ...e, _crit: byEval[e.id] || null }))
+
+        // Attribute titles for the "most breached" table.
+        const attrIds = [...new Set((ccs || []).flatMap(c => c.critical_attribute_ids || []))]
+        if (attrIds.length) {
+          const { data: qs } = await supabase.from('scorecard_questions').select('id, title').in('id', attrIds)
+          ;(qs || []).forEach(q => { critTitles[q.id] = q.title })
+        }
+      }
+      setCritAttrTitles(critTitles)
+
+      setScorecard(sc); setMetadataFields(mf || []); setWidgets(w || []); setEvals(evWithCrit)
       setGovQueues(govList)
 
       // Phase 5: Quality AI Attribute accuracy data — quality scorecards only.
@@ -1108,6 +1169,57 @@ export default function ScorecardDashboard() {
         </div>
       )
     }
+    if (w.widget_type === 'top_critical_attributes') {
+      // Counts BREACHES, not cases: one evaluation can breach several attributes while
+      // still being a single critical mistake. Said plainly under the table so the
+      // total never looks like it contradicts the Critical Cases card.
+      const tally = {}
+      filteredEvals.forEach(e => {
+        if (!e._crit) return
+        ;(e._crit.critical_attribute_ids || []).forEach(id => {
+          tally[id] = tally[id] || { id, critical: 0, highly: 0 }
+          if (e._crit.severity === 'highly_critical') tally[id].highly++
+          else tally[id].critical++
+        })
+      })
+      const rows = Object.values(tally)
+        .map(r => ({ ...r, total: r.critical + r.highly, title: critAttrTitles[r.id] || 'Unknown attribute' }))
+        .sort((a, b) => b.total - a.total)
+      return (
+        <div key={w.id} className="card" style={{ marginBottom:16, position:'relative' }}>
+          {removeBtn}
+          <div className="card-title" style={{ marginBottom:16 }}>{w.title}</div>
+          {rows.length === 0 ? (
+            <p style={{ color:'var(--text-tertiary)', fontSize:13, textAlign:'center', padding:'20px 0' }}>
+              No critical attributes breached in the filtered view.
+            </p>
+          ) : (
+            <>
+              <div className="table-wrap" style={{ border:'none' }}>
+                <table className="table">
+                  <thead><tr><th>Attribute</th><th>Critical</th><th>Highly Critical</th><th>Total breaches</th></tr></thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.id}>
+                        <td>{r.title}</td>
+                        <td style={{ color:'var(--text-secondary)' }}>{r.critical}</td>
+                        <td style={{ color: r.highly ? 'var(--danger)' : 'var(--text-secondary)', fontWeight: r.highly ? 600 : 400 }}>{r.highly}</td>
+                        <td style={{ fontWeight:600 }}>{r.total}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ fontSize:11, color:'var(--text-tertiary)', marginTop:8 }}>
+                Counts attribute breaches. One evaluation can breach several attributes and still be a single critical case,
+                so this total can exceed the Critical Cases count.
+              </p>
+            </>
+          )}
+        </div>
+      )
+    }
+
     if (w.widget_type === 'ai_attribute_accuracy') {
       const { rows, pooled } = aiAttributeStats
       return (
