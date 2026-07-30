@@ -1681,9 +1681,14 @@ function ReferenceDataTab({ profile, flash }) {
   const [hubs, setHubs]       = useState([])
   const [channels, setChannels] = useState([])
   const [templates, setTemplates] = useState([])
+  const [reasons, setReasons] = useState([])
+  const [reasonDivs, setReasonDivs] = useState([])
+  const [divisions, setDivisions] = useState([])
+  const [reasonUse, setReasonUse] = useState({})
   const [loading, setLoading] = useState(true)
   const [newName, setNewName] = useState('')
   const [newChannel, setNewChannel] = useState('')
+  const [newReason, setNewReason] = useState('')
   const [newTpl, setNewTpl]   = useState({ label: '', source: 'custom', field_type: 'text', is_required: true })
   const [busy, setBusy]       = useState(false)
 
@@ -1696,7 +1701,18 @@ function ReferenceDataTab({ profile, flash }) {
       supabase.from('channels').select('*').order('name'),
     ])
     const { data: tpl } = await supabase.from('metadata_field_templates').select('*').order('position')
+    // Highly Critical reasons + their division tags. Usage counts come from the
+    // register so a reason already attached to real cases can't be removed unknowingly.
+    const [{ data: hcr }, { data: hcrd }, { data: divs }, { data: used }] = await Promise.all([
+      supabase.from('highly_critical_reasons').select('*').order('position').order('name'),
+      supabase.from('highly_critical_reason_divisions').select('reason_id, division_id'),
+      supabase.from('divisions').select('id, name, is_active').order('position'),
+      supabase.from('critical_cases').select('highly_critical_reason_id').not('highly_critical_reason_id', 'is', null).is('deleted_at', null),
+    ])
+    const useMap = {}
+    ;(used || []).forEach(r => { useMap[r.highly_critical_reason_id] = (useMap[r.highly_critical_reason_id] || 0) + 1 })
     setMarkets(mk || []); setQueues(qs || []); setHubs(hb || []); setChannels(ch || []); setTemplates(tpl || [])
+    setReasons(hcr || []); setReasonDivs(hcrd || []); setDivisions(divs || []); setReasonUse(useMap)
     setLoading(false)
   }
   useEffect(() => { load() /* eslint-disable-next-line */ }, [])
@@ -1764,6 +1780,51 @@ function ReferenceDataTab({ profile, flash }) {
   const toggleChannel = async (c) => {
     setBusy(true)
     const { error } = await supabase.from('channels').update({ is_active: !c.is_active }).eq('id', c.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load()
+  }
+
+  // ── Highly Critical reasons ────────────────────────────────────────────────
+  const divsFor = (rid) => reasonDivs.filter(rd => rd.reason_id === rid).map(rd => rd.division_id)
+  const divName = (id) => (divisions.find(d => d.id === id) || {}).name || '—'
+
+  const addReason = async () => {
+    const name = newReason.trim()
+    if (!name) return
+    if (reasons.some(r => r.name.toLowerCase() === name.toLowerCase())) return flash('That reason already exists.', false)
+    setBusy(true)
+    const { error } = await supabase.from('highly_critical_reasons').insert({ name, position: reasons.length + 1 })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    setNewReason(''); await load(); flash('Reason added. Tag it to a division so evaluators can use it.')
+  }
+  const renameReason = async (r, name) => {
+    const n = name.trim()
+    if (!n || n === r.name) return
+    if (reasons.some(x => x.id !== r.id && x.name.toLowerCase() === n.toLowerCase())) return flash('Another reason already has that name.', false)
+    setBusy(true)
+    const { error } = await supabase.from('highly_critical_reasons').update({ name: n }).eq('id', r.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load(); flash('Reason renamed.')
+  }
+  // Retire, never delete — historical cases keep their reason, but it leaves the
+  // evaluator's dropdown. Same soft-retire pattern as markets and channels.
+  const toggleReason = async (r) => {
+    setBusy(true)
+    const { error } = await supabase.from('highly_critical_reasons').update({ is_active: !r.is_active }).eq('id', r.id)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    await load()
+    flash(r.is_active ? 'Reason retired — it stays on historical cases but is no longer selectable.' : 'Reason reactivated.')
+  }
+  const toggleReasonDiv = async (r, divisionId) => {
+    const on = divsFor(r.id).includes(divisionId)
+    setBusy(true)
+    const { error } = on
+      ? await supabase.from('highly_critical_reason_divisions').delete().eq('reason_id', r.id).eq('division_id', divisionId)
+      : await supabase.from('highly_critical_reason_divisions').insert({ reason_id: r.id, division_id: divisionId })
     setBusy(false)
     if (error) return flash(error.message, false)
     await load()
@@ -1861,6 +1922,74 @@ function ReferenceDataTab({ profile, flash }) {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ marginRight: 'auto' }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>Highly Critical Reasons ({reasons.length})</div>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
+              The escalation list. Critical attributes themselves are not listed here — they come from each scorecard's Form Critical questions.
+            </div>
+          </div>
+          <input className="input" style={{ height: 32, fontSize: 13, width: 220 }} placeholder="New reason" value={newReason}
+            onChange={e => setNewReason(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addReason() }} />
+          <button className="btn btn-primary btn-sm" disabled={busy || !newReason.trim()} onClick={addReason}>+ Add reason</button>
+        </div>
+        <div className="table-wrap">
+          <table className="table" style={{ width: '100%' }}>
+            <thead><tr><th style={th}>Reason</th><th style={th}>Divisions</th><th style={th}>Status</th><th style={th}>Cases</th></tr></thead>
+            <tbody>
+              {reasons.length === 0 && <tr><td style={td} colSpan={4}>No reasons yet. Add one above — until then, evaluators cannot mark anything Highly Critical.</td></tr>}
+              {reasons.map(r => {
+                const mine = divsFor(r.id)
+                const used = reasonUse[r.id] || 0
+                return (
+                  <tr key={r.id} style={{ opacity: r.is_active ? 1 : 0.55 }}>
+                    <td style={td}>
+                      <input className="input" style={{ height: 30, fontSize: 13, width: 230 }} defaultValue={r.name} onBlur={e => renameReason(r, e.target.value)} />
+                    </td>
+                    <td style={td}>
+                      {/* Division tagging is what lets this start Customer Support-only and
+                          extend later without a rebuild. An untagged reason is invisible to
+                          every evaluator, so it is called out explicitly. */}
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {divisions.filter(d => d.is_active !== false).map(d => {
+                          const on = mine.includes(d.id)
+                          return (
+                            <button key={d.id} className="btn btn-outline btn-sm" disabled={busy}
+                              title={on ? 'Click to remove this division' : 'Click to enable for this division'}
+                              onClick={() => toggleReasonDiv(r, d.id)}
+                              style={{ fontSize: 11, borderColor: on ? 'var(--accent)' : 'var(--border)', color: on ? 'var(--accent)' : 'var(--text-secondary)', background: on ? 'var(--accent-light)' : 'transparent' }}>
+                              {on ? '✓ ' : '+ '}{d.name}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {mine.length === 0 && (
+                        <div style={{ fontSize: 11, color: 'var(--warning, #d97706)', marginTop: 4 }}>
+                          Not tagged to any division — no evaluator can select it.
+                        </div>
+                      )}
+                    </td>
+                    <td style={td}>
+                      <button className="btn btn-outline btn-sm" title="Click to change status"
+                        style={{ fontSize: 11, color: r.is_active ? 'var(--success)' : 'var(--text-secondary)' }}
+                        onClick={() => toggleReason(r)}>{r.is_active ? '● Active ⇄' : '○ Retired ⇄'}</button>
+                    </td>
+                    <td style={td}>
+                      <div style={{ fontSize: 12 }}>{used}</div>
+                      {used > 0 && <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>retire only — in use</div>}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <div style={{ padding: '8px 14px', fontSize: 11, color: 'var(--text-secondary)' }}>
+            Retiring keeps a reason on historical cases but removes it from the evaluator's dropdown. Reasons are never hard-deleted.
+          </div>
         </div>
       </div>
 
