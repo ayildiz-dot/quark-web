@@ -358,9 +358,12 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       _type: sa ? 'Standalone' : (ev.evaluation_type === 'dsat' ? 'DSAT' : 'Quality'),
       _agent: sa ? (cc.agent_email || '') : (getMeta(ev, "Agent's Email") || ''),
       _scorecard: sa ? '' : (ev.scorecards?.name || ''),
+      // Standalone cases store hub/workspace/market directly, because a hub+market can be
+      // served by several queues so queue_id may be null. Names come from the governance
+      // maps rather than the queue context in that case.
       _div: ctx.division_name || '',
-      _bpo: ctx.workspace_name || '',
-      _hub: ctx.hub_name || '',
+      _bpo: sa ? (ctx.workspace_name || gov?.ws?.[cc.workspace_id] || '') : (ctx.workspace_name || ''),
+      _hub: sa ? (ctx.hub_name || gov?.hub?.[cc.hub_id] || '') : (ctx.hub_name || ''),
       _market: sa ? (cc.market || ctx.market || '') : (ctx.market || getMeta(ev, 'Market') || ''),
       _coach: it.coaching?.coach?.name || '',
       // Standalone cases are dated by when they were reported — that is when the clock

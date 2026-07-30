@@ -27,7 +27,9 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
   const [scId, setScId]         = useState('')
   const [attrId, setAttrId]     = useState('')
   const [reasonId, setReason]   = useState('')
-  const [queueId, setQueueId]   = useState('')
+  const [wsId, setWsId]         = useState('')
+  const [hubId, setHubId]       = useState('')
+  const [market, setMarket]     = useState('')
   const [agentQ, setAgentQ]     = useState('')
   const [agent, setAgent]       = useState('')
   const [ticket, setTicket]     = useState('')
@@ -105,7 +107,48 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
       .then(({ data }) => setAttrs(data || []))
   }, [scId])
 
-  const q = queues.find(x => x.id === queueId)
+  // A hub + market pair can be served by SEVERAL queues — one per scorecard, and again
+  // per Kaizen/BPO team. Listing queues directly therefore shows the same hub·market
+  // repeatedly with no way to tell the entries apart. A BPO -> Hub -> Market cascade is
+  // unambiguous, and it is what the case actually needs: hub and market drive scoping,
+  // while the queue is a finer grain than a standalone report requires.
+  const wsOptions = useMemo(() => {
+    const m = {}
+    queues.forEach(x => {
+      const id = x.hubs?.workspace_id || x.workspace_id
+      const name = x.hubs?.workspaces?.name
+      if (id && name) m[id] = name
+    })
+    return Object.entries(m).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [queues])
+
+  const hubOptions = useMemo(() => {
+    if (!wsId) return []
+    const m = {}
+    queues.forEach(x => {
+      const w = x.hubs?.workspace_id || x.workspace_id
+      if (w !== wsId || !x.hub_id || !x.hubs?.name) return
+      m[x.hub_id] = x.hubs.name
+    })
+    return Object.entries(m).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [queues, wsId])
+
+  const marketOptions = useMemo(() => {
+    if (!hubId) return []
+    return [...new Set(queues.filter(x => x.hub_id === hubId && x.market_value).map(x => x.market_value))].sort()
+  }, [queues, hubId])
+
+  // Reset downstream choices when a parent changes, so a stale hub/market can't be submitted.
+  useEffect(() => { setHubId(''); setMarket('') }, [wsId])
+  useEffect(() => { setMarket('') }, [hubId])
+
+  // Any queue on this hub+market carries the governance ids we need. Where several match
+  // (different scorecards or teams) queue_id is left null — hub, workspace, division and
+  // market are stored explicitly, which is what scoping and reporting actually use.
+  const matching = useMemo(
+    () => queues.filter(x => x.hub_id === hubId && x.market_value === market),
+    [queues, hubId, market])
+  const q = matching[0]
   const divisionId = q?.hubs?.workspaces?.division_id || null
 
   // Narrowed to the selected hub's division once one is chosen; everything the user can
@@ -123,11 +166,12 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
   }, [reasonOptions])
 
   const agentPool = useMemo(() => {
-    const pool = queueId
-      ? agentRows.filter(a => a.queue_id === null || a.queue_id === queueId).map(a => a.email)
+    const okQueues = new Set(matching.map(x => x.id))
+    const pool = okQueues.size
+      ? agentRows.filter(a => a.queue_id === null || okQueues.has(a.queue_id)).map(a => a.email)
       : agentRows.map(a => a.email)
     return [...new Set(pool)].sort()
-  }, [agentRows, queueId])
+  }, [agentRows, matching])
   const agentMatches = agentQ.trim()
     ? agentPool.filter(a => a.toLowerCase().includes(agentQ.trim().toLowerCase())).slice(0, 6)
     : []
@@ -142,7 +186,7 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
     if (type === 'highly' && !reasonId) return flash('Select a Highly Critical reason.', false)
     if (!ticket.trim()) return flash('Ticket ID is required.', false)
     if (!agent) return flash('Select the agent.', false)
-    if (!queueId) return flash('Select the BPO-Hub · Market this case belongs to.', false)
+    if (!wsId || !hubId || !market) return flash('Select the BPO, Hub and Market this case belongs to.', false)
     if (occurred && occurred > todayStr) return flash('The interaction date cannot be in the future.', false)
     if (!notes.trim()) return flash('Describe what happened.', false)
 
@@ -156,10 +200,11 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
       agent_email: agent,
       occurred_on: occurred || null,
       division_id: divisionId,
-      workspace_id: q?.workspace_id || q?.hubs?.workspace_id || null,
-      hub_id: q?.hub_id || null,
-      queue_id: queueId,
-      market: q?.market_value || null,
+      workspace_id: wsId,
+      hub_id: hubId,
+      // Null when the hub+market is served by more than one queue — see note above.
+      queue_id: matching.length === 1 ? matching[0].id : null,
+      market: market,
       reported_by: profile.id,
       // Only Highly Critical carries the 24-hour coaching clock.
       sla_due_at: type === 'highly' ? new Date(Date.now() + 24 * 3600 * 1000).toISOString() : null,
@@ -213,17 +258,32 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
 
               {/* Hub first for the Highly Critical path, because the reason list is
                   division-scoped and the division comes from the hub. */}
-              <div style={fld}>
-                <label style={lbl}>BPO-Hub · Market <span style={{ color: 'var(--danger)' }}>*</span></label>
-                <select className="select" style={{ width: '100%' }} value={queueId} onChange={e => setQueueId(e.target.value)}>
-                  <option value="">— Select —</option>
-                  {queues.map(x => (
-                    <option key={x.id} value={x.id}>
-                      {(x.hubs?.name || 'Hub')} · {x.market_value || '—'}{x.hubs?.workspaces?.name ? ` (${x.hubs.workspaces.name})` : ''}
-                    </option>
-                  ))}
-                </select>
-                <div style={hint}>Determines where the case is filed, and which Highly Critical reasons apply.</div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ ...fld, flex: 1, minWidth: 150 }}>
+                  <label style={lbl}>BPO <span style={{ color: 'var(--danger)' }}>*</span></label>
+                  <select className="select" style={{ width: '100%' }} value={wsId} onChange={e => setWsId(e.target.value)}>
+                    <option value="">— Select —</option>
+                    {wsOptions.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                  </select>
+                </div>
+                <div style={{ ...fld, flex: 1, minWidth: 150 }}>
+                  <label style={lbl}>Hub <span style={{ color: 'var(--danger)' }}>*</span></label>
+                  <select className="select" style={{ width: '100%' }} value={hubId} onChange={e => setHubId(e.target.value)} disabled={!wsId}>
+                    <option value="">{wsId ? '— Select —' : 'Choose a BPO first'}</option>
+                    {hubOptions.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                  </select>
+                </div>
+                <div style={{ ...fld, flex: 1, minWidth: 150 }}>
+                  <label style={lbl}>Market <span style={{ color: 'var(--danger)' }}>*</span></label>
+                  <select className="select" style={{ width: '100%' }} value={market} onChange={e => setMarket(e.target.value)} disabled={!hubId}>
+                    <option value="">{hubId ? '— Select —' : 'Choose a hub first'}</option>
+                    {marketOptions.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                  {hubId && marketOptions.length === 0 && <div style={warn}>This hub has no queues with a market mapped.</div>}
+                </div>
+              </div>
+              <div style={{ ...hint, marginTop: -4, marginBottom: 12 }}>
+                Determines where the case is filed, and which Highly Critical reasons apply.
               </div>
 
               {type === 'critical' ? (
