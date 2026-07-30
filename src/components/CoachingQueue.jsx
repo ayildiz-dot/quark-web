@@ -50,6 +50,24 @@ const Badge = ({ s }) => {
   return <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: c.bg, color: c.color, whiteSpace: 'nowrap' }}>{c.label}</span>
 }
 
+// Criticality chip. Highly Critical outranks Critical, and the two are never summed —
+// a highly critical case is still one critical mistake, just a worse one. The reason is
+// shown on hover so the coach can see what they are coaching against from the list.
+const CRIT = {
+  highly_critical: { label: 'Highly Critical', color: '#b91c1c', bg: '#fee2e2' },
+  critical:        { label: 'Critical',        color: '#b45309', bg: '#fef3c7' },
+}
+const CritChip = ({ severity, reason }) => {
+  const c = CRIT[severity]
+  if (!c) return <span style={{ color: 'var(--text-tertiary)' }}>—</span>
+  return (
+    <span title={reason ? `Reason: ${reason}` : undefined}
+      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: c.bg, color: c.color, whiteSpace: 'nowrap' }}>
+      {c.label}
+    </span>
+  )
+}
+
 function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged }) {
   const ev = item.ev
   const coaching = item.coaching
@@ -111,6 +129,35 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
             <span><b>Agent:</b> {(() => { const ae = getMeta(ev, "Agent's Email"); return ae && ae !== '—' ? <AgentEmailChip email={ae} /> : '—' })()}</span>
             <span style={{ color: 'var(--text-secondary)' }}>{new Date(ev.submitted_at).toLocaleDateString()}</span>
           </div>
+
+          {/* Criticality banner. A coach told only "Highly Critical" has nothing concrete
+              to work with, so the reason and the breached attributes are spelled out here,
+              along with the 24-hour deadline where one applies. */}
+          {item.crit && (
+            <div style={{
+              marginTop: 14, borderRadius: 8, padding: '11px 14px',
+              border: `1px solid ${item.crit.severity === 'highly_critical' ? 'var(--danger)' : 'var(--warning, #d97706)'}`,
+              background: item.crit.severity === 'highly_critical' ? 'rgba(220,38,38,0.06)' : 'rgba(217,119,6,0.06)',
+            }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }}>
+                <CritChip severity={item.crit.severity} reason={item.crit.reason?.name} />
+                {item.crit.severity === 'highly_critical' && item.crit.sla_due_at && (
+                  <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                    Must be coached by <b style={{ color: 'var(--text-primary)' }}>{new Date(item.crit.sla_due_at).toLocaleString()}</b>
+                  </span>
+                )}
+              </div>
+              {item.crit.reason?.name && (
+                <div style={{ fontSize: 12.5 }}><b style={{ color: 'var(--text-secondary)' }}>Reason:</b> {item.crit.reason.name}</div>
+              )}
+              {(item.crit.critical_attribute_ids || []).length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                  {item.crit.critical_attribute_ids.length} critical attribute{item.crit.critical_attribute_ids.length === 1 ? '' : 's'} breached
+                  {!isDsat && ' — see the failed questions below'}
+                </div>
+              )}
+            </div>
+          )}
 
           <div style={label}>Interaction details</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
@@ -185,6 +232,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
   const [fHub, setFHub]     = useState('')
   const [fMarket, setFMkt]  = useState('')
   const [fCoach, setFCoach] = useState('')
+  const [fCrit, setFCrit]   = useState('')
   const [fFrom, setFrom]    = useState('')
   const [fTo, setTo]        = useState('')
 
@@ -207,13 +255,25 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
     const candidates = (evs || []).filter(isCoachable)
     const ids = candidates.map(e => e.id)
     const coachMap = {}
+    const critMap = {}
     if (ids.length) {
-      const { data: cs } = await supabase.from('eval_coachings')
-        .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
-        .in('evaluation_id', ids)
+      // Criticality comes from the register, which the sync trigger keeps in step with the
+      // evaluations — so if a critical is corrected away, or a dispute is upheld, the chip
+      // disappears here with no extra work. The reason name is joined in because a coach
+      // who only sees "Highly Critical" has nothing concrete to coach against.
+      const [{ data: cs }, { data: ccs }] = await Promise.all([
+        supabase.from('eval_coachings')
+          .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
+          .in('evaluation_id', ids),
+        supabase.from('critical_cases')
+          .select('evaluation_id, severity, critical_attribute_ids, sla_due_at, reason:highly_critical_reasons(name)')
+          .in('evaluation_id', ids)
+          .is('deleted_at', null),
+      ])
       ;(cs || []).forEach(c => { coachMap[c.evaluation_id] = c })
+      ;(ccs || []).forEach(c => { critMap[c.evaluation_id] = c })
     }
-    setItems(candidates.map(ev => ({ ev, coaching: coachMap[ev.id] || null })))
+    setItems(candidates.map(ev => ({ ev, coaching: coachMap[ev.id] || null, crit: critMap[ev.id] || null })))
     setLoading(false)
   }
   useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
@@ -231,6 +291,9 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       _market: ctx.market || getMeta(ev, 'Market') || '',
       _coach: it.coaching?.coach?.name || '',
       _date: ev.submitted_at ? String(ev.submitted_at).slice(0, 10) : '',
+      // '' when not a critical case at all — so the filter can offer "Not critical" too.
+      _crit: it.crit?.severity || '',
+      _critReason: it.crit?.reason?.name || '',
     }
   }), [items, gov])
 
@@ -244,13 +307,14 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
     return (!fType || it._type === fType) && (!fScore || it._scorecard === fScore) &&
       (!fAgent || it._agent === fAgent) && (!fDiv || it._div === fDiv) && (!fBpo || it._bpo === fBpo) &&
       (!fHub || it._hub === fHub) && (!fMarket || it._market === fMarket) && (!fCoach || it._coach === fCoach) &&
+      (!fCrit || (fCrit === 'none' ? !it._crit : it._crit === fCrit)) &&
       (!fFrom || (it._date && it._date >= fFrom)) && (!fTo || (it._date && it._date <= fTo))
-  }), [deco, tabFilter, profile?.id, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fFrom, fTo])
+  }), [deco, tabFilter, profile?.id, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fCrit, fFrom, fTo])
 
   const showCoach = tabFilter === 'all' || tabFilter === 'done'
   const statusOf = (it) => it.coaching ? it.coaching.status : 'pending'
-  const clearAll = () => { setFType(''); setFScore(''); setFAgent(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFCoach(''); setFrom(''); setTo('') }
-  const anyFilter = fType || fScore || fAgent || fDiv || fBpo || fHub || fMarket || fCoach || fFrom || fTo
+  const clearAll = () => { setFType(''); setFScore(''); setFAgent(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFCoach(''); setFCrit(''); setFrom(''); setTo('') }
+  const anyFilter = fType || fScore || fAgent || fDiv || fBpo || fHub || fMarket || fCoach || fCrit || fFrom || fTo
   const sel = { padding: '6px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12 }
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
@@ -265,6 +329,12 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
         <select style={sel} value={fType} onChange={e => setFType(e.target.value)}><option value="">All Types</option><option>Quality</option><option>DSAT</option></select>
+        <select style={sel} value={fCrit} onChange={e => setFCrit(e.target.value)}>
+          <option value="">All Criticality</option>
+          <option value="highly_critical">Highly Critical</option>
+          <option value="critical">Critical</option>
+          <option value="none">Not critical</option>
+        </select>
         <select style={sel} value={fScore} onChange={e => setFScore(e.target.value)}><option value="">All Scorecards</option>{opts('_scorecard').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fAgent} onChange={e => setFAgent(e.target.value)}><option value="">All Agents</option>{opts('_agent').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fDiv} onChange={e => setFDiv(e.target.value)}><option value="">All Divisions</option>{opts('_div').map(o => <option key={o}>{o}</option>)}</select>
@@ -283,12 +353,12 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={thStyle}>#</th><th style={thStyle}>Type</th><th style={thStyle}>Agent</th><th style={thStyle}>Scorecard</th>
-              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Date</th>
+              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Criticality</th><th style={thStyle}>Date</th>
               {showCoach && <th style={thStyle}>Coach</th>}
               <th style={thStyle}>Coaching</th><th style={{ ...thStyle, textAlign: 'right' }}></th>
             </tr></thead>
             <tbody>
-              {filtered.length === 0 && <tr><td colSpan={showCoach ? 9 : 8} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={showCoach ? 10 : 9} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
               {filtered.map(it => {
                 const ev = it.ev, isDsat = ev.evaluation_type === 'dsat'
                 return (
@@ -298,6 +368,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
                     <td style={tdStyle}>{it._agent ? <AgentEmailChip email={it._agent} /> : '—'}</td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{ev.scorecards?.name || '—'}</td>
                     <td style={tdStyle}>{isDsat ? (ev.deviated_controllability ?? 'Controllable') : `${ev.score}%`}</td>
+                    <td style={tdStyle}><CritChip severity={it._crit} reason={it._critReason} /></td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{new Date(ev.submitted_at).toLocaleDateString()}</td>
                     {showCoach && <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{it._coach || '—'}</td>}
                     <td style={tdStyle}><Badge s={statusOf(it)} /></td>

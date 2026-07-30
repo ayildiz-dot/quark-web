@@ -818,6 +818,7 @@ const EC_STATUS = {
   acknowledged: { label: 'Acknowledged',             color: '#22c55e' },
 }
 // Wording used in the export and the SLA filter, matching the 24h Critical Cases language.
+const CRIT_LABEL = { highly_critical: 'Highly Critical', critical: 'Critical' }
 const SLA_LABEL = {
   met:      'Met',
   breached: 'Breached',
@@ -835,6 +836,7 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
   const [fType, setFType]   = useState('')
   const [fStatus, setFStat] = useState('')
   const [fSla, setFSla]     = useState('')
+  const [fCrit, setFCrit]   = useState('')
   const [fFrom, setFrom]    = useState('')
   const [fTo, setTo]        = useState('')
 
@@ -863,18 +865,25 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
 
     const ids = candidates.map(e => e.id)
     const cMap = {}
+    const critMap = {}
     if (ids.length) {
-      const { data: cs } = await supabase.from('eval_coachings')
-        .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
-        .in('evaluation_id', ids)
+      const [{ data: cs }, { data: ccs }] = await Promise.all([
+        supabase.from('eval_coachings')
+          .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
+          .in('evaluation_id', ids),
+        supabase.from('critical_cases')
+          .select('evaluation_id, severity, reason:highly_critical_reasons(name)')
+          .in('evaluation_id', ids).is('deleted_at', null),
+      ])
       ;(cs || []).forEach(c => { cMap[c.evaluation_id] = c })
+      ;(ccs || []).forEach(c => { critMap[c.evaluation_id] = c })
     }
-    setRows(candidates.map(ev => ({ ev, coaching: cMap[ev.id] || null })))
+    setRows(candidates.map(ev => ({ ev, coaching: cMap[ev.id] || null, crit: critMap[ev.id] || null })))
     setLoading(false)
   }
   useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
 
-  const base = useMemo(() => (rows || []).map(({ ev, coaching: c }) => {
+  const base = useMemo(() => (rows || []).map(({ ev, coaching: c, crit }) => {
     const ctx = (gov && gov.queueCtx && gov.queueCtx[ev.queue_id]) || {}
     const { hours, state } = coachingSla(ev.submitted_at, c?.completed_at)
     return { ...(c || {}),
@@ -892,6 +901,8 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
       _evalNo: ev.eval_id || ev.id,
       _slaHours: hours,
       _sla: state,
+      _crit: crit?.severity || '',
+      _critReason: crit?.reason?.name || '',
     }
   }), [rows, govNames, gov])
 
@@ -900,6 +911,7 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
     (!fCoach || r._coach === fCoach) && (!fDiv || r._div === fDiv) && (!fBpo || r._bpo === fBpo) &&
     (!fHub || r._hub === fHub) && (!fMarket || r._market === fMarket) && (!fType || r._type === fType) &&
     (!fStatus || r.status === fStatus) && (!fSla || r._sla === fSla) &&
+    (!fCrit || (fCrit === 'none' ? !r._crit : r._crit === fCrit)) &&
     (!fFrom || (r._date && r._date >= fFrom)) && (!fTo || (r._date && r._date <= fTo)))
 
   const total = flt.length
@@ -944,12 +956,14 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
   const exportCsv = () => {
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
     const headers = ['Evaluation', 'Type', 'Coach', 'Agent', 'Division', 'BPO', 'Hub', 'Market', 'Status',
+      'Criticality', 'Highly Critical reason',
       'Evaluation submitted', 'Taken over', 'Completed', 'Acknowledged',
       'Hours to coach', 'Within 48h', 'Coaching notes']
     const lines = [headers.map(esc).join(',')]
     flt.forEach(r => lines.push([
       esc('#' + r._evalNo), esc(r._type), esc(r._coach || 'Unassigned'), esc(r._agent), esc(r._div),
       esc(r._bpo), esc(r._hub), esc(r._market), esc(EC_STATUS[r.status]?.label || r.status),
+      esc(CRIT_LABEL[r._crit] || 'Not critical'), esc(r._critReason),
       esc(fmtDate(r._submitted)), esc(fmtDate(r.taken_over_at)), esc(fmtDate(r.completed_at)), esc(fmtDate(r.acknowledged_at)),
       // Elapsed so far when not yet coached, so an overdue case shows how overdue it is.
       esc(r._slaHours == null ? '' : r._slaHours),
@@ -961,8 +975,8 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
     a.download = `coaching-insights-${new Date().toISOString().split('T')[0]}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
 
-  const clearAll = () => { setFCoach(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFType(''); setFStat(''); setFSla(''); setFrom(''); setTo('') }
-  const anyFilter = fCoach || fDiv || fBpo || fHub || fMarket || fType || fStatus || fSla || fFrom || fTo
+  const clearAll = () => { setFCoach(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFType(''); setFStat(''); setFSla(''); setFCrit(''); setFrom(''); setTo('') }
+  const anyFilter = fCoach || fDiv || fBpo || fHub || fMarket || fType || fStatus || fSla || fCrit || fFrom || fTo
 
   if (loading) return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div>
 
@@ -980,6 +994,12 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
         <select style={sel} value={fMarket} onChange={e => setFMkt(e.target.value)}><option value="">All Markets</option>{opts('_market').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fType} onChange={e => setFType(e.target.value)}><option value="">All Types</option><option>Quality</option><option>DSAT</option></select>
         <select style={sel} value={fStatus} onChange={e => setFStat(e.target.value)}><option value="">All Statuses</option>{Object.entries(EC_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
+        <select style={sel} value={fCrit} onChange={e => setFCrit(e.target.value)}>
+          <option value="">All Criticality</option>
+          <option value="highly_critical">Highly Critical</option>
+          <option value="critical">Critical</option>
+          <option value="none">Not critical</option>
+        </select>
         <select style={sel} value={fSla} onChange={e => setFSla(e.target.value)}>
           <option value="">All 48h SLA</option>
           <option value="met">Met</option>
