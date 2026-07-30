@@ -37,6 +37,21 @@ export default function EvaluationForm() {
   const [msg, setMsg] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [overallComment, setOverallComment] = useState('')
+
+  // ── Criticality (Critical / Highly Critical) ────────────────────────────────
+  // Marking is restricted to KG EVALUATORS and admins/owners. Team Leaders are
+  // deliberately excluded on both sides — they coach and dispute, never mark. The
+  // database enforces the same rule via trg_guard_criticality, so this only decides
+  // whether the controls are rendered; it is not the security boundary.
+  const canMarkCriticality = ['admin', 'owner'].includes(profile?.role)
+    || (profile?.role === 'evaluator' && String(profile?.email || '').toLowerCase().endsWith('@kaizengaming.com'))
+  const [hcReasons, setHcReasons]   = useState([])   // active reasons tagged to this scorecard's division
+  const [hcReasonId, setHcReasonId] = useState('')
+  // DSAT only: criticality is asserted, not derived, and is independent of the
+  // controllability chain. 'none' | 'critical' | 'highly' | 'both'
+  const [dsatCrit, setDsatCrit]         = useState('none')
+  const [dsatCritAttr, setDsatCritAttr] = useState('')
+  const [divCritAttrs, setDivCritAttrs] = useState([]) // Form Critical questions of the division's Quality scorecards
   const [showLgtmConfirm, setShowLgtmConfirm] = useState(false)
   // Phase 1 (foundation) for AI-assisted scoring: ephemeral only, intentionally never
   // persisted to drafts or the evaluations table — full case transcripts should not sit in
@@ -110,6 +125,9 @@ export default function EvaluationForm() {
       metaValues, answers, overallComment,
       dsatSections, dsatQuestions, dsatOptions, dsatAnswers,
       dsatCurrentSectionId, dsatSectionHistory,
+      // Criticality is part of the draft: without this, saving and resuming a draft
+      // would silently drop a Highly Critical escalation the evaluator had already chosen.
+      hcReasonId, dsatCrit, dsatCritAttr,
       profileId: profile?.id,
       editingEvalId
     }
@@ -269,6 +287,12 @@ export default function EvaluationForm() {
     setDsatAnswers(s.dsatAnswers || {})
     setDsatSectionHistory(s.dsatSectionHistory || [])
     setDsatCurrentSectionId(s.dsatCurrentSectionId || null)
+    // Restore criticality, and re-fetch the division's reasons/attributes so the
+    // dropdowns have options to match the restored selection against.
+    setHcReasonId(s.hcReasonId || '')
+    setDsatCrit(s.dsatCrit || 'none')
+    setDsatCritAttr(s.dsatCritAttr || '')
+    if (s.selectedScorecard) loadCriticalityRefs(s.selectedScorecard)
     setLastSaved(new Date(draft.submitted_at))
     // Set step last so all DSAT state is ready before the questions step renders
     setTimeout(() => setStep(s.step || 'metadata'), 0)
@@ -288,6 +312,15 @@ export default function EvaluationForm() {
     const sc = ev.scorecards
     setSelectedScorecard(sc)
     setEditingEvalId(ev.id)
+    // Restore the criticality the marker recorded, so an edit doesn't silently drop it.
+    await loadCriticalityRefs(sc)
+    setHcReasonId(ev.highly_critical_reason_id || '')
+    setDsatCritAttr(ev.critical_attribute_id || '')
+    if (sc.type === 'dsat') {
+      const hadCrit = !!ev.manual_critical
+      const hadHigh = !!ev.highly_critical_reason_id
+      setDsatCrit(hadCrit && hadHigh ? 'both' : hadHigh ? 'highly' : hadCrit ? 'critical' : 'none')
+    }
 
     // Load this scorecard's metadata field definitions.
     const { data: metaDefs } = await supabase
@@ -358,6 +391,57 @@ export default function EvaluationForm() {
       .is('deleted_at', null)
       .order('name')
     setScorecards(data || [])
+  }
+
+  // Criticality reference data for the SELECTED scorecard's division.
+  //
+  // Highly Critical reasons are division-tagged, so an evaluator only ever sees reasons
+  // valid for the case in front of them. scorecards.division holds the division NAME, so
+  // it is matched to divisions.name to reach the id the tags are keyed on.
+  //
+  // For DSAT, the breached-attribute picker offers the Form Critical questions of that
+  // division's published Quality scorecards — one shared vocabulary across Quality, DSAT
+  // and standalone reports, so attribute-level reporting lines up everywhere.
+  const loadCriticalityRefs = async (scorecard) => {
+    setHcReasons([]); setDivCritAttrs([])
+    if (!scorecard?.division) return
+
+    const { data: div } = await supabase
+      .from('divisions').select('id').ilike('name', scorecard.division).maybeSingle()
+    if (!div?.id) return
+
+    const { data: tags } = await supabase
+      .from('highly_critical_reason_divisions').select('reason_id').eq('division_id', div.id)
+    const ids = [...new Set((tags || []).map(t => t.reason_id))]
+    if (ids.length) {
+      const { data: rs } = await supabase
+        .from('highly_critical_reasons').select('id, name')
+        .in('id', ids).eq('is_active', true).order('position').order('name')
+      setHcReasons(rs || [])
+    }
+
+    if (scorecard.type === 'dsat') {
+      const { data: qsc } = await supabase
+        .from('scorecards').select('id')
+        .eq('type', 'quality').eq('is_published', true).eq('is_calibration', false)
+        .is('deleted_at', null).ilike('division', scorecard.division)
+      const scIds = (qsc || []).map(s => s.id)
+      if (scIds.length) {
+        const { data: qs } = await supabase
+          .from('scorecard_questions').select('id, title')
+          .in('scorecard_id', scIds).eq('is_form_critical', true)
+          .or('is_archived.is.null,is_archived.eq.false')
+          .order('title')
+        // De-duplicate by title: the same critical standard often appears on several
+        // scorecards in a division, and the evaluator shouldn't see it repeated.
+        const seen = new Set()
+        setDivCritAttrs((qs || []).filter(q => {
+          const k = (q.title || '').trim().toLowerCase()
+          if (seen.has(k)) return false
+          seen.add(k); return true
+        }))
+      }
+    }
   }
 
   const runAiAttributes = async () => {
@@ -560,6 +644,9 @@ export default function EvaluationForm() {
       }
     }
     setSelectedScorecard(sc)
+    // Fresh start for criticality on every new evaluation.
+    setHcReasonId(''); setDsatCrit('none'); setDsatCritAttr('')
+    loadCriticalityRefs(sc)
     const { data: metaData } = await supabase
       .from('scorecard_metadata_fields')
       .select('*').eq('scorecard_id', sc.id).order('position')
@@ -840,6 +927,24 @@ export default function EvaluationForm() {
     }
     if (!opts.dsatAnswersOverride && !questionsValid()) return flash('Please answer all required questions before submitting.', false)
     if (selectedScorecard.type !== 'dsat' && !overallComment.trim()) return flash('Please add an overall comment before submitting.', false)
+
+    // ── Criticality validation ────────────────────────────────────────────────
+    // Quality: Highly Critical is an escalation of a critical fail, so it can only be
+    // set when a Form Critical attribute was actually failed. The panel is hidden
+    // otherwise, but a stale selection (fail → then changed to pass) must not slip through.
+    const qualityHasCriticalFail = selectedScorecard.type !== 'dsat'
+      && questions.some(q => q.is_form_critical && answers[q.id]?.score === 'fail')
+    if (selectedScorecard.type !== 'dsat' && hcReasonId && !qualityHasCriticalFail) {
+      return flash('Highly Critical can only be set when a Form Critical attribute has been failed. Clear it, or mark the critical attribute as Fail.', false)
+    }
+    if (selectedScorecard.type === 'dsat') {
+      if ((dsatCrit === 'critical' || dsatCrit === 'both') && !dsatCritAttr) {
+        return flash('Select which critical attribute was breached.', false)
+      }
+      if ((dsatCrit === 'highly' || dsatCrit === 'both') && !hcReasonId) {
+        return flash('Select a Highly Critical reason.', false)
+      }
+    }
     leavingRef.current = true
     setSubmitting(true)
     try {
@@ -886,6 +991,22 @@ export default function EvaluationForm() {
       const resolvedHubId = resolvedQueue.hub_id
       const resolvedWorkspaceId = resolvedQueue.workspace_id
 
+      // Criticality written on every path (Quality/DSAT, insert/edit). The database
+      // trigger derives the critical_cases register row from these, so clearing a value
+      // here also unwinds the case, its coaching obligation and its SLA.
+      //   Quality — the critical itself is derived from failed_critical; only the
+      //             optional Highly Critical escalation is stored.
+      //   DSAT    — no critical attributes of its own, so both are asserted here.
+      const isDsatType = selectedScorecard.type === 'dsat'
+      const criticalityFields = {
+        highly_critical_reason_id:
+          (isDsatType ? (dsatCrit === 'highly' || dsatCrit === 'both') : qualityHasCriticalFail)
+            ? (hcReasonId || null) : null,
+        manual_critical: isDsatType ? (dsatCrit === 'critical' || dsatCrit === 'both') : false,
+        critical_attribute_id:
+          isDsatType && (dsatCrit === 'critical' || dsatCrit === 'both') ? (dsatCritAttr || null) : null,
+      }
+
       if (selectedScorecard.type === 'dsat') {
         const visitedSectionIds = new Set(effectiveVisitedIds || [...dsatSectionHistory, dsatCurrentSectionId])
         const visitedQuestions = dsatQuestions.filter(q => visitedSectionIds.has(q.section_id))
@@ -905,6 +1026,7 @@ export default function EvaluationForm() {
           const { error: upErr } = await supabase.from('evaluations').update({
             metadata_values: [...metaPayload, ...dsatPayload],
             queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
+            ...criticalityFields,
             last_edit_date: new Date().toISOString(),
           }).eq('id', editingEvalId)
           if (upErr) throw friendlyDuplicateError(upErr)
@@ -919,6 +1041,7 @@ export default function EvaluationForm() {
             evaluation_type: selectedScorecard.type,
             scorecard_version: selectedScorecard.version || 1,
             submitted_at: new Date().toISOString(),
+            ...criticalityFields,
             ...aiControllabilityFields,
           }).select().single()
           if (evalError) throw friendlyDuplicateError(evalError)
@@ -951,6 +1074,7 @@ export default function EvaluationForm() {
             metadata_values: metaPayload,
             queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
             overall_comment: overallComment.trim(),
+            ...criticalityFields,
             last_edit_date: new Date().toISOString(),
           }).eq('id', editingEvalId)
           if (upErr) throw friendlyDuplicateError(upErr)
@@ -976,7 +1100,8 @@ export default function EvaluationForm() {
             status: 'submitted',
             evaluation_type: selectedScorecard.type,
             scorecard_version: selectedScorecard.version || 1,
-            submitted_at: new Date().toISOString()
+            submitted_at: new Date().toISOString(),
+            ...criticalityFields,
           }).select().single()
           if (evalError) throw friendlyDuplicateError(evalError)
           const scoreRows = questions.map(q => ({
@@ -1556,6 +1681,70 @@ export default function EvaluationForm() {
                     </button>
                   )}
                 </div>
+                {/* Criticality on DSAT — asserted by a KG evaluator, because DSAT scorecards
+                    have no critical attributes of their own. Deliberately INDEPENDENT of the
+                    controllability chain above: controllability answers "did this drive the
+                    customer's dissatisfaction?", criticality answers "was a critical standard
+                    breached?". A non-controllable DSAT can still be critical. Hidden entirely
+                    from anyone who may not mark criticality. */}
+                {isLastSection && canMarkCriticality && !selectedScorecard?.is_spot_check && (
+                  <div style={{ marginTop: 28, border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', background: 'var(--bg-secondary)' }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>Criticality</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 10 }}>
+                      Independent of controllability — a non-controllable DSAT can still breach a critical standard.
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                      {[['none', 'None'], ['critical', 'Critical'], ['highly', 'Highly Critical only'], ['both', 'Both']].map(([k, label]) => (
+                        <button key={k} onClick={() => { setDsatCrit(k); triggerAutoSave() }}
+                          style={{
+                            padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 500, cursor: 'pointer',
+                            border: '1.5px solid', borderColor: dsatCrit === k ? 'var(--accent)' : 'var(--border)',
+                            background: dsatCrit === k ? 'var(--accent-light, rgba(99,102,241,0.12))' : 'transparent',
+                            color: dsatCrit === k ? 'var(--accent)' : 'var(--text-secondary)',
+                          }}>{label}</button>
+                      ))}
+                    </div>
+                    {(dsatCrit === 'critical' || dsatCrit === 'both') && (
+                      <div className="form-field" style={{ marginBottom: 10, maxWidth: 440 }}>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Breached critical attribute <span style={{ color: 'var(--danger)' }}>*</span>
+                        </label>
+                        {divCritAttrs.length === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--warning, #d97706)' }}>
+                            No Form Critical attributes found on this division's Quality scorecards.
+                          </div>
+                        ) : (
+                          <select className="input" style={{ fontSize: 13 }} value={dsatCritAttr}
+                            onChange={e => { setDsatCritAttr(e.target.value); triggerAutoSave() }}>
+                            <option value="">— Select attribute —</option>
+                            {divCritAttrs.map(q => <option key={q.id} value={q.id}>{q.title}</option>)}
+                          </select>
+                        )}
+                      </div>
+                    )}
+                    {(dsatCrit === 'highly' || dsatCrit === 'both') && (
+                      <div className="form-field" style={{ maxWidth: 440 }}>
+                        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Highly Critical reason <span style={{ color: 'var(--danger)' }}>*</span>
+                        </label>
+                        {hcReasons.length === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--warning, #d97706)' }}>
+                            No Highly Critical reasons are enabled for this division. An admin can add them in Control Room → Reference Data.
+                          </div>
+                        ) : (
+                          <select className="input" style={{ fontSize: 13 }} value={hcReasonId}
+                            onChange={e => { setHcReasonId(e.target.value); triggerAutoSave() }}>
+                            <option value="">— Select reason —</option>
+                            {hcReasons.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          </select>
+                        )}
+                        <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 8 }}>
+                          Must be coached within <b>24 hours</b>. The agent's queue group is notified on submit.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {isLastSection && (
                   <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
                     <motion.button whileTap={{ scale: 0.96 }} className="btn btn-primary" onClick={() => submitEvaluation()} disabled={submitting}
@@ -1630,6 +1819,60 @@ export default function EvaluationForm() {
                 </div>
               )
             })}
+            {/* Criticality — appears only once a Form Critical attribute has actually been
+                failed, which is how "Highly Critical never stands alone" is enforced in the
+                interface as well as in the database. Hidden entirely from anyone who may not
+                mark criticality (BPO evaluators, Team Leaders): their critical still registers
+                automatically from scoring, they just cannot escalate it. */}
+            {(() => {
+              const failedCriticals = questions.filter(q => q.is_form_critical && answers[q.id]?.score === 'fail')
+              if (!failedCriticals.length) return null
+              return (
+                <div style={{ marginTop: 28 }}>
+                  <div style={{ border: '1px solid var(--danger)', borderRadius: 8, padding: '14px 16px', background: 'rgba(220,38,38,0.05)', marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>⚠ Critical fail recorded</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      This evaluation scores <b>0%</b> and is logged as a <b>Critical case</b>. It enters the Coaching Queue automatically.
+                      {failedCriticals.length > 1 && ` ${failedCriticals.length} critical attributes were breached — this still counts as one critical case.`}
+                    </div>
+                    <div style={{ fontSize: 12 }}>
+                      {failedCriticals.map(q => (
+                        <div key={q.id} style={{ color: 'var(--text-primary)' }}>• {q.title}</div>
+                      ))}
+                    </div>
+                  </div>
+                  {canMarkCriticality && (
+                    <div style={{ border: '1px solid var(--warning, #d97706)', borderRadius: 8, padding: '14px 16px', background: 'rgba(217,119,6,0.06)' }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 3 }}>
+                        Escalate to Highly Critical? <span style={{ fontWeight: 400, fontSize: 11.5, color: 'var(--text-secondary)' }}>— optional</span>
+                      </div>
+                      {hcReasons.length === 0 ? (
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                          No Highly Critical reasons are enabled for this scorecard's division. An admin can add them in Control Room → Reference Data.
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                            Only reasons enabled for this scorecard's division are listed. A Highly Critical case must be coached within <b>24 hours</b>.
+                          </div>
+                          <select className="input" style={{ maxWidth: 420, fontSize: 13 }} value={hcReasonId}
+                            onChange={e => { setHcReasonId(e.target.value); triggerAutoSave() }}>
+                            <option value="">— Not highly critical —</option>
+                            {hcReasons.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          </select>
+                          {hcReasonId && (
+                            <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 8 }}>
+                              On submit, Team Leaders and evaluators sharing this agent's queue are notified, and a 24-hour coaching clock starts.
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+
             <div style={{ marginTop: 32, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
               <div className="form-field" style={{ marginBottom: 16 }}>
                 <label style={{ fontWeight: 600, fontSize: 14 }}>
