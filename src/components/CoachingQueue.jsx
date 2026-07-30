@@ -728,16 +728,18 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
         {anyFilter && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear filters</button>}
       </div>
       {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div> : (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        {/* overflowX rather than hidden: a clipped final column silently hides the
+            primary action, which is exactly how the Assign/View button disappeared. */}
+        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 940 }}>
             <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={thStyle}>#</th><th style={thStyle}>Type</th><th style={thStyle}>Agent</th><th style={thStyle}>Scorecard</th>
-              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Criticality</th><th style={thStyle}>24h SLA</th><th style={thStyle}>Date</th>
+              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Criticality</th><th style={thStyle}>Date</th>
               {showCoach && <th style={thStyle}>Coach</th>}
               <th style={thStyle}>Coaching</th><th style={{ ...thStyle, textAlign: 'right' }}></th>
             </tr></thead>
             <tbody>
-              {filtered.length === 0 && <tr><td colSpan={showCoach ? 11 : 10} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={showCoach ? 10 : 9} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
               {filtered.map(it => {
                 const sa = it.kind === 'standalone'
                 const ev = it.ev
@@ -752,8 +754,16 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
                     <td style={tdStyle}>{it._agent ? <AgentEmailChip email={it._agent} /> : '—'}</td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{sa ? '—' : (ev.scorecards?.name || '—')}</td>
                     <td style={tdStyle}>{sa ? '—' : (isDsat ? (ev.deviated_controllability ?? 'Controllable') : `${ev.score}%`)}</td>
-                    <td style={tdStyle}><CritChip severity={it._crit} reason={it._critReason} /></td>
-                    <td style={tdStyle}><SlaChip cc={it.crit} coaching={it.coaching} /></td>
+                    {/* SLA sits under the criticality chip rather than in its own column:
+                        11 columns overflowed the card and pushed the action button out of
+                        view. They belong together anyway — the deadline only means
+                        anything in the context of the severity that created it. */}
+                    <td style={tdStyle}>
+                      <CritChip severity={it._crit} reason={it._critReason} />
+                      {it._crit === 'highly_critical' && (
+                        <div style={{ marginTop: 4 }}><SlaChip cc={it.crit} coaching={it.coaching} /></div>
+                      )}
+                    </td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
                       {it._date ? new Date(it._date).toLocaleDateString() : '—'}
                     </td>
