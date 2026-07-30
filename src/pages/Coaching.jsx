@@ -819,6 +819,7 @@ const EC_STATUS = {
 }
 // Wording used in the export and the SLA filter, matching the 24h Critical Cases language.
 const CRIT_LABEL = { highly_critical: 'Highly Critical', critical: 'Critical' }
+const SLA24_LABEL = { met: 'Met', breached: 'Breached', open: 'Still within 24h' }
 const SLA_LABEL = {
   met:      'Met',
   breached: 'Breached',
@@ -872,7 +873,7 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
           .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
           .in('evaluation_id', ids),
         supabase.from('critical_cases')
-          .select('evaluation_id, severity, reason:highly_critical_reasons(name)')
+          .select('evaluation_id, severity, sla_due_at, sla_breached_at, rta_escalated_at, reason:highly_critical_reasons!critical_cases_highly_critical_reason_id_fkey(name)')
           .in('evaluation_id', ids).is('deleted_at', null),
       ])
       ;(cs || []).forEach(c => { cMap[c.evaluation_id] = c })
@@ -903,6 +904,14 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
       _sla: state,
       _crit: crit?.severity || '',
       _critReason: crit?.reason?.name || '',
+      // 24-hour Highly Critical SLA. Reads the server's own sla_breached_at rather than
+      // recomputing from timestamps, so this can never disagree with the hourly sweep
+      // that sent the breach notification.
+      _crit24: !crit || crit.severity !== 'highly_critical' ? ''
+        : crit.sla_breached_at ? 'breached'
+        : c?.status === 'acknowledged' ? 'met'
+        : 'open',
+      _rta: crit?.rta_escalated_at || null,
     }
   }), [rows, govNames, gov])
 
@@ -926,6 +935,15 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
   // coached ('open') — their outcome isn't decided, and counting them as failures would
   // make the current period always look bad. Uncoached cases past 48h ARE counted, as
   // breaches, which is the whole point of measuring this.
+  // 24h Highly Critical SLA, kept separate from the 48h coaching SLA below — they measure
+  // different obligations on different populations.
+  const n24Met     = flt.filter(r => r._crit24 === 'met').length
+  const n24Breach  = flt.filter(r => r._crit24 === 'breached').length
+  const n24Open    = flt.filter(r => r._crit24 === 'open').length
+  const n24Decided = n24Met + n24Breach
+  const rate24     = n24Decided ? Math.round((n24Met / n24Decided) * 100) : null
+  const nRta       = flt.filter(r => r._rta).length
+
   const nMet = flt.filter(r => r._sla === 'met').length
   const nBreach = flt.filter(r => r._sla === 'breached').length
   const nOpen = flt.filter(r => r._sla === 'open').length
@@ -956,7 +974,7 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
   const exportCsv = () => {
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
     const headers = ['Evaluation', 'Type', 'Coach', 'Agent', 'Division', 'BPO', 'Hub', 'Market', 'Status',
-      'Criticality', 'Highly Critical reason',
+      'Criticality', 'Highly Critical reason', '24h SLA', 'RTA escalated',
       'Evaluation submitted', 'Taken over', 'Completed', 'Acknowledged',
       'Hours to coach', 'Within 48h', 'Coaching notes']
     const lines = [headers.map(esc).join(',')]
@@ -964,6 +982,7 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
       esc('#' + r._evalNo), esc(r._type), esc(r._coach || 'Unassigned'), esc(r._agent), esc(r._div),
       esc(r._bpo), esc(r._hub), esc(r._market), esc(EC_STATUS[r.status]?.label || r.status),
       esc(CRIT_LABEL[r._crit] || 'Not critical'), esc(r._critReason),
+      esc(SLA24_LABEL[r._crit24] || ''), esc(r._rta ? fmtDate(r._rta) : ''),
       esc(fmtDate(r._submitted)), esc(fmtDate(r.taken_over_at)), esc(fmtDate(r.completed_at)), esc(fmtDate(r.acknowledged_at)),
       // Elapsed so far when not yet coached, so an overdue case shows how overdue it is.
       esc(r._slaHours == null ? '' : r._slaHours),
@@ -1021,6 +1040,27 @@ function CoachingInsightsTab({ profile, isPrivileged, govNames, gov }) {
         <div className="card" style={card}><div style={{ ...cnum, color: '#22c55e' }}>{nAck}</div><div style={clbl}>Acknowledged</div></div>
         <div className="card" style={card}><div style={{ ...cnum, color: ackRate >= 70 ? '#22c55e' : '#dc2626' }}>{ackRate}%</div><div style={clbl}>Ack rate</div></div>
       </div>
+
+      {(n24Met + n24Breach + n24Open) > 0 && (
+        <>
+          <div style={{ display: 'flex', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+            <div className="card" style={card}><div style={{ ...cnum, color: '#22c55e' }}>{n24Met}</div><div style={clbl}>Highly Critical coached within 24h</div></div>
+            <div className="card" style={card}><div style={{ ...cnum, color: '#dc2626' }}>{n24Breach}</div><div style={clbl}>24h breaches</div></div>
+            <div className="card" style={card}><div style={{ ...cnum, color: '#94a3b8' }}>{n24Open}</div><div style={clbl}>Still within 24h</div></div>
+            <div className="card" style={card}>
+              <div style={{ ...cnum, color: rate24 == null ? 'var(--text-secondary)' : rate24 >= 95 ? '#22c55e' : rate24 >= 80 ? '#f59e0b' : '#dc2626' }}>
+                {rate24 == null ? '—' : rate24 + '%'}
+              </div>
+              <div style={clbl}>24h compliance</div>
+            </div>
+            <div className="card" style={card}><div style={{ ...cnum, color: nRta ? '#dc2626' : '#94a3b8' }}>{nRta}</div><div style={clbl}>RTA escalations</div></div>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 20 }}>
+            The 24-hour clock applies to Highly Critical cases only and stops when the <b>agent acknowledges</b> the coaching.
+            A breach is what triggers the RTA conversation — Quark records it but never blocks anyone.
+          </div>
+        </>
+      )}
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
         <div className="card" style={card}><div style={{ ...cnum, color: '#22c55e' }}>{nMet}</div><div style={clbl}>Coached within 48h</div></div>
