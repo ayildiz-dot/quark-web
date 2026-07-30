@@ -798,13 +798,18 @@ export default function Evaluations() {
       if (filters.status === 'pending') q = q.eq('agent_read_required', true).is('agent_read_at', null)
       if (!includeArchived && archivedScIds.length) q = q.not('scorecard_id', 'in', '(' + archivedScIds.join(',') + ')')
 
+      // Surface query failures instead of rendering an empty table. A swallowed error
+      // here is indistinguishable from "no evaluations exist", which is exactly how a
+      // PostgREST embed-ambiguity error once looked like an empty database.
       const evalId = (filters.evalId || '').trim()
       if (evalId) {
-        const { data: rows } = await q.limit(2000)
+        const { data: rows, error } = await q.limit(2000)
+        if (error) { console.error('fetchEvals failed:', error.message); flash('Could not load evaluations: ' + error.message, false); return }
         const filtered = (rows || []).filter(r => String(r.eval_id ?? '').includes(evalId))
         setData(filtered); setTotal(filtered.length); setPage(1)
       } else {
-        const { data: rows, count } = await q.range((pg - 1) * LIMIT, pg * LIMIT - 1)
+        const { data: rows, count, error } = await q.range((pg - 1) * LIMIT, pg * LIMIT - 1)
+        if (error) { console.error('fetchEvals failed:', error.message); flash('Could not load evaluations: ' + error.message, false); return }
         setData(rows || []); setTotal(count || 0); setPage(pg)
       }
     } finally {
