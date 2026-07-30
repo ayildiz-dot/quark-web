@@ -104,7 +104,7 @@ export default function Dashboard() {
     setLoading(true)
     let query = supabase
       .from('evaluations')
-      .select('id, score, agent_name, channel, submitted_at, overall_comment, scorecard_version, users(name), scorecards!evaluations_scorecard_id_fkey(name, pass_threshold)')
+      .select('id, score, agent_name, channel, submitted_at, overall_comment, scorecard_version, users!evaluations_evaluator_id_fkey(name), scorecards!evaluations_scorecard_id_fkey(name, pass_threshold)')
       .eq('status', 'submitted')
       .eq('evaluation_type', 'quality')
       .order('submitted_at', { ascending: false })

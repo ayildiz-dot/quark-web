@@ -653,7 +653,7 @@ function AgentCoachingDetail({ c, onClose, onAck, busy }) {
   useEffect(() => {
     if (!c.evaluation_id) return
     supabase.from('evaluations')
-      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users!evaluations_evaluator_id_fkey(name, email)')
       .eq('id', c.evaluation_id).maybeSingle()
       .then(({ data }) => setEv(data))
     if (!isDsat) {

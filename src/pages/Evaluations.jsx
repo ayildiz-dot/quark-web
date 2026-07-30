@@ -49,7 +49,7 @@ function EditReviewModal({ request, onClose, onResolved, flash }) {
   const [subject, setSubject] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
-    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users(name, email)').eq('id', request.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
+    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users!evaluations_evaluator_id_fkey(name, email)').eq('id', request.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
     supabase.from('evaluation_scores').select('*, scorecard_questions(title, is_form_critical)').eq('evaluation_id', request.evaluation_id).then(({ data }) => setScores(data || []))
     // eslint-disable-next-line
   }, [request.evaluation_id])
@@ -227,7 +227,7 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
   }
   useEffect(() => {
     reload()
-    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users(name, email)').eq('id', d0.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
+    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users!evaluations_evaluator_id_fkey(name, email)').eq('id', d0.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
     supabase.from('evaluation_scores').select('*, scorecard_questions(title, is_form_critical)').eq('evaluation_id', d0.evaluation_id).then(({ data }) => setScores(data || []))
     // eslint-disable-next-line
   }, [d0.id])
@@ -628,7 +628,7 @@ export default function Evaluations() {
   const loadEvaluatorList = async () => {
     let elq = supabase
       .from('evaluations')
-      .select('evaluator_id, users(name, email)')
+      .select('evaluator_id, users!evaluations_evaluator_id_fkey(name, email)')
       .eq('status', 'submitted')
     if (!isPrivileged) {
       const { hubIds } = await getEvaluatorScope(profile.id)
@@ -772,7 +772,7 @@ export default function Evaluations() {
 
       let q = supabase
         .from('evaluations')
-        .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)', { count: 'exact' })
+        .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users!evaluations_evaluator_id_fkey(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
         .order('submitted_at', { ascending: false })
 
@@ -820,7 +820,7 @@ export default function Evaluations() {
   const openDetail = async (id) => {
     const { data: ev } = await supabase
       .from('evaluations')
-      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users(name, email)')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users!evaluations_evaluator_id_fkey(name, email)')
       .eq('id', id)
       .single()
     // Quality evaluations store per-question scores in evaluation_scores.
@@ -859,7 +859,7 @@ export default function Evaluations() {
     const isAgent = profile?.role === 'viewer'
     let q = supabase
       .from('evaluations')
-      .select('*, scorecards(name, type), users(name, email)')
+      .select('*, scorecards(name, type), users!evaluations_evaluator_id_fkey(name, email)')
       .eq('status', 'submitted')
       .order('submitted_at', { ascending: false })
       .limit(10000)
