@@ -168,12 +168,6 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
     return allReasons.filter(r => ok.has(r.id))
   }, [allReasons, reasonTags, divisionId])
 
-  // Drop a chosen agent who isn't on the newly selected hub+market.
-  useEffect(() => {
-    if (agent && !agentPool.includes(agent)) { setAgent(''); setAgentQ('') }
-    // eslint-disable-next-line
-  }, [agentPool])
-
   // Drop a reason that stops being valid after the hub changes.
   useEffect(() => {
     if (reasonId && !reasonOptions.some(r => r.id === reasonId)) setReason('')
@@ -187,6 +181,14 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
     if (!okQueues.size) return []
     return [...new Set(agentRows.filter(a => okQueues.has(a.queue_id)).map(a => a.email))].sort()
   }, [agentRows, matching])
+  // Drop a chosen agent who isn't on the newly selected hub+market. Declared AFTER
+  // agentPool: a dependency array is evaluated during render, so referencing a const
+  // above its declaration throws "cannot access before initialization" and blanks the page.
+  useEffect(() => {
+    if (agent && !agentPool.includes(agent)) { setAgent(''); setAgentQ('') }
+    // eslint-disable-next-line
+  }, [agentPool])
+
   const agentMatches = agentQ.trim()
     ? agentPool.filter(a => a.toLowerCase().includes(agentQ.trim().toLowerCase())).slice(0, 6)
     : []
