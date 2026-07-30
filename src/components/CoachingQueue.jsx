@@ -728,8 +728,9 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
         {anyFilter && <button className="btn btn-ghost btn-sm" onClick={clearAll}>Clear filters</button>}
       </div>
       {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div> : (
-        {/* overflowX rather than hidden: a clipped final column silently hides the
-            primary action, which is exactly how the Assign/View button disappeared. */}
+        // overflowX rather than hidden: a clipped final column silently hides the primary
+        // action, which is exactly how the Assign/View button disappeared. A {/* */}
+        // comment cannot go here — in expression position it parses as an object literal.
         <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 940 }}>
             <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
