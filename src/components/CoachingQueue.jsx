@@ -380,8 +380,13 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       _crit: it.crit?.severity || '',
       _critReason: it.crit?.reason?.name || '',
       _ref: sa ? ('CR-' + String(cc.id).slice(0, 6).toUpperCase()) : ('#' + (ev.eval_id || ev.id)),
+      // Millisecond timestamp so the two sources interleave properly. Without this the
+      // standalone cases sit in a block after every evaluation, however recent they are.
+      _ts: sa
+        ? (cc.reported_at ? new Date(cc.reported_at).getTime() : 0)
+        : (ev.submitted_at ? new Date(ev.submitted_at).getTime() : 0),
     }
-  }), [items, gov])
+  }).sort((a, b) => b._ts - a._ts), [items, gov])
 
   const opts = (key) => [...new Set(deco.map(r => r[key]).filter(Boolean))].sort()
 
