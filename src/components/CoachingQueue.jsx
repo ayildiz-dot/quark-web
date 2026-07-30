@@ -68,6 +68,25 @@ const CritChip = ({ severity, reason }) => {
   )
 }
 
+// 24-hour SLA state for a Highly Critical case. Plain criticals carry no deadline, so
+// they return null and render as "n/a". The clock stops on AGENT ACKNOWLEDGEMENT, not on
+// the coach completing — "delivered" is what the RTA escalation acts on.
+const criticalSla = (cc, coaching) => {
+  if (!cc || cc.severity !== 'highly_critical' || !cc.sla_due_at) return null
+  if (coaching?.status === 'acknowledged') return { label: 'Met', bg: '#d1fae5', color: '#047857' }
+  if (cc.sla_paused_at) return { label: 'Paused — disputed', bg: '#e2e8f0', color: '#475569' }
+  const ms = new Date(cc.sla_due_at).getTime() - Date.now()
+  const hrs = Math.max(1, Math.round(Math.abs(ms) / 3600000))
+  if (ms <= 0) return { label: `OVERDUE ${hrs}h`, bg: '#fee2e2', color: '#b91c1c' }
+  if (hrs <= 4) return { label: `Due in ${hrs}h`, bg: '#fef3c7', color: '#b45309' }
+  return { label: `Due in ${hrs}h`, bg: '#e2e8f0', color: '#475569' }
+}
+const SlaChip = ({ cc, coaching }) => {
+  const s = criticalSla(cc, coaching)
+  if (!s) return <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>n/a</span>
+  return <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600, background: s.bg, color: s.color, whiteSpace: 'nowrap' }}>{s.label}</span>
+}
+
 function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged }) {
   const sa = item.kind === 'standalone'
   const ev = item.ev
@@ -126,6 +145,16 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
     flash('Coaching completed — agent notified to acknowledge'); onChanged(); onClose()
   }
 
+  // Recording that RTA was contacted is an audit stamp, not an action Quark takes —
+  // Quark never blocks an agent itself. Admins/owners only, and only once.
+  const recordRta = async () => {
+    setBusy(true)
+    const { error } = await supabase.rpc('mark_rta_escalated', { p_case_id: item.crit.id })
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    flash('RTA escalation recorded'); onChanged(); onClose()
+  }
+
   const mineOrPriv = coaching && (coaching.coach_id === profile.id || isPrivileged)
   const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '16px 0 8px' }
   const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
@@ -180,6 +209,31 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
                   {item.crit.critical_attribute_ids.length} critical attribute{item.crit.critical_attribute_ids.length === 1 ? '' : 's'} breached
                   {!sa && !isDsat && ' — see the failed questions below'}
+                </div>
+              )}
+              {item.crit.sla_breached_at && (
+                <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 12, color: 'var(--danger)', fontWeight: 600 }}>
+                    ⚠ 24-hour SLA breached on {new Date(item.crit.sla_breached_at).toLocaleString()}
+                  </div>
+                  {item.crit.rta_escalated_at ? (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 3 }}>
+                      RTA escalation recorded {new Date(item.crit.rta_escalated_at).toLocaleString()}
+                    </div>
+                  ) : isPrivileged ? (
+                    <div style={{ marginTop: 6 }}>
+                      <button className="btn btn-outline btn-sm" disabled={busy} onClick={recordRta}>
+                        Record RTA escalation
+                      </button>
+                      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                        Stamps the audit trail once you have contacted RTA. Quark does not contact them and does not block the agent.
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 3 }}>
+                      An admin will decide whether to escalate to RTA.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -277,6 +331,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
   const [fMarket, setFMkt]  = useState('')
   const [fCoach, setFCoach] = useState('')
   const [fCrit, setFCrit]   = useState('')
+  const [fSla, setFSla]     = useState('')
   const [fFrom, setFrom]    = useState('')
   const [fTo, setTo]        = useState('')
 
@@ -310,7 +365,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
           .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
           .in('evaluation_id', ids),
         supabase.from('critical_cases')
-          .select('evaluation_id, severity, critical_attribute_ids, sla_due_at, reason:highly_critical_reasons!critical_cases_highly_critical_reason_id_fkey(name)')
+          .select('id, evaluation_id, severity, critical_attribute_ids, sla_due_at, sla_paused_at, sla_breached_at, rta_escalated_at, reason:highly_critical_reasons!critical_cases_highly_critical_reason_id_fkey(name)')
           .in('evaluation_id', ids)
           .is('deleted_at', null),
       ])
@@ -379,6 +434,13 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       // '' when not a critical case at all — so the filter can offer "Not critical" too.
       _crit: it.crit?.severity || '',
       _critReason: it.crit?.reason?.name || '',
+      _sla: (() => {
+        const st = criticalSla(it.crit, it.coaching)
+        if (!st) return ''
+        if (st.label === 'Met') return 'met'
+        if (st.label.startsWith('Paused')) return 'paused'
+        return st.label.startsWith('OVERDUE') ? 'overdue' : 'due'
+      })(),
       _ref: sa ? ('CR-' + String(cc.id).slice(0, 6).toUpperCase()) : ('#' + (ev.eval_id || ev.id)),
       // Millisecond timestamp so the two sources interleave properly. Without this the
       // standalone cases sit in a block after every evaluation, however recent they are.
@@ -399,13 +461,14 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       (!fAgent || it._agent === fAgent) && (!fDiv || it._div === fDiv) && (!fBpo || it._bpo === fBpo) &&
       (!fHub || it._hub === fHub) && (!fMarket || it._market === fMarket) && (!fCoach || it._coach === fCoach) &&
       (!fCrit || (fCrit === 'none' ? !it._crit : it._crit === fCrit)) &&
+      (!fSla || it._sla === fSla) &&
       (!fFrom || (it._date && it._date >= fFrom)) && (!fTo || (it._date && it._date <= fTo))
-  }), [deco, tabFilter, profile?.id, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fCrit, fFrom, fTo])
+  }), [deco, tabFilter, profile?.id, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fCrit, fSla, fFrom, fTo])
 
   const showCoach = tabFilter === 'all' || tabFilter === 'done'
   const statusOf = (it) => it.coaching ? it.coaching.status : 'pending'
-  const clearAll = () => { setFType(''); setFScore(''); setFAgent(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFCoach(''); setFCrit(''); setFrom(''); setTo('') }
-  const anyFilter = fType || fScore || fAgent || fDiv || fBpo || fHub || fMarket || fCoach || fCrit || fFrom || fTo
+  const clearAll = () => { setFType(''); setFScore(''); setFAgent(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFCoach(''); setFCrit(''); setFSla(''); setFrom(''); setTo('') }
+  const anyFilter = fType || fScore || fAgent || fDiv || fBpo || fHub || fMarket || fCoach || fCrit || fSla || fFrom || fTo
   const sel = { padding: '6px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 12 }
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
@@ -426,6 +489,13 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
           <option value="critical">Critical</option>
           <option value="none">Not critical</option>
         </select>
+        <select style={sel} value={fSla} onChange={e => setFSla(e.target.value)}>
+          <option value="">All 24h SLA</option>
+          <option value="overdue">Overdue</option>
+          <option value="due">Due</option>
+          <option value="paused">Paused</option>
+          <option value="met">Met</option>
+        </select>
         <select style={sel} value={fScore} onChange={e => setFScore(e.target.value)}><option value="">All Scorecards</option>{opts('_scorecard').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fAgent} onChange={e => setFAgent(e.target.value)}><option value="">All Agents</option>{opts('_agent').map(o => <option key={o}>{o}</option>)}</select>
         <select style={sel} value={fDiv} onChange={e => setFDiv(e.target.value)}><option value="">All Divisions</option>{opts('_div').map(o => <option key={o}>{o}</option>)}</select>
@@ -444,12 +514,12 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead><tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={thStyle}>#</th><th style={thStyle}>Type</th><th style={thStyle}>Agent</th><th style={thStyle}>Scorecard</th>
-              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Criticality</th><th style={thStyle}>Date</th>
+              <th style={thStyle}>Score / Ctrl.</th><th style={thStyle}>Criticality</th><th style={thStyle}>24h SLA</th><th style={thStyle}>Date</th>
               {showCoach && <th style={thStyle}>Coach</th>}
               <th style={thStyle}>Coaching</th><th style={{ ...thStyle, textAlign: 'right' }}></th>
             </tr></thead>
             <tbody>
-              {filtered.length === 0 && <tr><td colSpan={showCoach ? 10 : 9} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
+              {filtered.length === 0 && <tr><td colSpan={showCoach ? 11 : 10} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
               {filtered.map(it => {
                 const sa = it.kind === 'standalone'
                 const ev = it.ev
@@ -465,6 +535,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{sa ? '—' : (ev.scorecards?.name || '—')}</td>
                     <td style={tdStyle}>{sa ? '—' : (isDsat ? (ev.deviated_controllability ?? 'Controllable') : `${ev.score}%`)}</td>
                     <td style={tdStyle}><CritChip severity={it._crit} reason={it._critReason} /></td>
+                    <td style={tdStyle}><SlaChip cc={it.crit} coaching={it.coaching} /></td>
                     <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
                       {it._date ? new Date(it._date).toLocaleDateString() : '—'}
                     </td>
