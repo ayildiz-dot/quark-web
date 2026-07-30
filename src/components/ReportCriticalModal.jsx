@@ -83,11 +83,20 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
         const { data } = await sq; setScards(data || [])
       }
 
-      // Agents: the RPC is queue-scoped, which returns nothing for an admin with no
-      // queues — so privileged users fall back to the full agent directory.
+      // Agents must always carry their queue, so the picker can be narrowed to the chosen
+      // BPO · Hub · Market. The agents_for_my_queues RPC is scoped to the CALLER's queues,
+      // which returns nothing for an admin with none — so privileged users read the
+      // agent-to-queue mapping straight from user_queues instead. Never an unscoped list:
+      // that would offer agents who don't work the selected hub.
       if (isPriv) {
-        const { data: ags } = await supabase.from('users').select('email, role').eq('role', 'viewer').order('email')
-        setAgents((ags || []).filter(a => a.email).map(a => ({ queue_id: null, email: a.email })))
+        const [{ data: uqs }, { data: agentUsers }] = await Promise.all([
+          supabase.from('user_queues').select('queue_id, user_id'),
+          supabase.from('users').select('id, email').eq('role', 'viewer'),
+        ])
+        const emailById = Object.fromEntries((agentUsers || []).map(u => [u.id, u.email]))
+        setAgents((uqs || [])
+          .filter(r => emailById[r.user_id])
+          .map(r => ({ queue_id: r.queue_id, email: emailById[r.user_id] })))
       } else {
         const { data: ags } = await supabase.rpc('agents_for_my_queues')
         setAgents((ags || []).filter(a => a.agent_email).map(a => ({ queue_id: a.queue_id, email: a.agent_email })))
@@ -159,18 +168,24 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
     return allReasons.filter(r => ok.has(r.id))
   }, [allReasons, reasonTags, divisionId])
 
+  // Drop a chosen agent who isn't on the newly selected hub+market.
+  useEffect(() => {
+    if (agent && !agentPool.includes(agent)) { setAgent(''); setAgentQ('') }
+    // eslint-disable-next-line
+  }, [agentPool])
+
   // Drop a reason that stops being valid after the hub changes.
   useEffect(() => {
     if (reasonId && !reasonOptions.some(r => r.id === reasonId)) setReason('')
     // eslint-disable-next-line
   }, [reasonOptions])
 
+  // Only agents assigned to a queue on the selected hub+market. Empty until the cascade
+  // is complete, so an agent from another hub can never be attached to the case.
   const agentPool = useMemo(() => {
     const okQueues = new Set(matching.map(x => x.id))
-    const pool = okQueues.size
-      ? agentRows.filter(a => a.queue_id === null || okQueues.has(a.queue_id)).map(a => a.email)
-      : agentRows.map(a => a.email)
-    return [...new Set(pool)].sort()
+    if (!okQueues.size) return []
+    return [...new Set(agentRows.filter(a => okQueues.has(a.queue_id)).map(a => a.email))].sort()
   }, [agentRows, matching])
   const agentMatches = agentQ.trim()
     ? agentPool.filter(a => a.toLowerCase().includes(agentQ.trim().toLowerCase())).slice(0, 6)
@@ -187,7 +202,7 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
     if (!ticket.trim()) return flash('Ticket ID is required.', false)
     if (!agent) return flash('Select the agent.', false)
     if (!wsId || !hubId || !market) return flash('Select the BPO, Hub and Market this case belongs to.', false)
-    if (occurred && occurred > todayStr) return flash('The interaction date cannot be in the future.', false)
+    if (occurred && occurred > todayStr) return flash('The Communication Date cannot be in the future.', false)
     if (!notes.trim()) return flash('Describe what happened.', false)
 
     setBusy(true)
@@ -329,7 +344,7 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
                   <input className="input" style={{ width: '100%' }} value={ticket} onChange={e => setTicket(e.target.value)} />
                 </div>
                 <div style={{ ...fld, flex: 1, minWidth: 150 }}>
-                  <label style={lbl}>Interaction date <span style={{ color: 'var(--danger)' }}>*</span></label>
+                  <label style={lbl}>Communication Date <span style={{ color: 'var(--danger)' }}>*</span></label>
                   <input type="date" className="input" style={{ width: '100%' }} value={occurred} max={todayStr}
                     onChange={e => setOccur(e.target.value)} />
                 </div>
@@ -344,7 +359,8 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
                   </div>
                 ) : (
                   <>
-                    <input className="input" style={{ width: '100%' }} placeholder="Type to search agents…"
+                    <input className="input" style={{ width: '100%' }} disabled={!market}
+                      placeholder={market ? 'Type to search agents on this hub…' : 'Select BPO, Hub and Market first'}
                       value={agentQ} onChange={e => setAgentQ(e.target.value)} />
                     {agentMatches.length > 0 && (
                       <div style={{ border: '1px solid var(--border)', borderRadius: 8, marginTop: 4, overflow: 'hidden' }}>
@@ -354,7 +370,8 @@ export default function ReportCriticalModal({ profile, flash, onClose, onSaved }
                         ))}
                       </div>
                     )}
-                    {agentQ.trim() && agentMatches.length === 0 && <div style={hint}>No matching agents.</div>}
+                    {market && agentPool.length === 0 && <div style={warn}>No agents are assigned to queues on this hub and market.</div>}
+                    {agentQ.trim() && agentPool.length > 0 && agentMatches.length === 0 && <div style={hint}>No matching agents.</div>}
                   </>
                 )}
               </div>

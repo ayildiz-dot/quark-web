@@ -194,7 +194,7 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
               <div style={label}>Case details</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: 12 }}>
                 <span><b style={{ color: 'var(--text-secondary)' }}>Ticket:</b> {cc.ticket_id || '—'}</span>
-                <span><b style={{ color: 'var(--text-secondary)' }}>Interaction date:</b> {cc.occurred_on ? new Date(cc.occurred_on).toLocaleDateString() : '—'}</span>
+                <span><b style={{ color: 'var(--text-secondary)' }}>Communication Date:</b> {cc.occurred_on ? new Date(cc.occurred_on).toLocaleDateString() : '—'}</span>
                 <span><b style={{ color: 'var(--text-secondary)' }}>Market:</b> {cc.market || '—'}</span>
                 <span><b style={{ color: 'var(--text-secondary)' }}>Reported:</b> {new Date(cc.reported_at).toLocaleString()}</span>
               </div>
@@ -310,7 +310,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
           .select('*, coach:users!eval_coachings_coach_id_fkey(name)')
           .in('evaluation_id', ids),
         supabase.from('critical_cases')
-          .select('evaluation_id, severity, critical_attribute_ids, sla_due_at, reason:highly_critical_reasons(name)')
+          .select('evaluation_id, severity, critical_attribute_ids, sla_due_at, reason:highly_critical_reasons!critical_cases_highly_critical_reason_id_fkey(name)')
           .in('evaluation_id', ids)
           .is('deleted_at', null),
       ])
@@ -321,14 +321,19 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
     // Standalone critical cases have no evaluation behind them, so they are a second
     // source of coachable work. They are anchored on eval_coachings.critical_case_id
     // rather than evaluation_id (Phase 3b schema).
+    // Embeds are named explicitly rather than by shorthand: a second FK to the same table
+    // would otherwise make them ambiguous and fail the whole query — the exact fault that
+    // silently emptied the Evaluations page earlier.
     let sq = supabase.from('critical_cases')
-      .select('*, reason:highly_critical_reasons(name), reporter:users(name)')
+      .select('*, reason:highly_critical_reasons!critical_cases_highly_critical_reason_id_fkey(name), reporter:users!critical_cases_reported_by_fkey(name)')
       .eq('source', 'standalone')
       .is('deleted_at', null)
       .order('reported_at', { ascending: false })
       .limit(500)
     if (hubIds) sq = sq.in('hub_id', hubIds)
-    const { data: sas } = await sq
+    const { data: sas, error: saErr } = await sq
+    // Surfaced, not swallowed: an empty list and a failed query look identical otherwise.
+    if (saErr) { console.error('standalone critical cases failed to load:', saErr.message); flash('Could not load standalone critical cases: ' + saErr.message, false) }
     const standalone = sas || []
     const saCoach = {}
     if (standalone.length) {
