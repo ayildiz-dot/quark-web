@@ -68,6 +68,17 @@ const CritChip = ({ severity, reason }) => {
   )
 }
 
+// Reuses the wording of the existing dispute tracks so the vocabulary stays consistent.
+const DISPUTE_LABEL = {
+  evaluator_pending:  'Awaiting the evaluator who marked it',
+  evaluator_rejected: 'Rejected by the evaluator',
+  admin_pending:      'Awaiting admin decision',
+  upheld:             'Upheld — marking removed',
+  rejected_final:     'Rejected (final) — marking stands',
+  cancelled:          'Withdrawn',
+  accepted:           'Closed',
+}
+
 // 24-hour SLA state for a Highly Critical case. Plain criticals carry no deadline, so
 // they return null and render as "n/a". The clock stops on AGENT ACKNOWLEDGEMENT, not on
 // the coach completing — "delivered" is what the RTA escalation acts on.
@@ -143,6 +154,40 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
     await supabase.rpc('create_coaching_ack_notification', { p_eval_coaching_id: coaching.id })
     setBusy(false)
     flash('Coaching completed — agent notified to acknowledge'); onChanged(); onClose()
+  }
+
+  // ── Criticality dispute ────────────────────────────────────────────────────
+  // A Highly Critical marking can get an agent blocked from tooling, so a Team Leader on
+  // the agent's queue can challenge it. The marking KG evaluator answers; a rejected
+  // challenge can be escalated to a KG admin, who has the final word.
+  const dispute = item.dispute
+  const disputeOpen = dispute && !['upheld', 'rejected_final', 'cancelled', 'accepted'].includes(dispute.status)
+  const [canDispute, setCanDispute] = useState(false)
+  const [showRaise, setShowRaise]   = useState(false)
+  const [dComment, setDComment]     = useState('')
+
+  useEffect(() => {
+    // Asked of the database rather than guessed from the role, because eligibility also
+    // depends on sharing a queue with the agent.
+    if (!item.crit || disputeOpen) return
+    supabase.rpc('quark_can_dispute_criticality', { p_case_id: item.crit.id })
+      .then(({ data }) => setCanDispute(!!data))
+    // eslint-disable-next-line
+  }, [])
+
+  const callDispute = async (fn, args, okMsg) => {
+    setBusy(true)
+    const { error } = await supabase.rpc(fn, args)
+    setBusy(false)
+    if (error) return flash(error.message, false)
+    flash(okMsg); onChanged(); onClose()
+  }
+
+  const raiseDispute = () => {
+    if (!dComment.trim()) return flash('Explain why the marking is wrong.', false)
+    callDispute('raise_criticality_dispute',
+      { p_case_id: item.crit.id, p_comment: dComment.trim() },
+      'Dispute raised — the 24-hour clock is paused while it is reviewed')
   }
 
   // Recording that RTA was contacted is an audit stamp, not an action Quark takes —
@@ -285,6 +330,152 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
           </>
           )}
 
+          {/* Criticality dispute. Shown only where it can act: there is a marking to
+              challenge, or a live dispute the viewer has a part in. */}
+          {item.crit && (dispute || canDispute) && (
+            <>
+              <div style={label}>Criticality dispute</div>
+              {!dispute ? (
+                showRaise ? (
+                  <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', background: 'var(--bg-secondary)' }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                      This goes to the evaluator who applied the marking. The 24-hour coaching clock pauses until it is resolved.
+                    </div>
+                    <textarea className="input" rows={3} style={{ width: '100%', resize: 'vertical', fontSize: 13 }}
+                      placeholder="Why should this marking be removed or downgraded?"
+                      value={dComment} onChange={e => setDComment(e.target.value)} />
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                      <button className="btn btn-ghost btn-sm" onClick={() => { setShowRaise(false); setDComment('') }}>Cancel</button>
+                      <button className="btn btn-primary btn-sm" disabled={busy} onClick={raiseDispute}>Raise dispute</button>
+                    </div>
+                  </div>
+                ) : (
+                  <button className="btn btn-outline btn-sm" onClick={() => setShowRaise(true)}>Dispute this marking</button>
+                )
+              ) : (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', background: 'var(--bg-secondary)' }}>
+                  <div style={{ fontSize: 12.5, marginBottom: 8 }}>
+                    <b>Status:</b> {DISPUTE_LABEL[dispute.status] || dispute.status}
+                    {dispute.resolved_at && (
+                      <span style={{ color: 'var(--text-secondary)' }}> · resolved {new Date(dispute.resolved_at).toLocaleDateString()}</span>
+                    )}
+                  </div>
+
+                  {/* The marker answers first. */}
+                  {dispute.status === 'evaluator_pending' && (
+                    (dispute.evaluator_id === profile.id || isPrivileged) ? (
+                      <>
+                        <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontSize: 13 }}
+                          placeholder="Your reasoning (required either way)"
+                          value={dComment} onChange={e => setDComment(e.target.value)} />
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                          <button className="btn btn-primary btn-sm" disabled={busy}
+                            onClick={() => callDispute('criticality_marker_decide',
+                              { p_dispute_id: dispute.id, p_approve: true, p_comment: dComment.trim() },
+                              'Dispute upheld — the marking has been removed')}>
+                            Uphold — remove the marking
+                          </button>
+                          <button className="btn btn-outline btn-sm" disabled={busy}
+                            onClick={() => callDispute('criticality_marker_decide',
+                              { p_dispute_id: dispute.id, p_approve: false, p_comment: dComment.trim() },
+                              'Dispute rejected — the marking stands')}>
+                            Reject — the marking stands
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        Awaiting the evaluator who applied the marking.
+                      </div>
+                    )
+                  )}
+
+                  {/* Rejected: the raiser may escalate to a KG admin, or let it stand. */}
+                  {dispute.status === 'evaluator_rejected' && (
+                    (dispute.tl_id === profile.id || isPrivileged) ? (
+                      <>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                          The evaluator rejected the challenge. You can escalate to an admin for a final decision, or withdraw.
+                        </div>
+                        <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontSize: 13 }}
+                          placeholder="Anything to add for the admin (optional)"
+                          value={dComment} onChange={e => setDComment(e.target.value)} />
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                          <button className="btn btn-primary btn-sm" disabled={busy}
+                            onClick={() => callDispute('criticality_escalate_to_admin',
+                              { p_dispute_id: dispute.id, p_comment: dComment.trim() },
+                              'Escalated to admin')}>
+                            Escalate to admin
+                          </button>
+                          <button className="btn btn-ghost btn-sm" disabled={busy}
+                            onClick={() => callDispute('criticality_cancel_dispute',
+                              { p_dispute_id: dispute.id, p_comment: dComment.trim() },
+                              'Dispute withdrawn — the clock has resumed')}>
+                            Withdraw
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        Rejected by the evaluator. The Team Leader who raised it may escalate.
+                      </div>
+                    )
+                  )}
+
+                  {/* Kaizen Gaming has the final word, because the RTA consequence is theirs. */}
+                  {dispute.status === 'admin_pending' && (
+                    isPrivileged ? (
+                      <>
+                        <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontSize: 13 }}
+                          placeholder="Your decision and reasoning (required)"
+                          value={dComment} onChange={e => setDComment(e.target.value)} />
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                          <button className="btn btn-primary btn-sm" disabled={busy}
+                            onClick={() => callDispute('criticality_admin_decide',
+                              { p_dispute_id: dispute.id, p_approve: true, p_comment: dComment.trim() },
+                              'Upheld — the marking has been removed')}>
+                            Uphold — remove the marking
+                          </button>
+                          <button className="btn btn-outline btn-sm" disabled={busy}
+                            onClick={() => callDispute('criticality_admin_decide',
+                              { p_dispute_id: dispute.id, p_approve: false, p_comment: dComment.trim() },
+                              'Rejected — the marking stands')}>
+                            Reject (final)
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                        Escalated — awaiting an admin decision.
+                      </div>
+                    )
+                  )}
+
+                  {disputeOpen && dispute.status === 'evaluator_pending' && dispute.tl_id === profile.id && (
+                    <div style={{ marginTop: 8 }}>
+                      <button className="btn btn-ghost btn-sm" disabled={busy}
+                        onClick={() => callDispute('criticality_cancel_dispute',
+                          { p_dispute_id: dispute.id, p_comment: '' },
+                          'Dispute withdrawn — the clock has resumed')}>
+                        Withdraw dispute
+                      </button>
+                    </div>
+                  )}
+
+                  {!disputeOpen && (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                      {dispute.status === 'upheld'
+                        ? 'The marking was removed. The coaching obligation and the 24-hour clock were cleared with it.'
+                        : dispute.status === 'cancelled'
+                        ? 'Withdrawn. The clock resumed from where it paused.'
+                        : 'The marking stands. The clock resumed from where it paused.'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
           <div style={label}>Coaching</div>
           {!coaching ? (
             <div>
@@ -398,9 +589,36 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       ;(scs || []).forEach(c => { saCoach[c.critical_case_id] = c })
     }
 
+    // Criticality disputes, so the queue can show a paused clock and the detail can offer
+    // the right decision to the right person. Newest per case wins.
+    const caseIds = [
+      ...Object.values(critMap).map(c => c.id),
+      ...standalone.map(c => c.id),
+    ].filter(Boolean)
+    const dispMap = {}
+    if (caseIds.length) {
+      const { data: ds, error: dErr } = await supabase.from('disputes')
+        .select('id, critical_case_id, status, evaluator_id, tl_id, admin_id, created_at, resolved_at, outcome')
+        .eq('kind', 'criticality')
+        .in('critical_case_id', caseIds)
+        .order('created_at', { ascending: false })
+      if (dErr) console.error('criticality disputes failed to load:', dErr.message)
+      ;(ds || []).forEach(d => { if (!dispMap[d.critical_case_id]) dispMap[d.critical_case_id] = d })
+    }
+
     setItems([
-      ...candidates.map(ev => ({ kind: 'eval', ev, cc: null, coaching: coachMap[ev.id] || null, crit: critMap[ev.id] || null })),
-      ...standalone.map(cc => ({ kind: 'standalone', ev: null, cc, coaching: saCoach[cc.id] || null, crit: cc })),
+      ...candidates.map(ev => ({
+        kind: 'eval', ev, cc: null,
+        coaching: coachMap[ev.id] || null,
+        crit: critMap[ev.id] || null,
+        dispute: critMap[ev.id] ? (dispMap[critMap[ev.id].id] || null) : null,
+      })),
+      ...standalone.map(cc => ({
+        kind: 'standalone', ev: null, cc,
+        coaching: saCoach[cc.id] || null,
+        crit: cc,
+        dispute: dispMap[cc.id] || null,
+      })),
     ])
     setLoading(false)
   }
