@@ -68,265 +68,6 @@ const CritChip = ({ severity, reason }) => {
   )
 }
 
-// ─── Report a standalone critical case (KG evaluators + admins only) ──────────
-// Type-first: the type chosen decides what is asked next, so a Highly Critical report
-// never has to name a scorecard attribute. Scorecard, hub, market and agent options all
-// come from the reporter's own queue assignments, so a case can only be filed where they
-// actually work — the same governance constraint the evaluation form applies.
-function ReportCriticalModal({ profile, flash, onClose, onSaved }) {
-  const [type, setType]       = useState('critical')   // 'critical' | 'highly'
-  const [queues, setQueues]   = useState([])
-  const [scId, setScId]       = useState('')
-  const [attrs, setAttrs]     = useState([])
-  const [attrId, setAttrId]   = useState('')
-  const [reasons, setReasons] = useState([])
-  const [reasonId, setReason] = useState('')
-  const [agentsByQueue, setAgentsByQueue] = useState({})
-  const [agentQ, setAgentQ]   = useState('')
-  const [agent, setAgent]     = useState('')
-  const [queueId, setQueueId] = useState('')
-  const [ticket, setTicket]   = useState('')
-  const [occurred, setOccur]  = useState(new Date().toISOString().slice(0, 10))
-  const [notes, setNotes]     = useState('')
-  const [busy, setBusy]       = useState(false)
-
-  useEffect(() => {
-    (async () => {
-      const { data: uq } = await supabase.from('user_queues').select('queue_id').eq('user_id', profile.id)
-      const qIds = (uq || []).map(r => r.queue_id)
-      if (!qIds.length) return
-      const { data: qs } = await supabase.from('queues')
-        .select('id, name, market_value, hub_id, workspace_id, scorecard_id, hubs(name, workspace_id, workspaces(name, division_id))')
-        .in('id', qIds).is('deleted_at', null)
-      setQueues(qs || [])
-      // The RPC returns rows of { queue_id, agent_name, agent_email } — keyed by queue so
-      // the picker can narrow to the queue chosen below rather than offering every agent.
-      const { data: ag } = await supabase.rpc('agents_for_my_queues')
-      const byQ = {}
-      ;(ag || []).forEach(r => {
-        if (!r.agent_email) return
-        ;(byQ[r.queue_id] = byQ[r.queue_id] || []).push(r.agent_email)
-      })
-      setAgentsByQueue(byQ)
-    })()
-    // eslint-disable-next-line
-  }, [])
-
-  // Scorecards available are those mapped to the reporter's queues.
-  const scOptions = useMemo(() => {
-    const m = {}
-    queues.forEach(q => { if (q.scorecard_id) m[q.scorecard_id] = true })
-    return Object.keys(m)
-  }, [queues])
-  const [scNames, setScNames] = useState({})
-  useEffect(() => {
-    if (!scOptions.length) return
-    supabase.from('scorecards').select('id, name, type, division').in('id', scOptions)
-      .then(({ data }) => setScNames(Object.fromEntries((data || []).map(s => [s.id, s]))))
-  }, [scOptions])
-
-  // Breached-attribute list follows the chosen scorecard; reasons follow its division.
-  useEffect(() => {
-    setAttrId(''); setAttrs([])
-    if (!scId) return
-    supabase.from('scorecard_questions').select('id, title')
-      .eq('scorecard_id', scId).eq('is_form_critical', true)
-      .or('is_archived.is.null,is_archived.eq.false').order('title')
-      .then(({ data }) => setAttrs(data || []))
-  }, [scId])
-
-  useEffect(() => {
-    (async () => {
-      setReasons([]); setReason('')
-      const divNames = [...new Set(Object.values(scNames).map(s => s.division).filter(Boolean))]
-      if (!divNames.length) return
-      const { data: divs } = await supabase.from('divisions').select('id, name').in('name', divNames)
-      const divIds = (divs || []).map(d => d.id)
-      if (!divIds.length) return
-      const { data: tags } = await supabase.from('highly_critical_reason_divisions')
-        .select('reason_id').in('division_id', divIds)
-      const ids = [...new Set((tags || []).map(t => t.reason_id))]
-      if (!ids.length) return
-      const { data: rs } = await supabase.from('highly_critical_reasons')
-        .select('id, name').in('id', ids).eq('is_active', true).order('position').order('name')
-      setReasons(rs || [])
-    })()
-  }, [scNames])
-
-  const q = queues.find(x => x.id === queueId)
-  // Narrow to the selected queue once one is chosen; before that, search across every
-  // agent on the reporter's queues so the field is usable in either order.
-  const agentPool = useMemo(() => {
-    const pool = queueId ? (agentsByQueue[queueId] || []) : Object.values(agentsByQueue).flat()
-    return [...new Set(pool)].sort()
-  }, [agentsByQueue, queueId])
-  const agentMatches = agentQ.trim()
-    ? agentPool.filter(a => a.toLowerCase().includes(agentQ.trim().toLowerCase())).slice(0, 6)
-    : []
-
-  const submit = async () => {
-    if (type === 'critical' && (!scId || !attrId)) return flash('Select the scorecard and the breached critical attribute.', false)
-    if (type === 'highly' && !reasonId) return flash('Select a Highly Critical reason.', false)
-    if (!ticket.trim()) return flash('Ticket ID is required.', false)
-    if (!agent) return flash('Select the agent.', false)
-    if (!queueId) return flash('Select the BPO-Hub / Market this case belongs to.', false)
-    if (!notes.trim()) return flash('Describe what happened.', false)
-
-    setBusy(true)
-    const divisionId = q?.hubs?.workspaces?.division_id || null
-    const { error } = await supabase.from('critical_cases').insert({
-      source: 'standalone',
-      severity: type === 'highly' ? 'highly_critical' : 'critical',
-      critical_attribute_ids: type === 'critical' && attrId ? [attrId] : [],
-      highly_critical_reason_id: type === 'highly' ? reasonId : null,
-      ticket_id: ticket.trim(),
-      agent_email: agent,
-      occurred_on: occurred || null,
-      division_id: divisionId,
-      workspace_id: q?.workspace_id || q?.hubs?.workspace_id || null,
-      hub_id: q?.hub_id || null,
-      queue_id: queueId,
-      market: q?.market_value || null,
-      reported_by: profile.id,
-      // Highly Critical carries the 24-hour coaching clock; a plain critical does not.
-      sla_due_at: type === 'highly' ? new Date(Date.now() + 24 * 3600 * 1000).toISOString() : null,
-      notes: notes.trim(),
-    })
-    setBusy(false)
-    if (error) return flash(error.message, false)
-    flash('Critical case reported — it is now in the coaching queue.')
-    onSaved(); onClose()
-  }
-
-  const fld = { marginBottom: 10 }
-  const lbl = { display: 'block', fontSize: 11.5, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }
-  const inp = { width: '100%', fontSize: 13, padding: '7px 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 600 }}>
-        <div className="modal-header"><h2>Report a Critical Case</h2><button className="btn-close" onClick={onClose}>✕</button></div>
-        <div className="modal-body">
-          <div style={{ ...lbl, marginBottom: 6 }}>Criticality type *</div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-            {[['critical', 'Critical Case', 'A Form Critical attribute was breached'],
-              ['highly', 'Highly Critical Case', 'From the managed reason list']].map(([k, t, d]) => (
-              <button key={k} onClick={() => setType(k)}
-                style={{
-                  flex: 1, minWidth: 200, textAlign: 'left', padding: '10px 12px', cursor: 'pointer',
-                  border: '1.5px solid', borderRadius: 8,
-                  borderColor: type === k ? 'var(--accent)' : 'var(--border)',
-                  background: type === k ? 'var(--accent-light)' : 'transparent',
-                  color: 'var(--text-primary)', fontFamily: 'inherit',
-                }}>
-                <span style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>{t}</span>
-                <span style={{ display: 'block', fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{d}</span>
-              </button>
-            ))}
-          </div>
-
-          {type === 'critical' ? (
-            <>
-              <div style={fld}>
-                <label style={lbl}>Scorecard *</label>
-                <select style={inp} value={scId} onChange={e => setScId(e.target.value)}>
-                  <option value="">— Select scorecard —</option>
-                  {scOptions.map(id => <option key={id} value={id}>{scNames[id]?.name || id}</option>)}
-                </select>
-              </div>
-              <div style={fld}>
-                <label style={lbl}>Breached critical attribute *</label>
-                <select style={inp} value={attrId} onChange={e => setAttrId(e.target.value)} disabled={!scId}>
-                  <option value="">{scId ? '— Select attribute —' : 'Choose a scorecard first'}</option>
-                  {attrs.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
-                </select>
-                {scId && attrs.length === 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--warning, #d97706)', marginTop: 3 }}>
-                    This scorecard has no Form Critical attributes.
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div style={fld}>
-              <label style={lbl}>Highly Critical reason *</label>
-              <select style={inp} value={reasonId} onChange={e => setReason(e.target.value)}>
-                <option value="">— Select reason —</option>
-                {reasons.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-              <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3 }}>
-                Must be coached within 24 hours. No scorecard or attribute needed.
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ ...fld, flex: 1, minWidth: 160 }}>
-              <label style={lbl}>Ticket ID *</label>
-              <input style={inp} value={ticket} onChange={e => setTicket(e.target.value)} />
-            </div>
-            <div style={{ ...fld, flex: 1, minWidth: 160 }}>
-              <label style={lbl}>Interaction date *</label>
-              <input type="date" style={inp} value={occurred} max={new Date().toISOString().slice(0, 10)}
-                onChange={e => setOccur(e.target.value)} />
-            </div>
-          </div>
-
-          <div style={fld}>
-            <label style={lbl}>Agent *</label>
-            {agent ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 13 }}>{agent}</span>
-                <button className="btn btn-ghost btn-sm" onClick={() => { setAgent(''); setAgentQ('') }}>Change</button>
-              </div>
-            ) : (
-              <>
-                <input style={inp} placeholder="Type to search agents on your queues…" value={agentQ}
-                  onChange={e => setAgentQ(e.target.value)} />
-                {agentMatches.length > 0 && (
-                  <div style={{ border: '1px solid var(--border)', borderRadius: 8, marginTop: 3, overflow: 'hidden' }}>
-                    {agentMatches.map(a => (
-                      <div key={a} onClick={() => { setAgent(a); setAgentQ('') }}
-                        style={{ padding: '6px 10px', fontSize: 12.5, cursor: 'pointer' }}>{a}</div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          <div style={fld}>
-            <label style={lbl}>BPO-Hub · Market *</label>
-            <select style={inp} value={queueId} onChange={e => setQueueId(e.target.value)}>
-              <option value="">— Select —</option>
-              {queues.map(x => (
-                <option key={x.id} value={x.id}>
-                  {(x.hubs?.name || 'Hub')} · {x.market_value || '—'}{x.hubs?.workspaces?.name ? ` (${x.hubs.workspaces.name})` : ''}
-                </option>
-              ))}
-            </select>
-            <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 3 }}>
-              Limited to your assigned queues, so the case is channelled correctly.
-            </div>
-          </div>
-
-          <div style={fld}>
-            <label style={lbl}>What happened *</label>
-            <textarea style={{ ...inp, resize: 'vertical' }} rows={3} value={notes}
-              onChange={e => setNotes(e.target.value)} placeholder="Describe the breach…" />
-          </div>
-        </div>
-        <div className="modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy} onClick={submit}>
-            {busy ? 'Submitting…' : 'Submit critical case'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged }) {
   const sa = item.kind === 'standalone'
   const ev = item.ev
@@ -526,7 +267,6 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
   const [loading, setLoading] = useState(true)
   const [items, setItems]     = useState([])
   const [detail, setDetail]   = useState(null)
-  const [report, setReport]   = useState(false)
   const [tabFilter, setTab]   = useState('all')
   const [fType, setFType]   = useState('')
   const [fScore, setFScore] = useState('')
@@ -649,8 +389,6 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       (!fFrom || (it._date && it._date >= fFrom)) && (!fTo || (it._date && it._date <= fTo))
   }), [deco, tabFilter, profile?.id, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fCrit, fFrom, fTo])
 
-  const canMarkCriticality = ['admin', 'owner'].includes(profile?.role)
-    || (profile?.role === 'evaluator' && String(profile?.email || '').toLowerCase().endsWith('@kaizengaming.com'))
   const showCoach = tabFilter === 'all' || tabFilter === 'done'
   const statusOf = (it) => it.coaching ? it.coaching.status : 'pending'
   const clearAll = () => { setFType(''); setFScore(''); setFAgent(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFCoach(''); setFCrit(''); setFrom(''); setTo('') }
@@ -665,14 +403,6 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
         {[['all', 'All'], ['open', 'Unassigned'], ['mine', 'Assigned to me'], ['done', 'Completed']].map(([k, l]) => (
           <button key={k} className={`btn btn-sm ${tabFilter === k ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setTab(k)}>{l}</button>
         ))}
-        {/* Reporting is restricted to KG evaluators and admins — Team Leaders coach and
-            dispute but never mark. The database enforces the same rule, so hiding the
-            button is convenience, not the security boundary. */}
-        {canMarkCriticality && (
-          <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setReport(true)}>
-            + Report Critical Case
-          </button>
-        )}
       </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>Filter:</span>
@@ -736,7 +466,6 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
         </div>
       )}
       {detail && <QueueDetail item={detail} profile={profile} isPrivileged={isPrivileged} flash={flash} onClose={() => setDetail(null)} onChanged={load} />}
-      {report && <ReportCriticalModal profile={profile} flash={flash} onClose={() => setReport(false)} onSaved={load} />}
     </div>
   )
 }

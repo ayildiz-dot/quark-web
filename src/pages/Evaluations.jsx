@@ -6,6 +6,7 @@ import { getEvaluatorScope } from '../lib/evaluatorScope'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 import { AgentEmailChip } from '../components/AgentPerfModal'
+import ReportCriticalModal from '../components/ReportCriticalModal'
 
 function EditRequestModal({ ev, onClose, onSubmitted, flash }) {
   const [reason, setReason] = useState('')
@@ -606,6 +607,7 @@ export default function Evaluations() {
   // Admin/Owner only: filter by which evaluator submitted.
   const [evaluatorFilter, setEvaluatorFilter] = useState('') // '' = all
   const [evaluatorList,   setEvaluatorList]   = useState([])  // [{id, name, email}]
+  const [reportCritical, setReportCritical]   = useState(false)
   const [agentFilter,     setAgentFilter]     = useState('') // '' = all; matches the "Agent's Email" metadata value
   const [agentList,       setAgentList]       = useState([])  // ['agent@…', …]
   const isPrivileged = ['admin', 'owner'].includes(profile?.role)
@@ -1109,6 +1111,15 @@ export default function Evaluations() {
               {drafts.length > 0 ? `Drafts (${drafts.length})` : 'Drafts'}
             </button>
           )}
+          {/* Reporting a critical spotted outside an evaluation belongs alongside starting
+              one. Restricted to KG evaluators and admins/owners — Team Leaders coach and
+              dispute but never mark, and the database enforces the same rule. */}
+          {(['admin', 'owner'].includes(profile?.role)
+            || (profile?.role === 'evaluator' && String(profile?.email || '').toLowerCase().endsWith('@kaizengaming.com'))) && (
+              <button className="btn btn-outline" onClick={() => setReportCritical(true)}>
+                + Report Critical Case
+              </button>
+            )}
           {!['viewer', 'team_leader'].includes(profile?.role) && (
               <button className="btn btn-primary" onClick={() => navigate('/evaluations/new')}>
                 + New Evaluation
@@ -1395,6 +1406,10 @@ export default function Evaluations() {
 
       {reqModal && <EditRequestModal ev={reqModal} onClose={() => setReqModal(null)} onSubmitted={loadEditRequests} flash={flash} />}
       {reviewModal && <EditReviewModal request={reviewModal} onClose={() => setReviewModal(null)} onResolved={loadEditRequests} flash={flash} />}
+      {reportCritical && (
+        <ReportCriticalModal profile={profile} flash={flash}
+          onClose={() => setReportCritical(false)} onSaved={() => {}} />
+      )}
       {raiseDispute && <RaiseDisputeModal ev={raiseDispute} profile={profile} onClose={() => setRaiseDispute(null)} onSubmitted={loadDisputes} flash={flash} />}
       {raiseDsat && <RaiseDsatModal evalId={raiseDsat} onClose={() => setRaiseDsat(null)} onSubmitted={loadDisputes} flash={flash} />}
       {disputeModal && <DisputeModal dispute={disputeModal} profile={profile} navigate={navigate} onClose={() => setDisputeModal(null)} onChanged={loadDisputes} flash={flash} />}
