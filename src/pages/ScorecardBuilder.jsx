@@ -45,7 +45,7 @@ export default function ScorecardBuilder() {
 
   const logHistory = async (changeType, reason = null, versionNum = null) => {
     try {
-      await supabase.from('scorecard_history').insert({
+      const { error: hErr } = await supabase.from('scorecard_history').insert({
         scorecard_id: id,
         changed_by: profile.id,
         change_type: changeType,
@@ -60,6 +60,7 @@ export default function ScorecardBuilder() {
           }))
         }
       })
+      if (hErr) console.error('scorecard_history insert failed:', hErr.message)
     } catch (e) {
       console.warn('History log failed:', e.message)
     }
@@ -111,9 +112,25 @@ export default function ScorecardBuilder() {
       supabase.from('scorecard_question_groups').select('*').eq('scorecard_id', id).order('position'),
       supabase.from('scorecard_questions').select('*').eq('scorecard_id', id).eq('is_archived', false).order('position'),
     ])
+    // A failed scorecard read leaves the builder blank with no explanation, so it is
+    // called out rather than swallowed. The child reads are logged individually: losing
+    // just the questions, say, would otherwise look like an empty scorecard.
+    if (sc.error) {
+      console.error('scorecard failed to load:', sc.error.message)
+      flash('Could not load this scorecard: ' + sc.error.message, false)
+      return
+    }
+    ;[['metadata fields', meta], ['question groups', grp], ['questions', qs]].forEach(([what, r]) => {
+      if (r.error) {
+        console.error(`${what} failed to load:`, r.error.message)
+        flash(`Some of this scorecard could not be loaded (${what}). Do not save until it loads correctly.`, false)
+      }
+    })
+
     setScorecard(sc.data)
     setDivision(sc.data?.division || '')
-    const { data: divData } = await supabase.from('divisions').select('*').order('position')
+    const { data: divData, error: divErr } = await supabase.from('divisions').select('*').order('position')
+    if (divErr) console.error('divisions failed to load — the Division picker will be empty:', divErr.message)
     setDivisions(divData || [])
     setMetadata(meta.data || [])
     setGroups(grp.data || [])
@@ -125,6 +142,12 @@ export default function ScorecardBuilder() {
         supabase.from('dsat_questions').select('*').eq('scorecard_id', id).order('position'),
         supabase.from('dsat_options').select('*').order('position'),
       ])
+      ;[['sections', secs], ['DSAT questions', dqs], ['options', opts]].forEach(([what, r]) => {
+        if (r.error) {
+          console.error(`${what} failed to load:`, r.error.message)
+          flash(`Some of this scorecard could not be loaded (${what}). Do not save until it loads correctly.`, false)
+        }
+      })
       setSections(secs.data || [])
       setDsatQuestions(dqs.data || [])
       setDsatOptions(opts.data || [])
@@ -167,8 +190,26 @@ export default function ScorecardBuilder() {
 
   const executeVersionSave = async (reason) => {
     if (leavingRef.current || skipSaveRef.current) return
+
+    // A version save is a SEQUENCE of separate statements, not one transaction, so a
+    // partial failure is genuinely possible. Supabase returns errors in the result object
+    // rather than throwing, which means the try/catch below never saw them — every write
+    // reported success regardless. Each one now goes through `wr`, which collects failures.
+    // If anything failed we say exactly what, and deliberately do NOT clear the unsaved-
+    // changes state, bump the version or log history — none of which would be true.
+    const failures = []
+    const wr = async (label, q) => {
+      const { data, error } = await q
+      if (error) {
+        failures.push(`${label} — ${error.message}`)
+        console.error('scorecard save failed:', label, error)
+        return null
+      }
+      return data
+    }
+
     try {
-      await supabase.from('scorecards').update({
+      await wr('scorecard settings', supabase.from('scorecards').update({
         name: scorecard.name,
         description: scorecard.description,
         pass_threshold: scorecard.type === 'quality' ? (Number(scorecard.pass_threshold) || 90) : null,
@@ -177,19 +218,19 @@ export default function ScorecardBuilder() {
         ai_dsat_enabled: scorecard.ai_dsat_enabled || false,
         ai_dsat_prompt: scorecard.ai_dsat_prompt || null,
         updated_at: new Date().toISOString()
-      }).eq('id', id)
+      }).eq('id', id))
 
       // Groups — insert new, update existing
       const groupIdMap = {}
       for (const g of groups) {
         if (g._isNew) {
-          const { data } = await supabase.from('scorecard_question_groups').insert({
+          const data = await wr(`group "${g.name}"`, supabase.from('scorecard_question_groups').insert({
             scorecard_id: id, name: g.name, position: g.position
-          }).select().single()
+          }).select().single())
           if (data) groupIdMap[g.id] = data.id
         } else {
-          await supabase.from('scorecard_question_groups')
-            .update({ name: g.name }).eq('id', g.id)
+          await wr(`group "${g.name}"`, supabase.from('scorecard_question_groups')
+            .update({ name: g.name }).eq('id', g.id))
         }
       }
 
@@ -197,15 +238,15 @@ export default function ScorecardBuilder() {
       for (const [i, q] of questions.entries()) {
         const realGroupId = groupIdMap[q.group_id] || q.group_id
         if (q._isNew) {
-          await supabase.from('scorecard_questions').insert({
+          await wr(`question "${q.title}"`, supabase.from('scorecard_questions').insert({
             scorecard_id: id, group_id: realGroupId, title: q.title,
             description: q.description, weight: q.weight, is_weighted: q.is_weighted,
             is_form_critical: q.is_form_critical, is_group_critical: q.is_group_critical,
             allow_na: q.allow_na, is_ai_attribute: q.is_ai_attribute || false,
             ai_prompt: q.ai_prompt || null, position: i + 1
-          })
+          }))
         } else {
-          await supabase.from('scorecard_questions').update({
+          await wr(`question "${q.title}"`, supabase.from('scorecard_questions').update({
             title: q.title, description: q.description,
             weight: q.weight, is_weighted: q.is_weighted,
             is_form_critical: q.is_form_critical,
@@ -214,24 +255,24 @@ export default function ScorecardBuilder() {
             is_ai_attribute: q.is_ai_attribute || false,
             ai_prompt: q.ai_prompt || null,
             group_id: realGroupId, position: i + 1
-          }).eq('id', q.id)
+          }).eq('id', q.id))
         }
       }
 
       // Metadata — insert new, update existing
       for (const f of metadata) {
         if (f._isNew) {
-          await supabase.from('scorecard_metadata_fields').insert({
+          await wr(`metadata field "${f.label}"`, supabase.from('scorecard_metadata_fields').insert({
             scorecard_id: id, label: f.label, field_type: f.field_type,
             is_required: f.is_required, options: f.options, position: f.position,
             source: f.source || 'custom'
-          })
+          }))
         } else {
-          await supabase.from('scorecard_metadata_fields').update({
+          await wr(`metadata field "${f.label}"`, supabase.from('scorecard_metadata_fields').update({
             label: f.label, field_type: f.field_type,
             is_required: f.is_required, options: f.options,
             source: f.source || 'custom', position: f.position
-          }).eq('id', f.id)
+          }).eq('id', f.id))
         }
       }
 
@@ -240,13 +281,13 @@ export default function ScorecardBuilder() {
         const sectionIdMap = {}
         for (const s of sections) {
           if (s._isNew) {
-            const { data } = await supabase.from('dsat_sections').insert({
+            const data = await wr(`section "${s.title}"`, supabase.from('dsat_sections').insert({
               scorecard_id: id, title: s.title, description: s.description, position: s.position
-            }).select().single()
+            }).select().single())
             if (data) sectionIdMap[s.id] = data.id
           } else {
-            await supabase.from('dsat_sections')
-              .update({ title: s.title, description: s.description }).eq('id', s.id)
+            await wr(`section "${s.title}"`, supabase.from('dsat_sections')
+              .update({ title: s.title, description: s.description }).eq('id', s.id))
           }
         }
         // Save questions — insert new (resolving temp section IDs), update existing
@@ -254,47 +295,66 @@ export default function ScorecardBuilder() {
         for (const q of dsatQuestions) {
           const realSectionId = sectionIdMap[q.section_id] || q.section_id
           if (q._isNew) {
-            const { data } = await supabase.from('dsat_questions').insert({
+            const data = await wr(`DSAT question "${q.title}"`, supabase.from('dsat_questions').insert({
               scorecard_id: id, section_id: realSectionId, title: q.title,
               description: q.description, is_required: q.is_required,
               question_type: q.question_type || 'options', position: q.position
-            }).select().single()
+            }).select().single())
             if (data) questionIdMap[q.id] = data.id
           } else {
-            await supabase.from('dsat_questions').update({
+            await wr(`DSAT question "${q.title}"`, supabase.from('dsat_questions').update({
               title: q.title, description: q.description, is_required: q.is_required,
               question_type: q.question_type || 'options'
-            }).eq('id', q.id)
+            }).eq('id', q.id))
           }
         }
         // Save options — insert new (resolving temp question IDs), update existing
         for (const o of dsatOptions) {
           const realQuestionId = questionIdMap[o.question_id] || o.question_id
           if (o._isNew) {
-            await supabase.from('dsat_options').insert({
+            await wr(`option "${o.label}"`, supabase.from('dsat_options').insert({
               question_id: realQuestionId, label: o.label,
               jump_to_section_id: o.jump_to_section_id, position: o.position
-            })
+            }))
           } else {
-            await supabase.from('dsat_options').update({
+            await wr(`option "${o.label}"`, supabase.from('dsat_options').update({
               label: o.label, jump_to_section_id: o.jump_to_section_id
-            }).eq('id', o.id)
+            }).eq('id', o.id))
           }
         }
       }
 
+      // Anything failed? Then this is NOT a saved version. Keep the unsaved-changes state
+      // so the user can retry without losing work, and skip the version bump and the
+      // history row — recording a version that never fully wrote would be worse than the
+      // failure itself.
+      if (failures.length) {
+        console.error('scorecard save: ' + failures.length + ' write(s) failed', failures)
+        flash(
+          `Not saved — ${failures.length} item${failures.length === 1 ? '' : 's'} failed. ` +
+          `First: ${failures[0]}. Your changes are still here; fix the cause and save again.`,
+          false)
+        return
+      }
+
       clearChanged()
       // Get current version number from latest history entry
-      const { data: latestHistory } = await supabase
+      const { data: latestHistory, error: histErr } = await supabase
         .from('scorecard_history')
         .select('version_number')
         .eq('scorecard_id', id)
         .order('changed_at', { ascending: false })
         .limit(1)
         .single()
+      // A missing history row is normal on a first save; only log a real failure.
+      if (histErr && histErr.code !== 'PGRST116') console.error('version lookup failed:', histErr.message)
       const nextVersion = ((latestHistory?.version_number) || 1) + 1
       // Update the version column on the scorecard row
-      await supabase.from('scorecards').update({ version: nextVersion }).eq('id', id)
+      const { error: verErr } = await supabase.from('scorecards').update({ version: nextVersion }).eq('id', id)
+      if (verErr) {
+        console.error('version bump failed:', verErr.message)
+        return flash('Changes saved, but the version number could not be updated: ' + verErr.message, false)
+      }
       setScorecard(s => ({ ...s, version: nextVersion }))
       await logHistory('save', reason, nextVersion)
       flash('All changes saved ✓')
@@ -314,7 +374,13 @@ export default function ScorecardBuilder() {
   }
 
   const [fieldTemplates, setFieldTemplates] = useState([])
-  useEffect(() => { supabase.from('metadata_field_templates').select('*').eq('is_active', true).order('position').then(({ data }) => setFieldTemplates(data || [])) }, [])
+  useEffect(() => {
+    supabase.from('metadata_field_templates').select('*').eq('is_active', true).order('position')
+      .then(({ data, error }) => {
+        if (error) console.error('field library failed to load:', error.message)
+        setFieldTemplates(data || [])
+      })
+  }, [])
 
   const addFromLibrary = async (tplId) => {
     const tpl = fieldTemplates.find(t => t.id === tplId)
@@ -350,7 +416,13 @@ export default function ScorecardBuilder() {
   const updateMetaField = async (fieldId, updates) => {
     if (leavingRef.current) return
     setMetadata(m => m.map(f => f.id === fieldId ? { ...f, ...updates } : f))
-    if (!isPublished) await supabase.from('scorecard_metadata_fields').update(updates).eq('id', fieldId)
+    // Draft autosave. Console-only: this fires on ordinary edits, so a flash would be
+    // constant noise — but a silent failure here means the draft quietly diverges from
+    // what is on screen, so it must not be invisible.
+    if (!isPublished) {
+      const { error } = await supabase.from('scorecard_metadata_fields').update(updates).eq('id', fieldId)
+      if (error) console.error('draft autosave failed (metadata field):', error.message)
+    }
     else markChanged()
   }
 
@@ -378,7 +450,10 @@ export default function ScorecardBuilder() {
     setMetadata(reordered)
     if (isPublished) { markChanged(); return }
     for (const f of reordered) {
-      if (!String(f.id).startsWith('temp_')) await supabase.from('scorecard_metadata_fields').update({ position: f.position }).eq('id', f.id)
+      if (!String(f.id).startsWith('temp_')) {
+        const { error } = await supabase.from('scorecard_metadata_fields').update({ position: f.position }).eq('id', f.id)
+        if (error) console.error('field reorder failed:', error.message)
+      }
     }
   }
 
@@ -399,7 +474,13 @@ export default function ScorecardBuilder() {
   const updateGroup = async (groupId, updates) => {
     if (leavingRef.current) return
     setGroups(g => g.map(gr => gr.id === groupId ? { ...gr, ...updates } : gr))
-    if (!isPublished) await supabase.from('scorecard_question_groups').update(updates).eq('id', groupId)
+    // Draft autosave. Console-only: this fires on ordinary edits, so a flash would be
+    // constant noise — but a silent failure here means the draft quietly diverges from
+    // what is on screen, so it must not be invisible.
+    if (!isPublished) {
+      const { error } = await supabase.from('scorecard_question_groups').update(updates).eq('id', groupId)
+      if (error) console.error('draft autosave failed (group):', error.message)
+    }
     else markChanged()
   }
 
@@ -433,7 +514,13 @@ export default function ScorecardBuilder() {
   const updateQuestion = async (qId, updates) => {
     if (leavingRef.current) return
     setQuestions(q => q.map(qs => qs.id === qId ? { ...qs, ...updates } : qs))
-    if (!isPublished) await supabase.from('scorecard_questions').update(updates).eq('id', qId)
+    // Draft autosave. Console-only: this fires on ordinary edits, so a flash would be
+    // constant noise — but a silent failure here means the draft quietly diverges from
+    // what is on screen, so it must not be invisible.
+    if (!isPublished) {
+      const { error } = await supabase.from('scorecard_questions').update(updates).eq('id', qId)
+      if (error) console.error('draft autosave failed (question):', error.message)
+    }
     else markChanged()
   }
 
@@ -484,9 +571,14 @@ export default function ScorecardBuilder() {
     setQuestions(reordered)
 
     if (!isPublished) {
-      await Promise.all(reordered.map((q, i) =>
+      const results = await Promise.all(reordered.map((q, i) =>
         supabase.from('scorecard_questions').update({ position: i + 1, group_id: q.group_id }).eq('id', q.id)
       ))
+      const failed = results.filter(r => r.error)
+      if (failed.length) {
+        console.error('question reorder failed:', failed.map(r => r.error.message))
+        flash(`Reorder not saved (${failed.length} of ${results.length} failed). Refresh to see the true order.`, false)
+      }
     } else {
       markChanged()
     }
@@ -533,7 +625,13 @@ export default function ScorecardBuilder() {
   const updateSection = async (sId, updates) => {
     if (leavingRef.current) return
     setSections(s => s.map(sec => sec.id === sId ? { ...sec, ...updates } : sec))
-    if (!isPublished) await supabase.from('dsat_sections').update(updates).eq('id', sId)
+    // Draft autosave. Console-only: this fires on ordinary edits, so a flash would be
+    // constant noise — but a silent failure here means the draft quietly diverges from
+    // what is on screen, so it must not be invisible.
+    if (!isPublished) {
+      const { error } = await supabase.from('dsat_sections').update(updates).eq('id', sId)
+      if (error) console.error('draft autosave failed (section):', error.message)
+    }
     else markChanged()
   }
 
@@ -573,7 +671,13 @@ export default function ScorecardBuilder() {
   const updateDsatQuestion = async (qId, updates) => {
     if (leavingRef.current) return
     setDsatQuestions(q => q.map(dq => dq.id === qId ? { ...dq, ...updates } : dq))
-    if (!isPublished) await supabase.from('dsat_questions').update(updates).eq('id', qId)
+    // Draft autosave. Console-only: this fires on ordinary edits, so a flash would be
+    // constant noise — but a silent failure here means the draft quietly diverges from
+    // what is on screen, so it must not be invisible.
+    if (!isPublished) {
+      const { error } = await supabase.from('dsat_questions').update(updates).eq('id', qId)
+      if (error) console.error('draft autosave failed (DSAT question):', error.message)
+    }
     else markChanged()
   }
 
@@ -606,7 +710,13 @@ export default function ScorecardBuilder() {
   const updateOption = async (optId, updates) => {
     if (leavingRef.current) return
     setDsatOptions(o => o.map(opt => opt.id === optId ? { ...opt, ...updates } : opt))
-    if (!isPublished) await supabase.from('dsat_options').update(updates).eq('id', optId)
+    // Draft autosave. Console-only: this fires on ordinary edits, so a flash would be
+    // constant noise — but a silent failure here means the draft quietly diverges from
+    // what is on screen, so it must not be invisible.
+    if (!isPublished) {
+      const { error } = await supabase.from('dsat_options').update(updates).eq('id', optId)
+      if (error) console.error('draft autosave failed (option):', error.message)
+    }
     else markChanged()
   }
 
