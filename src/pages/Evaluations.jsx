@@ -606,6 +606,8 @@ export default function Evaluations() {
   // Admin/Owner only: filter by which evaluator submitted.
   const [evaluatorFilter, setEvaluatorFilter] = useState('') // '' = all
   const [evaluatorList,   setEvaluatorList]   = useState([])  // [{id, name, email}]
+  const [agentFilter,     setAgentFilter]     = useState('') // '' = all; matches the "Agent's Email" metadata value
+  const [agentList,       setAgentList]       = useState([])  // ['agent@…', …]
   const isPrivileged = ['admin', 'owner'].includes(profile?.role)
   const isKG = (profile?.email || '').toLowerCase().endsWith('@kaizengaming.com')
 
@@ -621,8 +623,32 @@ export default function Evaluations() {
   useEffect(() => {
     loadScorecards()
     loadArchivedScorecards()
-    if (profile?.role && profile.role !== 'viewer') loadEvaluatorList()
+    if (profile?.role && profile.role !== 'viewer') { loadEvaluatorList(); loadAgentList() }
   }, [profile])
+
+  // Build the agent dropdown from agents who actually appear on evaluations in scope.
+  // The agent isn't a column — it lives in metadata_values as the "Agent's Email" entry
+  // (the users join on evaluations is the EVALUATOR), so the list is derived by reading
+  // that metadata rather than querying users.
+  const loadAgentList = async () => {
+    let aq = supabase
+      .from('evaluations')
+      .select('metadata_values, hub_id')
+      .eq('status', 'submitted')
+      .limit(5000)
+    if (!isPrivileged) {
+      const { hubIds } = await getEvaluatorScope(profile.id)
+      if (!hubIds.length) { setAgentList([]); return }
+      aq = aq.in('hub_id', hubIds)
+    }
+    const { data: rows } = await aq
+    const seen = new Set()
+    ;(rows || []).forEach(r => {
+      const v = (r.metadata_values || []).find(m => (m.label || '').toLowerCase() === "agent's email")?.value
+      if (v && String(v).trim()) seen.add(String(v).trim())
+    })
+    setAgentList([...seen].sort((a, b) => a.localeCompare(b)))
+  }
 
   // Build the evaluator dropdown from people who have actually submitted evaluations.
   const loadEvaluatorList = async () => {
@@ -646,7 +672,7 @@ export default function Evaluations() {
   // Refetch whenever the type toggles change (and on first mount once profile is ready)
   useEffect(() => {
     if (profile?.id) fetchEvals(1)
-  }, [profile, typeFilter, evaluatorFilter])
+  }, [profile, typeFilter, evaluatorFilter, agentFilter])
 
   useEffect(() => {
     if (profile?.id) loadDrafts()
@@ -791,6 +817,9 @@ export default function Evaluations() {
       const types = activeTypes()
       if (types) q = q.in('evaluation_type', types)
 
+      // Agent lives in metadata_values, so it needs a JSONB contains filter rather than
+      // a column equality — same approach the agent's own view uses.
+      if (agentFilter) q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: agentFilter }]))
       if (filters.scorecard) q = q.eq('scorecard_id', filters.scorecard)
       if (filters.dateFrom)  q = q.gte('submitted_at', filters.dateFrom)
       if (filters.dateTo)    q = q.lte('submitted_at', filters.dateTo + 'T23:59:59')
@@ -815,7 +844,7 @@ export default function Evaluations() {
     } finally {
       setLoading(false)
     }
-  }, [filters, profile, typeFilter, evaluatorFilter, includeArchived, archivedScIds])
+  }, [filters, profile, typeFilter, evaluatorFilter, agentFilter, includeArchived, archivedScIds])
 
   const openDetail = async (id) => {
     const { data: ev } = await supabase
@@ -873,6 +902,15 @@ export default function Evaluations() {
     }
     const types = activeTypes()
     if (types) q = q.in('evaluation_type', types)
+    // Keep the export honest with the filter bar: scorecard, dates, read-status and
+    // agent were previously ignored here, so an export could return far more than the
+    // table on screen showed.
+    if (agentFilter) q = q.filter('metadata_values', 'cs', JSON.stringify([{ label: "Agent's Email", value: agentFilter }]))
+    if (filters.scorecard) q = q.eq('scorecard_id', filters.scorecard)
+    if (filters.dateFrom)  q = q.gte('submitted_at', filters.dateFrom)
+    if (filters.dateTo)    q = q.lte('submitted_at', filters.dateTo + 'T23:59:59')
+    if (filters.status === 'done')    q = q.not('agent_read_at', 'is', null)
+    if (filters.status === 'pending') q = q.eq('agent_read_required', true).is('agent_read_at', null)
     if (!includeArchived && archivedScIds.length) q = q.not('scorecard_id', 'in', '(' + archivedScIds.join(',') + ')')
     const { data: rows } = await q
     const evals = rows || []
@@ -1111,6 +1149,14 @@ export default function Evaluations() {
             ))}
           </select>
         )}
+        {/* Agents are hidden from an agent's own view — they only ever see themselves. */}
+        {!isAgent && (
+          <select className="select" value={agentFilter}
+            onChange={e => setAgentFilter(e.target.value)} style={{ maxWidth: 220 }}>
+            <option value="">All agents</option>
+            {agentList.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        )}
         <input type="date" className="input" value={filters.dateFrom}
           onChange={e => setFilters(f => ({ ...f, dateFrom: e.target.value }))} />
         <input type="date" className="input" value={filters.dateTo}
@@ -1127,6 +1173,7 @@ export default function Evaluations() {
           // so we don't manually refetch here — doing so would read a stale filter value.
           setFilters({ search: '', dateFrom: '', dateTo: '', scorecard: '', evalId: '', status: '' })
           setEvaluatorFilter('')
+          setAgentFilter('')
         }}>Clear</button>
 
         <select className="select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ marginLeft: 'auto' }}>
