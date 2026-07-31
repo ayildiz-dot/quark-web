@@ -39,6 +39,9 @@ export const coachingSla = (submittedAt, completedAt) => {
   return { hours: Math.round(hours * 10) / 10, state }
 }
 
+// Rows per page in the queue table.
+const PAGE_SIZE = 20
+
 const CSTATUS = {
   pending:      { label: 'Pending',      color: '#f59e0b', bg: '#f59e0b22' },
   in_progress:  { label: 'In progress',  color: '#6366f1', bg: '#6366f122' },
@@ -513,6 +516,7 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
   const [items, setItems]     = useState([])
   const [detail, setDetail]   = useState(null)
   const [tabFilter, setTab]   = useState('all')
+  const [page, setPage]       = useState(1)   // 1-based; see PAGE_SIZE below
   const [fType, setFType]   = useState('')
   const [fScore, setFScore] = useState('')
   const [fAgent, setFAgent] = useState('')
@@ -683,6 +687,22 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
       (!fFrom || (it._date && it._date >= fFrom)) && (!fTo || (it._date && it._date <= fTo))
   }), [deco, tabFilter, profile?.id, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fCrit, fSla, fFrom, fTo])
 
+  // Paginate client-side. The whole candidate list is already in memory (the queue is a
+  // union of two tables that both have to be fetched in full to be interleaved by date),
+  // so paging here costs nothing and keeps every filter and the sort order intact —
+  // filters narrow the list first, then the page is taken from the result.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  // Clamp rather than reset: if filtering shrinks the list while you are on page 5, land
+  // on the last real page instead of an empty one. Deriving it (rather than only fixing it
+  // in an effect) means the very first render after a filter change is already correct.
+  const safePage = Math.min(page, totalPages)
+  const pageItems = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+
+  // Any change to the filters or tab sends you back to page 1 — staying on page 3 of a
+  // freshly filtered list is disorienting and usually looks like "no results".
+  useEffect(() => { setPage(1) },
+    [tabFilter, fType, fScore, fAgent, fDiv, fBpo, fHub, fMarket, fCoach, fCrit, fSla, fFrom, fTo])
+
   const showCoach = tabFilter === 'all' || tabFilter === 'done'
   const statusOf = (it) => it.coaching ? it.coaching.status : 'pending'
   const clearAll = () => { setFType(''); setFScore(''); setFAgent(''); setFDiv(''); setFBpo(''); setFHub(''); setFMkt(''); setFCoach(''); setFCrit(''); setFSla(''); setFrom(''); setTo('') }
@@ -740,8 +760,8 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
               <th style={thStyle}>Coaching</th><th style={{ ...thStyle, textAlign: 'right' }}></th>
             </tr></thead>
             <tbody>
-              {filtered.length === 0 && <tr><td colSpan={showCoach ? 10 : 9} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
-              {filtered.map(it => {
+              {pageItems.length === 0 && <tr><td colSpan={showCoach ? 10 : 9} style={{ ...tdStyle, textAlign: 'center', color: 'var(--text-secondary)' }}>Nothing here.</td></tr>}
+              {pageItems.map(it => {
                 const sa = it.kind === 'standalone'
                 const ev = it.ev
                 const isDsat = !sa && ev.evaluation_type === 'dsat'
@@ -778,6 +798,36 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
           </table>
         </div>
       )}
+
+      {/* Pager. Hidden when everything fits on one page — a lone "Page 1 of 1" with two
+          dead buttons is noise. The count of matching rows is always useful though, so it
+          shows whenever there is anything at all. */}
+      {!loading && filtered.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+            {filtered.length === 1
+              ? '1 case'
+              : `Showing ${(safePage - 1) * PAGE_SIZE + 1}\u2013${Math.min(safePage * PAGE_SIZE, filtered.length)} of ${filtered.length} cases`}
+          </div>
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button className="btn btn-ghost btn-sm" disabled={safePage <= 1}
+                onClick={() => setPage(p => Math.max(1, Math.min(p, totalPages) - 1))}>
+                &larr; Previous
+              </button>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                Page {safePage} of {totalPages}
+              </span>
+              <button className="btn btn-ghost btn-sm" disabled={safePage >= totalPages}
+                onClick={() => setPage(p => Math.min(totalPages, Math.min(p, totalPages) + 1))}>
+                Next &rarr;
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {detail && <QueueDetail item={detail} profile={profile} isPrivileged={isPrivileged} flash={flash} onClose={() => setDetail(null)} onChanged={load} />}
     </div>
   )
