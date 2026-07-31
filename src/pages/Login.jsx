@@ -41,20 +41,23 @@ export default function Login({ confirmed = false }) {
       // empty string: the code fell through to a JSON.stringify that could never
       // have shown anything useful in the first place.
       //
-      // Object.getOwnPropertyNames sees non-enumerable properties too, so this
-      // reconstructs a real diagnostic (message + status/code if present) even
-      // when .message itself is empty.
-      let msg = e?.message || e?.error_description || e?.msg || ''
-      if (!msg) {
-        try {
-          const props = Object.getOwnPropertyNames(e || {})
-            .filter(k => k !== 'stack')
-            .reduce((acc, k) => { acc[k] = e[k]; return acc }, {})
-          msg = Object.keys(props).length ? JSON.stringify(props) : ''
-        } catch { /* fall through to the generic message below */ }
+      // status/code can live on the prototype (a getter) rather than as an own
+      // property, so read every known field via direct access — that works
+      // regardless of where it's actually defined, own or inherited.
+      const msg = e?.message || e?.error_description || e?.msg || e?.error || e?.details || e?.hint || ''
+      const status = e?.status || e?.code || ''
+      let text
+      if (msg) {
+        text = status ? `${msg} (${status})` : msg
+      } else if (status) {
+        // A real HTTP status but NO message text at all (e.g. a bare 500) almost
+        // always means the database rejected the signup — most often a trigger
+        // or constraint on user creation, not anything the person did wrong.
+        text = `Sign-up failed (HTTP ${status}) with no error message from the server. This usually means a database trigger or constraint blocked account creation — a common cause is this email already having a row in the users table from being pre-added in User Management. Please contact your admin with this exact status code.`
+      } else {
+        text = 'Something went wrong. Please try again — if this keeps happening, ask an admin to check the Supabase Auth logs.'
       }
-      const status = e?.status || e?.code
-      setError((msg ? `${msg}${status ? ` (${status})` : ''}` : '') || 'Something went wrong. Please try again — if this keeps happening, ask an admin to check the Supabase Auth logs for the real error.')
+      setError(text)
     } finally {
       setLoading(false)
     }
