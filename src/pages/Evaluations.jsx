@@ -1032,12 +1032,11 @@ export default function Evaluations() {
     return 'var(--danger)'
   }
 
-  // Edit windows differ by scorecard type:
-  // - Quality: author OR admin/owner, within 72 hours of submission.
-  // - DSAT (Vendor and KG spot-check alike): admin/owner ONLY, within 1 month —
-  //   regular evaluators have no edit rights on DSAT submissions at all, since
-  //   duplicate-ticket corrections and Controllability corrections on DSAT rows
-  //   need to go through an admin/owner rather than the original author.
+  // Edit windows are now the same for Quality and DSAT alike:
+  // - Admin/Owner: anytime, within 30 days of submission.
+  // - Author on a @kaizengaming.com email: self-edit within 72 hours.
+  // - Any other author (a BPO evaluator): no self-edit — see the "Make an edit
+  //   request" branch below, which used to be Quality-only and now covers DSAT too.
   const withinWindow = (submittedAt, hours) => {
     if (!submittedAt) return false
     const ms = Date.now() - new Date(submittedAt).getTime()
@@ -1046,9 +1045,6 @@ export default function Evaluations() {
   const canEdit = (ev) => {
     const privileged = ['admin', 'owner'].includes(profile?.role)
     const isAuthor = ev.evaluator_id === profile?.id
-    if (ev.evaluation_type === 'dsat') {
-      return privileged && withinWindow(ev.submitted_at, 24 * 30)
-    }
     return privileged
       ? withinWindow(ev.submitted_at, 24 * 30)
       : (withinWindow(ev.submitted_at, 72) && isAuthor && isKG)
@@ -1293,13 +1289,12 @@ export default function Evaluations() {
                         {(() => {
                           const priv = ['admin', 'owner'].includes(profile?.role)
                           const isAuthor = ev.evaluator_id === profile?.id
-                          const isQuality = ev.evaluation_type !== 'dsat'
                           const pend = pendingReqs[ev.id]
                           if (pend && (priv || isKG) && pend.requester_id !== profile?.id)
                             return <button className="btn btn-ghost btn-sm" style={{ color: '#f59e0b' }} onClick={() => setReviewModal(pend)}>Review edit request</button>
                           if (canEdit(ev))
                             return <button className="btn btn-ghost btn-sm" style={{ color: 'var(--accent)' }} onClick={() => navigate('/evaluations/new', { state: { editEval: ev.id } })}>Edit</button>
-                          if (isQuality && isAuthor && !isKG && !priv) {
+                          if (isAuthor && !isKG && !priv) {
                             const r = myReqs[ev.id]
                             const approvedActive = r && r.status === 'approved' && r.approved_at && (Date.now() - new Date(r.approved_at).getTime() < 72 * 3600 * 1000)
                             if (approvedActive)
