@@ -781,12 +781,19 @@ function CalibrationAdmin() {
     }))
   }
 
-  const statusColor = { open: '#d97706', scoring: '#2563eb', completed: '#16a34a' }
-  const statusLabel = { open: 'Open', scoring: 'Scoring', completed: 'Completed' }
+  const statusColor = { open: '#d97706', scoring: '#2563eb', awaiting_release: '#d97706', completed: '#16a34a' }
+  const statusLabel = { open: 'Open', scoring: 'Scoring', awaiting_release: 'Awaiting Release', completed: 'Completed' }
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
   const inputStyle = { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box' }
-  const visibleSessions = sessions.filter(s => showCompleted || s.status !== 'completed')
+  // Scoring can finish (server marks status='completed') well before anyone chooses to
+  // release results. Treating THAT as "Completed" made a session vanish from this list
+  // the instant scoring wrapped up — taking Release Results with it. A session is only
+  // truly done once its results are released too; until then it displays and behaves
+  // as "Awaiting Release" and stays in the default (non-toggled) view.
+  const displayStatus = (s) => (s.status === 'completed' && !s.results_released) ? 'awaiting_release' : s.status
+  const isTrulyCompleted = (s) => s.status === 'completed' && !!s.results_released
+  const visibleSessions = sessions.filter(s => showCompleted || !isTrulyCompleted(s))
 
   if (loading) return (
     <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>Loading…</div>
@@ -844,11 +851,11 @@ function CalibrationAdmin() {
                     <td style={tdStyle}>
                       <span style={{
                         fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
-                        backgroundColor: (statusColor[s.status] || '#6b7280') + '22',
-                        color: statusColor[s.status] || '#6b7280',
-                        border: '1px solid ' + (statusColor[s.status] || '#6b7280') + '44',
+                        backgroundColor: (statusColor[displayStatus(s)] || '#6b7280') + '22',
+                        color: statusColor[displayStatus(s)] || '#6b7280',
+                        border: '1px solid ' + (statusColor[displayStatus(s)] || '#6b7280') + '44',
                       }}>
-                        {statusLabel[s.status] || s.status}
+                        {statusLabel[displayStatus(s)] || s.status}
                       </span>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
@@ -862,129 +869,135 @@ function CalibrationAdmin() {
         </div>
       )}
 
-      {/* Session detail panel */}
+      {/* Session detail — floating modal, not inline, so it doesn't get lost at the
+          bottom of a long session list. */}
       {selected && (
-        <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-            <div>
-              <h3 style={{ margin: 0, marginBottom: 6, fontSize: 15 }}>{selected.title}</h3>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <TypeBadge type={selected.type} />
-                <span style={{
-                  fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
-                  backgroundColor: (statusColor[selected.status] || '#6b7280') + '22',
-                  color: statusColor[selected.status] || '#6b7280',
-                }}>
-                  {statusLabel[selected.status] || selected.status}
-                </span>
-                {selected.case_reference && (
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Ref: {selected.case_reference}</span>
-                )}
-              </div>
+        <div className="modal-backdrop" onClick={() => { setSelected(null); setDetail(null) }}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header" style={{ flexShrink: 0 }}>
+              <h2>{selected.title}</h2>
+              <button className="btn-close" onClick={() => { setSelected(null); setDetail(null) }}>✕</button>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {selected.status === 'open' && (
-                <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => updateStatus('scoring')}>
-                  Open for Scoring
-                </button>
+            <div className="modal-body" style={{ overflowY: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <TypeBadge type={selected.type} />
+                  <span style={{
+                    fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                    backgroundColor: (statusColor[displayStatus(selected)] || '#6b7280') + '22',
+                    color: statusColor[displayStatus(selected)] || '#6b7280',
+                  }}>
+                    {statusLabel[displayStatus(selected)] || selected.status}
+                  </span>
+                  {selected.case_reference && (
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Ref: {selected.case_reference}</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {selected.status === 'open' && (
+                    <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => updateStatus('scoring')}>
+                      Open for Scoring
+                    </button>
+                  )}
+                  {selected.status === 'scoring' && (
+                    <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => updateStatus('completed')}>
+                      Mark Completed
+                    </button>
+                  )}
+                  <button className="btn btn-secondary btn-sm"
+                    onClick={async () => {
+                      await supabase.from('calibration_sessions').update({ results_released: true }).eq('id', selected.id)
+                      setSelected(s => ({ ...s, results_released: true }))
+                      setSessions(prev => prev.map(s => s.id === selected.id ? { ...s, results_released: true } : s))
+                    }}>
+                    {selected.results_released ? '✓ Released' : 'Release Results'}
+                  </button>
+                </div>
+              </div>
+
+              {!detail ? (
+                <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading…</div>
+              ) : (
+                <>
+                  {detail.evaluatedCount > 0 && (
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                      <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: detail.avgDelta <= 0.10 ? '#16a34a' : '#dc2626' }}>
+                          {(detail.avgDelta * 100).toFixed(1)}%
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
+                          Overall Delta
+                        </div>
+                      </div>
+                      <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
+                        <div style={{ fontSize: 22, fontWeight: 700 }}>
+                          {detail.calibratedCount}/{detail.evaluatedCount}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
+                          Calibrated
+                        </div>
+                      </div>
+                      <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: detail.calibratedCount === detail.evaluatedCount ? '#16a34a' : '#dc2626' }}>
+                          {Math.round((detail.calibratedCount / detail.evaluatedCount) * 100)}%
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
+                          Calibration Rate
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                      Gauge
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                      <div>
+                        <span style={{ fontWeight: 500, fontSize: 13 }}>{detail.gaugeUser?.name || detail.gaugeUser?.email || 'Unknown'}</span>
+                        {detail.gaugeUser?.name && <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>{detail.gaugeUser.email}</span>}
+                      </div>
+                      {detail.gaugeSub
+                        ? <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 500 }}>✓ Submitted ({detail.gaugeSub.overall_score}%)</span>
+                        : <span style={{ fontSize: 12, color: '#d97706' }}>Pending</span>
+                      }
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+                      Participants ({detail.participants.length})
+                    </div>
+                    {detail.participants.length === 0 ? (
+                      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No participants assigned to this session.</div>
+                    ) : (
+                      detail.participants.map(p => (
+                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                          <div>
+                            <span style={{ fontWeight: 500, fontSize: 13 }}>{p.name || p.email}</span>
+                            {p.name && <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>{p.email}</span>}
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            {!p.sub && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Pending</span>}
+                            {p.sub?.status === 'submitted' && (
+                              <span style={{ fontSize: 12, color: '#2563eb', fontWeight: 500 }}>Submitted ({p.sub.overall_score}%)</span>
+                            )}
+                            {p.sub?.status === 'evaluated' && (
+                              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <ResultBadge calibrated={p.sub.is_calibrated} />
+                                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                                  Δ {p.sub.delta != null ? (p.sub.delta * 100).toFixed(1) + '%' : '—'}
+                                </span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
               )}
-              {selected.status === 'scoring' && (
-                <button className="btn btn-outline" style={{ fontSize: 12 }} onClick={() => updateStatus('completed')}>
-                  Mark Completed
-                </button>
-              )}
-              <button className="btn btn-secondary btn-sm" style={{ marginRight: 8 }}
-              onClick={async () => {
-                await supabase.from('calibration_sessions').update({ results_released: true }).eq('id', selected.id)
-                setSelected(s => ({ ...s, results_released: true }))
-              }}>
-              {selected.results_released ? '✓ Released' : 'Release Results'}
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setSelected(null); setDetail(null) }}>✕</button>
             </div>
           </div>
-
-          {!detail ? (
-            <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading…</div>
-          ) : (
-            <>
-              {detail.evaluatedCount > 0 && (
-                <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-                  <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: detail.avgDelta <= 0.10 ? '#16a34a' : '#dc2626' }}>
-                      {(detail.avgDelta * 100).toFixed(1)}%
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
-                      Overall Delta
-                    </div>
-                  </div>
-                  <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
-                    <div style={{ fontSize: 22, fontWeight: 700 }}>
-                      {detail.calibratedCount}/{detail.evaluatedCount}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
-                      Calibrated
-                    </div>
-                  </div>
-                  <div className="card" style={{ flex: 1, textAlign: 'center', padding: '14px 16px' }}>
-                    <div style={{ fontSize: 22, fontWeight: 700, color: detail.calibratedCount === detail.evaluatedCount ? '#16a34a' : '#dc2626' }}>
-                      {Math.round((detail.calibratedCount / detail.evaluatedCount) * 100)}%
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginTop: 4 }}>
-                      Calibration Rate
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                  Gauge
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div>
-                    <span style={{ fontWeight: 500, fontSize: 13 }}>{detail.gaugeUser?.name || detail.gaugeUser?.email || 'Unknown'}</span>
-                    {detail.gaugeUser?.name && <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>{detail.gaugeUser.email}</span>}
-                  </div>
-                  {detail.gaugeSub
-                    ? <span style={{ fontSize: 12, color: '#16a34a', fontWeight: 500 }}>✓ Submitted ({detail.gaugeSub.overall_score}%)</span>
-                    : <span style={{ fontSize: 12, color: '#d97706' }}>Pending</span>
-                  }
-                </div>
-              </div>
-
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                  Participants ({detail.participants.length})
-                </div>
-                {detail.participants.length === 0 ? (
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>No participants assigned to this session.</div>
-                ) : (
-                  detail.participants.map(p => (
-                    <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-                      <div>
-                        <span style={{ fontWeight: 500, fontSize: 13 }}>{p.name || p.email}</span>
-                        {p.name && <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginLeft: 8 }}>{p.email}</span>}
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        {!p.sub && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Pending</span>}
-                        {p.sub?.status === 'submitted' && (
-                          <span style={{ fontSize: 12, color: '#2563eb', fontWeight: 500 }}>Submitted ({p.sub.overall_score}%)</span>
-                        )}
-                        {p.sub?.status === 'evaluated' && (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <ResultBadge calibrated={p.sub.is_calibrated} />
-                            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                              Δ {p.sub.delta != null ? (p.sub.delta * 100).toFixed(1) + '%' : '—'}
-                            </span>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </>
-          )}
         </div>
       )}
 
@@ -1212,13 +1225,32 @@ function CalibrationInsights() {
       if (sessionIdsFilter.length === 0) { setRows([]); setLoading(false); return }
     }
 
-    let subsQuery = supabase
-      .from('calibration_submissions')
-      .select('id, evaluator_id, session_id, is_calibrated, delta, status, submitted_at, comment')
-      .eq('status', 'evaluated')
-      .eq('is_gauge', false)
-    if (sessionIdsFilter) subsQuery = subsQuery.in('session_id', sessionIdsFilter)
-    const { data: subs } = await subsQuery
+    // Admins/owners can read every row directly (RLS presumably grants them a broad
+    // SELECT policy already, same as elsewhere in this app). Non-privileged viewers,
+    // however, are almost certainly restricted by RLS to their OWN calibration_submissions
+    // row — that's the right default (it's what keeps a participant from reading the
+    // Gauge's reference answers pre-submission) but it also means a plain evaluator_id
+    // filter never returns a session-mate's row. get_calibration_session_results is a
+    // SECURITY DEFINER RPC (see the accompanying SQL) that re-validates server-side that
+    // the caller is privileged, the session's Gauge, or a listed participant AND that
+    // results_released is true, then returns every evaluated submission for that one
+    // session — bypassing the narrower row-level policy on purpose, only once released.
+    let subs
+    if (isPrivileged) {
+      const { data } = await supabase
+        .from('calibration_submissions')
+        .select('id, evaluator_id, session_id, is_calibrated, delta, status, submitted_at, comment')
+        .eq('status', 'evaluated')
+        .eq('is_gauge', false)
+      subs = data
+    } else {
+      const perSession = await Promise.all(
+        sessionIdsFilter.map(sid => supabase.rpc('get_calibration_session_results', { p_session_id: sid }))
+      )
+      subs = perSession.flatMap((r, i) => (r.data || []).map(row => ({ ...row, session_id: sessionIdsFilter[i] })))
+      const anyError = perSession.find(r => r.error)
+      if (anyError?.error) console.error('get_calibration_session_results failed:', anyError.error.message)
+    }
 
     if (!subs || subs.length === 0) { setRows([]); setLoading(false); return }
 
