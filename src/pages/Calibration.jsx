@@ -614,6 +614,10 @@ function CalibrationAdmin() {
   const [selected, setSelected]     = useState(null)
   const [detail, setDetail]         = useState(null)
   const [creating, setCreating]     = useState(false)
+  // Completed sessions are hidden by default to keep this list focused on active work,
+  // but they must stay reachable — Release Results lives on THIS screen, not Insights,
+  // so a session that finishes scoring can't be allowed to become permanently unreachable.
+  const [showCompleted, setShowCompleted] = useState(false)
   const [bpoOptions, setBpoOptions]       = useState([])
   const [wsList, setWsList]               = useState([])
   const [hubsAll, setHubsAll]             = useState([])
@@ -782,7 +786,7 @@ function CalibrationAdmin() {
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
   const inputStyle = { width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13, boxSizing: 'border-box' }
-  const visibleSessions = sessions.filter(s => s.status !== 'completed')
+  const visibleSessions = sessions.filter(s => showCompleted || s.status !== 'completed')
 
   if (loading) return (
     <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-secondary)', fontSize: 14 }}>Loading…</div>
@@ -792,14 +796,20 @@ function CalibrationAdmin() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Calibration Sessions</h2>
-        <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={() => setShowCreate(true)}>
-          + New Session
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={showCompleted} onChange={e => setShowCompleted(e.target.checked)} />
+            Show completed
+          </label>
+          <button className="btn btn-primary" style={{ fontSize: 13 }} onClick={() => setShowCreate(true)}>
+            + New Session
+          </button>
+        </div>
       </div>
 
       {visibleSessions.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 36, color: 'var(--text-secondary)', fontSize: 14 }}>
-          No open or in-progress sessions. Completed sessions have moved to the Insights tab.
+          {showCompleted ? 'No sessions yet.' : 'No open or in-progress sessions. Tick "Show completed" above to find one that\'s finished scoring — that\'s also where Release Results lives.'}
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 20 }}>
@@ -1216,7 +1226,7 @@ function CalibrationInsights() {
     const evaluatorIds = [...new Set(subs.map(s => s.evaluator_id))]
 
     const [{ data: sessionsData }, { data: usersData }] = await Promise.all([
-      supabase.from('calibration_sessions').select('id, title, type, session_date, scorecard_id, gauge_user_id, bpo, hub, market').in('id', sessionIds),
+      supabase.from('calibration_sessions').select('id, title, type, session_date, scorecard_id, gauge_user_id, bpo, hub, market, results_released').in('id', sessionIds),
       supabase.from('users').select('id, name, email').in('id', evaluatorIds),
     ])
     const scorecardIds = [...new Set((sessionsData || []).map(s => s.scorecard_id).filter(Boolean))]
@@ -1248,21 +1258,27 @@ function CalibrationInsights() {
 
     // Flatten into one row per evaluated submission, carrying each session's BPO/HUB/
     // Market along with it so the tables below can be filtered by any of the three.
-    const joined = subs.map(sub => {
-      const s = sessionMap[sub.session_id]
-      return {
-        ...sub,
-        sessionTitle: s?.title || 'Unknown session',
-        scorecardName: scorecardMap[s?.scorecard_id]?.name || (s?.type || '').toUpperCase(),
-        sessionDate: s?.session_date,
-        gaugeName: userMap[s?.gauge_user_id]?.name || userMap[s?.gauge_user_id]?.email || '—',
-        evaluatorName: userMap[sub.evaluator_id]?.name || userMap[sub.evaluator_id]?.email || 'Unknown',
-        bpo: s?.bpo || null,
-        hub: s?.hub || null,
-        market: s?.market || null,
-        answers: answersBySubmission[sub.id] || {},
-      }
-    })
+    // Non-privileged viewers (any Evaluator, KG or BPO) only ever see a session's own
+    // deltas/results once Released — the exact same gate CalibrationHome already
+    // applies on "My Sessions." Admin/Owner keep seeing everything unreleased, since
+    // deciding whether to release is their call to make from this same data.
+    const joined = subs
+      .filter(sub => isPrivileged || sessionMap[sub.session_id]?.results_released)
+      .map(sub => {
+        const s = sessionMap[sub.session_id]
+        return {
+          ...sub,
+          sessionTitle: s?.title || 'Unknown session',
+          scorecardName: scorecardMap[s?.scorecard_id]?.name || (s?.type || '').toUpperCase(),
+          sessionDate: s?.session_date,
+          gaugeName: userMap[s?.gauge_user_id]?.name || userMap[s?.gauge_user_id]?.email || '—',
+          evaluatorName: userMap[sub.evaluator_id]?.name || userMap[sub.evaluator_id]?.email || 'Unknown',
+          bpo: s?.bpo || null,
+          hub: s?.hub || null,
+          market: s?.market || null,
+          answers: answersBySubmission[sub.id] || {},
+        }
+      })
 
     setQuestionLabels(labelOrder)
     setRows(joined)
