@@ -1186,11 +1186,19 @@ function CalibrationInsights() {
     const isPrivileged = ['admin', 'owner'].includes(profile?.role)
     let sessionIdsFilter = null
     if (!isPrivileged) {
-      const { data: myGaugeSessions } = await supabase
-        .from('calibration_sessions')
-        .select('id')
-        .eq('gauge_user_id', profile?.id)
-      sessionIdsFilter = (myGaugeSessions || []).map(s => s.id)
+      // Non-privileged viewers (any Evaluator — Kaizen Gaming or BPO) only see sessions
+      // they were actually part of: as Gauge, or as a listed participant. Previously this
+      // only checked Gauge, so a BPO QA (never a Gauge) saw nothing at all here even
+      // once the tab was opened up to them.
+      const [{ data: myGaugeSessions }, { data: myParticipantRows }] = await Promise.all([
+        supabase.from('calibration_sessions').select('id').eq('gauge_user_id', profile?.id),
+        supabase.from('calibration_participants').select('session_id').eq('evaluator_id', profile?.id),
+      ])
+      const idSet = new Set([
+        ...(myGaugeSessions || []).map(s => s.id),
+        ...(myParticipantRows || []).map(p => p.session_id),
+      ])
+      sessionIdsFilter = [...idSet]
       if (sessionIdsFilter.length === 0) { setRows([]); setLoading(false); return }
     }
 
@@ -1640,9 +1648,20 @@ export default function Calibration() {
   const isAdmin = ['admin', 'owner'].includes(profile?.role)
   const isKgUser = profile?.email?.endsWith('@kaizengaming.com')
   const canManage = isAdmin || isKgUser
+  // Insights is broader than canManage: any Evaluator (Kaizen Gaming or BPO) can see it
+  // too, scoped inside CalibrationInsights to only the sessions they were actually part
+  // of (as Gauge or participant) — Admin/Owner and KG evaluators keep their existing,
+  // wider visibility there. Team Leaders and Agents still see nothing on this page.
+  const canSeeInsights = canManage || profile?.role === 'evaluator'
   const [tab, setTab]                = useState('sessions')
   const [scoringSession, setScoring] = useState(null)
   const [refreshKey, setRefreshKey]  = useState(0)
+
+  const tabs = [
+    ['sessions', 'My Sessions'],
+    ...(canManage ? [['admin', 'Manage Sessions']] : []),
+    ...(canSeeInsights ? [['insights', 'Insights']] : []),
+  ]
 
   return (
     <div className="page">
@@ -1652,9 +1671,9 @@ export default function Calibration() {
         </div>
       </div>
 
-      {canManage && (
+      {(canManage || canSeeInsights) && (
         <div style={{ display: 'flex', marginBottom: 28, borderBottom: '1px solid var(--border)' }}>
-          {[['sessions', 'My Sessions'], ['admin', 'Manage Sessions'], ['insights', 'Insights']].map(([key, label]) => (
+          {tabs.map(([key, label]) => (
             <button key={key}
               onClick={() => { setTab(key); setScoring(null) }}
               style={{
@@ -1681,7 +1700,7 @@ export default function Calibration() {
           : <CalibrationHome key={refreshKey} onScore={s => setScoring(s)} />
       )}
       {tab === 'admin' && canManage && <CalibrationAdmin />}
-      {tab === 'insights' && canManage && <CalibrationInsights />}
+      {tab === 'insights' && canSeeInsights && <CalibrationInsights />}
     </div>
   )
 }
