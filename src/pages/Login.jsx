@@ -33,7 +33,28 @@ export default function Login({ confirmed = false }) {
         setSignupSuccess(true)
       }
     } catch (e) {
-      setError(e.message || e.error_description || e.msg || JSON.stringify(e) || 'Something went wrong. Please try again.')
+      // e is typically a Supabase AuthError, a subclass of the native Error. Error
+      // instances store message/name/stack as NON-enumerable own properties — a
+      // JS-engine detail, not a Supabase quirk — so JSON.stringify(e) always
+      // returns "{}" regardless of what the real message says. That's exactly why
+      // this banner could go blank/useless whenever .message happened to be an
+      // empty string: the code fell through to a JSON.stringify that could never
+      // have shown anything useful in the first place.
+      //
+      // Object.getOwnPropertyNames sees non-enumerable properties too, so this
+      // reconstructs a real diagnostic (message + status/code if present) even
+      // when .message itself is empty.
+      let msg = e?.message || e?.error_description || e?.msg || ''
+      if (!msg) {
+        try {
+          const props = Object.getOwnPropertyNames(e || {})
+            .filter(k => k !== 'stack')
+            .reduce((acc, k) => { acc[k] = e[k]; return acc }, {})
+          msg = Object.keys(props).length ? JSON.stringify(props) : ''
+        } catch { /* fall through to the generic message below */ }
+      }
+      const status = e?.status || e?.code
+      setError((msg ? `${msg}${status ? ` (${status})` : ''}` : '') || 'Something went wrong. Please try again — if this keeps happening, ask an admin to check the Supabase Auth logs for the real error.')
     } finally {
       setLoading(false)
     }
