@@ -55,7 +55,6 @@ function AppShell({ user, profile, logout, fetchProfile }) {
   usePresence(user)
 
   const isAdminOrOwner = ['admin', 'owner'].includes(profile?.role)
-  const isKgUser = profile?.email?.endsWith('@kaizengaming.com')
 
   const handleLeave = () => {
     setUnsavedChanges(false)
@@ -121,7 +120,7 @@ function AppShell({ user, profile, logout, fetchProfile }) {
                 <Route path="/scorecards/:id/edit" element={isAdminOrOwner ? <ScorecardBuilder /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/scorecards/:id/history" element={isAdminOrOwner ? <ScorecardHistory /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/admin" element={isAdminOrOwner ? <Admin /> : <Navigate to="/dashboard" replace />} />
-                <Route path="/calibration" element={isKgUser && ['owner','admin','evaluator'].includes(profile?.role) ? <Calibration /> : <Navigate to="/dashboard" replace />} />
+                <Route path="/calibration" element={['owner','admin','evaluator'].includes(profile?.role) ? <Calibration /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/coaching" element={<Coaching />} />
                 <Route path="/contact" element={['viewer','admin','owner'].includes(profile?.role) ? <ContactUs /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/issues" element={['evaluator','team_leader','admin','owner'].includes(profile?.role) ? <Issues /> : <Navigate to="/dashboard" replace />} />

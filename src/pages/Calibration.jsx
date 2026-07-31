@@ -639,9 +639,12 @@ function CalibrationAdmin() {
     const [{ data: sess }, { data: scs }, { data: us }] = await Promise.all([
       sessionsQuery,
       supabase.from('scorecards').select('id, name, type').eq('is_calibration', true).eq('is_published', true).order('name'),
-      // Participants must be KG evaluators/TLs/admins — never agents. `viewer` is the
-      // Agent role, and an agent has no business scoring a calibration case.
-      supabase.from('users').select('id, name, email, role').ilike('email', '%@kaizengaming.com').neq('role', 'viewer').order('email'),
+      // Participants can be any Evaluator/Team Leader/Admin/Owner — Kaizen Gaming or
+      // BPO — never Agents. `viewer` is the Agent role, and an agent has no business
+      // scoring a calibration case. Creating/managing sessions stays KG-gated via
+      // `canManage` below; this list only controls who can be picked as a participant
+      // or Gauge when a KG QA builds a session.
+      supabase.from('users').select('id, name, email, role').neq('role', 'viewer').order('email'),
     ])
     setSessions(sess || [])
     setScorecards(scs || [])
