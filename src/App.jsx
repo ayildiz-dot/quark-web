@@ -158,6 +158,31 @@ export default function App() {
     }
   }, [])
 
+  // Supabase refreshes the access token whenever the window regains focus, and fires
+  // onAuthStateChange each time. Naively calling setUser/setProfile there hands React a
+  // BRAND-NEW OBJECT even though nothing about the user changed — and every effect keyed
+  // on [profile] (seven in Evaluations, three in Calibration, one in Coaching) treats a
+  // new identity as a change and refetches. Tabbing away and back therefore triggered a
+  // burst of redundant queries and visible list flicker.
+  //
+  // These two helpers keep the PREVIOUS object when the contents are unchanged, so the
+  // identity stays stable and those effects go quiet. Effects keyed on [profile?.id] were
+  // never affected — a string compares by value.
+  //
+  // Deliberately compares content, not just id: a genuine change (role, name, hub) must
+  // still propagate, which is exactly what a shallow id check would miss.
+  const sameProfile = (prev, next) => {
+    if (prev === next) return true
+    if (!prev || !next) return false
+    return JSON.stringify(prev) === JSON.stringify(next)
+  }
+  const applyProfile = (next) => setProfile(prev => (sameProfile(prev, next) ? prev : next))
+
+  // The auth user is compared on id alone: Supabase mutates volatile fields such as
+  // last_sign_in_at on every refresh, so a content compare would never match and we'd be
+  // back where we started. Identity is all any consumer cares about here.
+  const applyUser = (next) => setUser(prev => ((prev?.id && prev.id === next?.id) ? prev : next))
+
   const fetchProfile = async (u) => {
     const { data } = await supabase
       .from('users')
@@ -165,27 +190,30 @@ export default function App() {
       .eq('id', u.id)
       .maybeSingle()
     if (data) {
-      setProfile(data)
+      applyProfile(data)
     } else {
       const { data: np } = await supabase
         .from('users')
         .upsert({ id: u.id, email: u.email, name: u.email.split('@')[0], role: 'viewer' })
         .select()
         .maybeSingle()
-      setProfile(np)
+      applyProfile(np)
     }
     setLoading(false)
   }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
+      applyUser(session?.user ?? null)
       if (session?.user) fetchProfile(session.user)
       else setLoading(false)
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      setUser(session?.user ?? null)
+      applyUser(session?.user ?? null)
       if (session?.user) {
+        // Still refetched on every event — the profile really can change server-side
+        // (a role grant, a hub reassignment) and this is when we'd learn of it. The
+        // difference is that an UNCHANGED result no longer looks like a change.
         fetchProfile(session.user)
         if (event === 'SIGNED_IN') {
           sessionStorage.removeItem('quark_email_confirmed')
@@ -194,7 +222,7 @@ export default function App() {
             else console.log('last_login updated for', session.user.email)
           })
         }
-      } else { setProfile(null); setLoading(false) }
+      } else { applyProfile(null); setLoading(false) }
     })
     return () => subscription.unsubscribe()
   }, [])
