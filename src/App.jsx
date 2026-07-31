@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, useEffect, useRef, createContext, useContext } from 'react'
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { supabase } from './lib/supabase'
@@ -140,6 +140,8 @@ export default function App() {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  // Which user id we have already recorded a login for — see the SIGNED_IN handler below.
+  const signedInFor = useRef(null)
   const [emailConfirmed] = useState(() =>
     typeof window !== 'undefined' &&
     (window.location.hash.includes('type=signup') ||
@@ -171,10 +173,24 @@ export default function App() {
   //
   // Deliberately compares content, not just id: a genuine change (role, name, hub) must
   // still propagate, which is exactly what a shallow id check would miss.
+  //
+  // VOLATILE_FIELDS are excluded because they change on their own without meaning anything
+  // to the UI. last_login is the important one: we write it ourselves on SIGNED_IN, and
+  // supabase-js fires SIGNED_IN on tab focus — so a plain content compare found a genuine
+  // difference every single time and defeated the whole point of this function.
+  const VOLATILE_FIELDS = ['last_login', 'updated_at', 'last_seen_at']
+  const stable = (o) => {
+    if (!o) return o
+    const c = { ...o }
+    VOLATILE_FIELDS.forEach(k => { delete c[k] })
+    // Key order from PostgREST is stable for a given select, but sort anyway so this can
+    // never produce a false "changed" for a reason that has nothing to do with the data.
+    return JSON.stringify(Object.keys(c).sort().map(k => [k, c[k]]))
+  }
   const sameProfile = (prev, next) => {
     if (prev === next) return true
     if (!prev || !next) return false
-    return JSON.stringify(prev) === JSON.stringify(next)
+    return stable(prev) === stable(next)
   }
   const applyProfile = (next) => setProfile(prev => (sameProfile(prev, next) ? prev : next))
 
@@ -215,14 +231,23 @@ export default function App() {
         // (a role grant, a hub reassignment) and this is when we'd learn of it. The
         // difference is that an UNCHANGED result no longer looks like a change.
         fetchProfile(session.user)
-        if (event === 'SIGNED_IN') {
+        // supabase-js fires SIGNED_IN whenever the tab regains focus and the session is
+        // revalidated — not only when someone actually signs in. Stamping last_login on
+        // every one of those was both wrong (it recorded tab-switching as logins) and the
+        // direct cause of the list-reload bug: the write changed the profile row, the
+        // refetch saw a different row, and every [profile] effect refired.
+        //
+        // signedInFor tracks which user id we have already stamped in this page lifetime.
+        // A genuine sign-in always follows a page load or a sign-out, so the ref is unset
+        // and the stamp happens exactly once.
+        if (event === 'SIGNED_IN' && signedInFor.current !== session.user.id) {
+          signedInFor.current = session.user.id
           sessionStorage.removeItem('quark_email_confirmed')
           supabase.from('users').update({ last_login: new Date().toISOString() }).eq('id', session.user.id).then(({ error }) => {
             if (error) console.error('last_login update failed:', error.message)
-            else console.log('last_login updated for', session.user.email)
           })
         }
-      } else { applyProfile(null); setLoading(false) }
+      } else { applyProfile(null); signedInFor.current = null; setLoading(false) }
     })
     return () => subscription.unsubscribe()
   }, [])

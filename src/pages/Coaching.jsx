@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../App'
@@ -1196,6 +1196,14 @@ export default function Coaching() {
 
   useEffect(() => { if (profile?.id) { loadSessions(); if (isCoach) loadGovernance() } }, [profile])
 
+  // Blank the tab area on the FIRST load only. A background refresh must not unmount the
+  // active tab: CoachingQueue holds its own filters, page number and fetched rows in local
+  // state, so replacing it with "Loading…" for a moment silently threw all of that away.
+  // Once something has been shown, later refreshes happen underneath the existing content.
+  const firstLoadDone = useRef(false)
+  if (!loading) firstLoadDone.current = true
+  const showBlankLoader = loading && !firstLoadDone.current
+
   // Split by ownership + status
   // Hub-level visibility for coaches: an evaluator/team leader sees observation sessions
   // on any hub they're assigned to (matches Coaching Queue & dashboards), not only their own.
@@ -1243,7 +1251,7 @@ export default function Coaching() {
         </div>
         {agentTab === 'coaching'
           ? <AgentEvalCoachings profile={profile} flash={flash} openId={coachingParam} />
-          : (loading
+          : (showBlankLoader
               ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading...</div>
               : <SessionsTable rows={own.filter(s => s.status !== 'draft')} counts={counts} onView={setDetail} />)}
         {detail && <SessionDetail session={detail} profile={profile} isCoach={false} flash={flash} onClose={() => setDetail(null)} onChanged={loadSessions} onRecoach={() => {}} />}
@@ -1282,7 +1290,7 @@ export default function Coaching() {
         ))}
       </div>
 
-      {loading ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div> : (
+      {showBlankLoader ? <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)' }}>Loading…</div> : (
         <>
           {tab === 'sessions' && (
             <>
