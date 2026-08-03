@@ -551,15 +551,51 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov, openC
       hubIds = scope.hubIds || []
       if (!hubIds.length) { setItems([]); setLoading(false); return }
     }
+    // An evaluation that carries a critical case must appear in this queue even when it
+    // would not otherwise count as "coachable". A Highly Critical reason is set
+    // independently of scoring, so a 100% Quality evaluation — or a NON-controllable DSAT
+    // ("Independent of controllability — a non-controllable DSAT can still breach a
+    // critical standard") — can still be Highly Critical. Both were being filtered out:
+    // the first by the .or() below, the second by isCoachable. The result was a case that
+    // could never be coached at all, and a critical notification whose deep link opened
+    // nothing. So: find the critical-carrying evaluations first, then union them in.
+    let ccq = supabase.from('critical_cases')
+      .select('evaluation_id')
+      .not('evaluation_id', 'is', null)
+      .is('deleted_at', null)
+    if (hubIds) ccq = ccq.in('hub_id', hubIds)
+    const { data: critEvRows } = await ccq
+    const critEvIds = [...new Set((critEvRows || []).map(r => r.evaluation_id).filter(Boolean))]
+
+    const EV_COLS = 'id, eval_id, score, evaluation_type, metadata_values, submitted_at, hub_id, workspace_id, queue_id, deviated_controllability, overall_comment, scorecards!evaluations_scorecard_id_fkey(name, type)'
+
     let q = supabase.from('evaluations')
-      .select('id, eval_id, score, evaluation_type, metadata_values, submitted_at, hub_id, workspace_id, queue_id, deviated_controllability, overall_comment, scorecards!evaluations_scorecard_id_fkey(name, type)')
+      .select(EV_COLS)
       .eq('status', 'submitted')
       .or('and(evaluation_type.eq.quality,score.lt.100),evaluation_type.eq.dsat')
       .order('submitted_at', { ascending: false })
       .limit(500)
     if (hubIds) q = q.in('hub_id', hubIds)
     const { data: evs } = await q
-    const candidates = (evs || []).filter(isCoachable)
+
+    // Second pass for the critical-carrying evaluations the .or() above would have dropped.
+    let critEvs = []
+    if (critEvIds.length) {
+      let cq = supabase.from('evaluations').select(EV_COLS).eq('status', 'submitted').in('id', critEvIds)
+      if (hubIds) cq = cq.in('hub_id', hubIds)
+      const { data: cdata } = await cq
+      critEvs = cdata || []
+    }
+
+    // Merge and de-duplicate, then re-sort — concatenating two result sets loses the
+    // newest-first ordering the table relies on.
+    const byId = {}
+    ;[...(evs || []), ...critEvs].forEach(e => { byId[e.id] = e })
+    const allEvs = Object.values(byId)
+      .sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))
+
+    const critIdSet = new Set(critEvIds)
+    const candidates = allEvs.filter(ev => isCoachable(ev) || critIdSet.has(ev.id))
     const ids = candidates.map(e => e.id)
     const coachMap = {}
     const critMap = {}
@@ -650,6 +686,10 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov, openC
     if (!openCriticalId || !items.length) return
     const target = items.find(it => String(it.crit?.id) === String(openCriticalId))
     if (target) setDetail(target)
+    // Say so rather than failing silently — otherwise clicking the notification appears to
+    // do nothing at all. Most likely causes: the case was deleted, or it sits outside this
+    // user's hub scope.
+    else flash('That critical case is no longer in your coaching queue — it may have been removed or reassigned to another hub.', false)
     window.history.replaceState({}, '', '/coaching')
     // eslint-disable-next-line
   }, [openCriticalId, items])
