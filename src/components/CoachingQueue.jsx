@@ -143,7 +143,20 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
         }
     const { error } = await supabase.from('eval_coachings').insert(row)
     setBusy(false)
-    if (error) return flash(error.message, false)
+    if (error) {
+      // Two coaches on the same hub can open this case and hit "Assign to me" at the same
+      // moment. The unique indexes on eval_coachings.evaluation_id / .critical_case_id make
+      // the loser's insert fail with 23505 (unique_violation) — translate that into
+      // something readable instead of leaking the raw constraint name, and refresh so the
+      // row immediately shows who actually took it.
+      const isTaken = error.code === '23505' || /duplicate key|unique constraint/i.test(error.message || '')
+      if (isTaken) {
+        flash('This coaching has already been assigned to another Coach.', false)
+        onChanged(); onClose()
+        return
+      }
+      return flash(error.message, false)
+    }
     flash('Assigned to you'); onChanged(); onClose()
   }
 
@@ -511,7 +524,7 @@ function QueueDetail({ item, profile, isPrivileged, flash, onClose, onChanged })
   )
 }
 
-export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
+export default function CoachingQueue({ profile, isPrivileged, flash, gov, openCriticalId }) {
   const [loading, setLoading] = useState(true)
   const [items, setItems]     = useState([])
   const [detail, setDetail]   = useState(null)
@@ -627,6 +640,19 @@ export default function CoachingQueue({ profile, isPrivileged, flash, gov }) {
     setLoading(false)
   }
   useEffect(() => { if (profile?.id) load() /* eslint-disable-next-line */ }, [profile?.id])
+
+  // Arrived from a Critical / Highly Critical notification (/coaching?critical=<case id>).
+  // Open that case's detail modal straight away rather than leaving the coach to find the
+  // row. Keyed on items too, so it still fires when the deep link lands before the queue
+  // has finished loading. Matches on it.crit.id, which is the critical_cases id for both
+  // evaluation-linked and standalone cases.
+  useEffect(() => {
+    if (!openCriticalId || !items.length) return
+    const target = items.find(it => String(it.crit?.id) === String(openCriticalId))
+    if (target) setDetail(target)
+    window.history.replaceState({}, '', '/coaching')
+    // eslint-disable-next-line
+  }, [openCriticalId, items])
 
   // One shape for both sources, so filtering, sorting and the table body don't need to
   // know which kind a row is.

@@ -1137,6 +1137,14 @@ export default function Coaching() {
   const coachingParam = new URLSearchParams(location.search).get('coaching')
   useEffect(() => { if (coachingParam) setAgentTab('coaching') }, [coachingParam])
 
+  // Deep link from a Critical / Highly Critical notification: /coaching?critical=<case id>.
+  // Distinct from ?coaching= above: that one targets an EXISTING eval_coachings row, but a
+  // critical notification fires the moment the case is registered, before anyone has taken
+  // it — so there is no coaching row yet. This targets the critical_cases id instead and
+  // lands on the Queue tab, where "Assign to me" lives.
+  const criticalParam = new URLSearchParams(location.search).get('critical')
+  useEffect(() => { if (criticalParam) setTab('queue') }, [criticalParam])
+
   const flash = (text, ok = true) => { setMsg({ text, ok }); if (ok) setTimeout(() => setMsg(null), 3000) }
 
   const loadSessions = async () => {
@@ -1301,7 +1309,7 @@ export default function Coaching() {
             </>
           )}
           {tab === 'insights' && <InsightsTab sessions={mine} counts={counts} govNames={govNames} />}
-          {tab === 'queue' && <CoachingQueue profile={profile} isPrivileged={isPrivileged} flash={flash} gov={gov} />}
+          {tab === 'queue' && <CoachingQueue profile={profile} isPrivileged={isPrivileged} flash={flash} gov={gov} openCriticalId={criticalParam} />}
           {tab === 'coaching_insights' && <CoachingInsightsTab profile={profile} isPrivileged={isPrivileged} govNames={govNames} gov={gov} />}
         </>
       )}

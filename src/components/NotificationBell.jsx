@@ -98,12 +98,20 @@ export default function NotificationBell() {
   async function clickItem(item) {
     setOpen(false)
     const isDispute = (item.type || '').startsWith('dispute')
-    if (!isDispute) {
+    // Critical-case notifications behave like disputes: they are NOT deleted on click.
+    // The case is broadcast to every coach on the hub, and clicking only opens it — the
+    // person looking may not be the one who ends up assigning it to themselves. Deleting
+    // here would silently drop the case off the other coaches' bells.
+    const isCritical = item.type === 'critical_coaching' || item.type === 'critical_sla_breach'
+    if (!isDispute && !isCritical) {
       await supabase.from('notifications').delete().eq('id', item.id)
       setItems(prev => prev.filter(i => i.id !== item.id))
     }
     if (item.type === 'edit_request' && item.entity_id) navigate('/evaluations?req=' + item.entity_id)
     else if (isDispute && item.entity_id) navigate('/evaluations?dispute=' + item.entity_id)
+    // Opens the Coaching Queue with this case's detail modal already up, so the coach can
+    // read the breached attribute and hit "Assign to me" without hunting for the row.
+    else if (isCritical && item.entity_id) navigate('/coaching?critical=' + item.entity_id)
     // Deep-link straight into the record the agent is being asked to act on, rather than
     // dropping them on the list page to hunt for it themselves.
     else if (item.type === 'evaluation_read' && item.entity_id) navigate('/evaluations?eval=' + item.entity_id)
