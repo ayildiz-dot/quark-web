@@ -683,6 +683,22 @@ function CalibrationAdmin() {
     return h ? [...new Set(queuesAll.filter(q => q.hub_id === h.id).map(q => q.market_value).filter(Boolean))].sort() : []
   }
 
+  // Who can be picked as a participant. The Gauge is always the session creator (see the
+  // read-only Gauge field in the create modal, and gauge_user_id: profile.id in
+  // handleCreate), and the Gauge is the reference the others are measured against — so
+  // they are never also a participant.
+  //
+  // This is not cosmetic. If the Gauge is listed as a participant the session can never
+  // complete: runDeltaForAll only evaluates submissions where is_gauge = false, so the
+  // Gauge's own submission is never evaluated as a participant one, and
+  // complete_calibration_session_if_ready waits for every participant to reach
+  // 'evaluated'. The session would sit on "Scoring" forever. A self-comparison would also
+  // contribute a guaranteed 0% delta and quietly inflate the session's calibration rate.
+  //
+  // Derived here rather than filtered inline at the checkbox map so any future surface
+  // that needs the pickable list gets the same rule.
+  const participantChoices = () => (users || []).filter(u => u.id !== profile?.id)
+
   async function openDetail(session) {
     setSelected(session)
     setDetail(null)
@@ -760,10 +776,22 @@ function CalibrationAdmin() {
 
     if (error) { alert('Error: ' + error.message); setCreating(false); return }
 
-    if (form.participants.length > 0) {
-      await supabase.from('calibration_participants').insert(
-        form.participants.map(uid => ({ session_id: sess.id, evaluator_id: uid }))
+    // Last line of defence on the write path. The picker excludes the Gauge and
+    // toggleParticipant refuses them, but form state is long-lived across a modal session
+    // and a stale entry here would insert a participant row that makes the session
+    // impossible to complete. Enforced at the point of the write for the same reason the
+    // date rules above are re-checked rather than left to the input's `min`.
+    const participantIds = form.participants.filter(uid => uid !== profile.id)
+    if (participantIds.length > 0) {
+      const { error: partError } = await supabase.from('calibration_participants').insert(
+        participantIds.map(uid => ({ session_id: sess.id, evaluator_id: uid }))
       )
+      // Previously this error was discarded, so a blocked or failed participant insert
+      // produced a session with a Gauge and no participants and no indication why.
+      if (partError) {
+        alert('The session was created, but adding participants failed: ' + partError.message
+          + '\n\nOpen the session and add them again before scoring starts.')
+      }
     }
 
     await loadAll()
@@ -773,6 +801,10 @@ function CalibrationAdmin() {
   }
 
   function toggleParticipant(uid) {
+    // The Gauge is never a participant. participantChoices() already excludes them, so
+    // this is a guard rather than a reachable path — kept so the invariant does not
+    // depend on one call site continuing to filter correctly.
+    if (uid === profile?.id) return
     setForm(f => ({
       ...f,
       participants: f.participants.includes(uid)
@@ -1093,7 +1125,11 @@ function CalibrationAdmin() {
                   Participants
                 </label>
                 <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, padding: 8 }}>
-                  {users.map(u => (
+                  {participantChoices().length === 0 ? (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '6px 4px' }}>
+                      No other evaluators are available to invite.
+                    </div>
+                  ) : participantChoices().map(u => (
                     <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 4px', cursor: 'pointer', fontSize: 13 }}>
                       <input type="checkbox" checked={form.participants.includes(u.id)} onChange={() => toggleParticipant(u.id)} />
                       <span>{u.name || u.email}</span>
