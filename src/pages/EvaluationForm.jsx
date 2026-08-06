@@ -20,9 +20,45 @@ const friendlyDuplicateError = (err) => {
   return new Error('This ticket has already been evaluated on this scorecard. This can only be corrected by an admin or owner — please contact one to make the change.')
 }
 
+// Hover lift for pickable cards. Same values and easing as the identical helper in
+// DashboardHome.jsx, so the scorecard picker and the dashboard pickers feel like one
+// interaction rather than two similar ones.
+//
+// Done with inline handlers rather than a CSS :hover rule because these cards use the
+// shared .card class — a :hover on .card would lift every card in the application,
+// including static ones that are not selectable.
+//
+// .card carries no box-shadow by default, so resetting to 'none' on leave restores the
+// original appearance exactly.
+function useLift() {
+  return {
+    onMouseEnter: e => {
+      e.currentTarget.style.transform = 'translateY(-4px)'
+      e.currentTarget.style.borderColor = 'var(--border-light)'
+      e.currentTarget.style.boxShadow = 'var(--shadow)'
+      const arrow = e.currentTarget.querySelector('[data-lift-arrow]')
+      if (arrow) {
+        arrow.style.transform = 'translateX(4px)'
+        arrow.style.color = 'var(--accent)'
+      }
+    },
+    onMouseLeave: e => {
+      e.currentTarget.style.transform = 'translateY(0)'
+      e.currentTarget.style.borderColor = 'var(--border)'
+      e.currentTarget.style.boxShadow = 'none'
+      const arrow = e.currentTarget.querySelector('[data-lift-arrow]')
+      if (arrow) {
+        arrow.style.transform = 'translateX(0)'
+        arrow.style.color = 'var(--text-secondary)'
+      }
+    },
+  }
+}
+
 export default function EvaluationForm() {
   const { profile } = useAuth()
   const navigate = useNavigate()
+  const lift = useLift()
 
   const [step, setStep] = useState('select')
   const [scorecards, setScorecards] = useState([])
@@ -1188,7 +1224,11 @@ export default function EvaluationForm() {
       )}
       <div style={{ display: 'grid', gap: 12, maxWidth: 680 }}>
         {scorecards.map(sc => (
-          <div key={sc.id} className="card" style={{ cursor: 'pointer', transition: 'border-color 0.15s' }}
+          <div key={sc.id} className="card" {...lift}
+            style={{
+              cursor: 'pointer',
+              transition: 'transform .25s cubic-bezier(0.34, 1.56, 0.64, 1), border-color .18s ease, box-shadow .18s ease',
+            }}
             onClick={() => selectScorecard(sc)}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
@@ -1208,7 +1248,10 @@ export default function EvaluationForm() {
                   <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{sc.description}</div>
                 )}
               </div>
-              <span style={{ fontSize: 20, color: 'var(--text-secondary)' }}>→</span>
+              <span data-lift-arrow style={{
+                fontSize: 20, color: 'var(--text-secondary)',
+                transition: 'transform .25s cubic-bezier(0.34, 1.56, 0.64, 1), color .18s ease',
+              }}>→</span>
             </div>
           </div>
         ))}
