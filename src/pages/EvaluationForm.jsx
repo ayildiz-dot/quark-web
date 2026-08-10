@@ -897,12 +897,18 @@ export default function EvaluationForm() {
     let earnedWeight = 0
     for (const q of questions) {
       const ans = answers[q.id]?.score
-      if (ans === 'na') continue        // N/A excluded from weight everywhere, even in failed groups
       if (!q.is_weighted) continue
       const weight = q.weight || 1
       totalWeight += weight
-      // Earn weight only if passed AND its group is not a failed group.
-      if (ans === 'pass' && !(q.group_id && failedGroupIds.has(q.group_id))) {
+      // N/A earns its weight exactly as a Pass does — only the label the evaluator sees
+      // differs. (Previously N/A was skipped entirely, removing its weight from both
+      // sides of the ratio. The two rules agree on any evaluation without a Fail, which
+      // is why the difference went unnoticed.)
+      //
+      // An N/A inside a failed group loses its weight, for the same reason a Pass there
+      // does. An unanswered question still counts towards the total and earns nothing,
+      // which is the behaviour that was already here.
+      if ((ans === 'pass' || ans === 'na') && !(q.group_id && failedGroupIds.has(q.group_id))) {
         earnedWeight += weight
       }
     }
@@ -1424,10 +1430,13 @@ export default function EvaluationForm() {
         const ans = answers[q.id]?.score
         if (ans == null) continue
         scoredAny = true
-        if (ans === 'na' || !q.is_weighted) continue
+        // Must mirror calculateScore() exactly: N/A earns its weight, same as a Pass.
+        // If these two ever disagree the evaluator sees one number and a different one
+        // is stored, so change them together.
+        if (!q.is_weighted) continue
         const w = q.weight || 1
         tw += w
-        if (ans === 'pass' && !(q.group_id && failedGroups.has(q.group_id))) ew += w
+        if ((ans === 'pass' || ans === 'na') && !(q.group_id && failedGroups.has(q.group_id))) ew += w
       }
       if (liveCriticalFail) liveScore = 0
       else if (!scoredAny) liveScore = null
