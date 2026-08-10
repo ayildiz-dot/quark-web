@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
 import { useAuth } from '../App'
 import { supabase } from '../lib/supabase'
+import { calculateQualityScore, answerEarnsWeight } from '../lib/scoring'
 
 // ── Shared ───────────────────────────────────────────────────────────────────
 
@@ -264,7 +265,7 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
     setLoading(true)
     const { data: qs } = await supabase
       .from('scorecard_questions')
-      .select('id, title, weight, is_weighted, is_form_critical, position')
+      .select('id, title, weight, is_weighted, is_form_critical, is_group_critical, group_id, position')
       .eq('scorecard_id', session.scorecard_id)
       .order('position')
     setQuestions(qs || [])
@@ -291,18 +292,13 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
     setLoading(false)
   }
 
+  // Scoring is shared with the evaluation form (lib/scoring.js) so a calibration score
+  // means the same thing as the score the same answers would produce in a real
+  // evaluation. Previously this page carried its own copy, which had drifted on N/A,
+  // group-critical, unweighted questions and the empty-scorecard case.
   function calcScore(qs, ans) {
-    let totalW = 0, passedW = 0, failedCritical = false
-    for (const q of qs) {
-      const val = ans[q.id]
-      if (!val || val === 'na') continue
-      const w = q.is_weighted ? (q.weight || 1) : 1
-      totalW += w
-      if (val === 'pass') passedW += w
-      if (val === 'fail' && q.is_form_critical) failedCritical = true
-    }
-    const pct = totalW > 0 ? Math.round((passedW / totalW) * 100) : 0
-    return { score: failedCritical ? 0 : pct, failedCritical }
+    const { score, failedCritical } = calculateQualityScore(qs, q => ans[q.id] ?? null)
+    return { score, failedCritical }
   }
 
   // ── Delta + certification logic (Step 6) ──────────────────────────────────
@@ -426,7 +422,9 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
           question_id: String(q.id),
           question_label: q.title,
           answer_value: val,
-          score: val === 'na' ? null : val === 'pass' ? w : 0,
+          // Earned weight under the shared rule — N/A earns, same as Pass. (Was null for
+          // N/A, from when N/A was excluded from scoring altogether.)
+          score: answerEarnsWeight(val) ? w : 0,
           weight: w,
           is_critical: q.is_form_critical || false,
         }

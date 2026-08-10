@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { calculateQualityScore } from '../lib/scoring'
 import { useAuth } from '../App'
 import { ThinkingDuck } from '../components/DuckLoader'
 
@@ -876,44 +877,12 @@ export default function EvaluationForm() {
     return true
   }
 
+  // Scoring lives in lib/scoring.js so this page and Calibration cannot drift apart.
   const calculateScore = () => {
-    // Form-critical failure zeros the entire evaluation.
-    for (const q of questions) {
-      if (q.is_form_critical && answers[q.id]?.score === 'fail') {
-        return { score: 0, failed_critical: true }
-      }
-    }
-
-    // Determine which groups are "failed" — a group with any failed group-critical
-    // question loses ALL of its earned weight (but its weight still counts in the denominator).
-    const failedGroupIds = new Set()
-    for (const q of questions) {
-      if (q.group_id && q.is_group_critical && answers[q.id]?.score === 'fail') {
-        failedGroupIds.add(q.group_id)
-      }
-    }
-
-    let totalWeight = 0
-    let earnedWeight = 0
-    for (const q of questions) {
-      const ans = answers[q.id]?.score
-      if (!q.is_weighted) continue
-      const weight = q.weight || 1
-      totalWeight += weight
-      // N/A earns its weight exactly as a Pass does — only the label the evaluator sees
-      // differs. (Previously N/A was skipped entirely, removing its weight from both
-      // sides of the ratio. The two rules agree on any evaluation without a Fail, which
-      // is why the difference went unnoticed.)
-      //
-      // An N/A inside a failed group loses its weight, for the same reason a Pass there
-      // does. An unanswered question still counts towards the total and earns nothing,
-      // which is the behaviour that was already here.
-      if ((ans === 'pass' || ans === 'na') && !(q.group_id && failedGroupIds.has(q.group_id))) {
-        earnedWeight += weight
-      }
-    }
-    if (totalWeight === 0) return { score: 100, failed_critical: false }
-    return { score: Math.round((earnedWeight / totalWeight) * 100), failed_critical: false }
+    const { score, failedCritical } = calculateQualityScore(
+      questions, q => answers[q.id]?.score ?? null
+    )
+    return { score, failed_critical: failedCritical }
   }
 
   // Reads the value of the first-position section's first-position question
@@ -1413,34 +1382,16 @@ export default function EvaluationForm() {
     const total = isDsat ? dsatQuestions.length : questions.length
     const pct = total > 0 ? Math.round((answered / total) * 100) : 0
 
-    // Live QC score from current selections. Same rules as calculateScore(), but the
-    // denominator counts only ANSWERED weighted questions — so it reads as the score
-    // "so far" and converges to the final score once everything is answered.
+    // Live QC score from current selections. Same module as calculateScore(), with
+    // answeredOnly so the denominator counts only ANSWERED weighted questions — it reads
+    // as the score "so far" and converges on the final score once everything is answered.
     let liveScore = null, liveCriticalFail = false
     if (!isDsat) {
-      for (const q of questions) {
-        if (q.is_form_critical && answers[q.id]?.score === 'fail') { liveCriticalFail = true; break }
-      }
-      const failedGroups = new Set()
-      for (const q of questions) {
-        if (q.group_id && q.is_group_critical && answers[q.id]?.score === 'fail') failedGroups.add(q.group_id)
-      }
-      let tw = 0, ew = 0, scoredAny = false
-      for (const q of questions) {
-        const ans = answers[q.id]?.score
-        if (ans == null) continue
-        scoredAny = true
-        // Must mirror calculateScore() exactly: N/A earns its weight, same as a Pass.
-        // If these two ever disagree the evaluator sees one number and a different one
-        // is stored, so change them together.
-        if (!q.is_weighted) continue
-        const w = q.weight || 1
-        tw += w
-        if ((ans === 'pass' || ans === 'na') && !(q.group_id && failedGroups.has(q.group_id))) ew += w
-      }
-      if (liveCriticalFail) liveScore = 0
-      else if (!scoredAny) liveScore = null
-      else liveScore = tw === 0 ? 100 : Math.round((ew / tw) * 100)
+      const live = calculateQualityScore(
+        questions, q => answers[q.id]?.score ?? null, { answeredOnly: true }
+      )
+      liveCriticalFail = live.failedCritical
+      liveScore = live.answeredAny ? live.score : null
     }
     const qcColor = liveCriticalFail ? 'var(--danger)'
       : liveScore == null ? 'var(--text-secondary)'
