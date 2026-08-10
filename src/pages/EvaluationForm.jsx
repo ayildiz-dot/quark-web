@@ -795,9 +795,19 @@ export default function EvaluationForm() {
       return
     }
     setVendorLookupState('loading')
-    const vendorScorecardIds = scorecards
-      .filter(sc => sc.type === 'dsat' && !sc.is_spot_check)
-      .map(sc => sc.id)
+    // Scope the search to the parent scorecard this spot-check is linked to.
+    //
+    // Without the link this scanned EVERY non-spot-check DSAT scorecard, so once more than
+    // one vendor scorecard was live the same ticket could match twice and the lookup
+    // reported a conflict, blocking the spot-check. Naming the parent makes the
+    // relationship explicit and removes that ambiguity.
+    //
+    // Falls back to the old behaviour for spot-check scorecards created before the link
+    // existed, which have no parent recorded.
+    const parentId = selectedScorecard?.spot_check_source_scorecard_id
+    const vendorScorecardIds = parentId
+      ? [parentId]
+      : scorecards.filter(sc => sc.type === 'dsat' && !sc.is_spot_check).map(sc => sc.id)
     if (vendorScorecardIds.length === 0) {
       setVendorEval(null); setVendorChain([]); setVendorLookupState('not_found'); setFullyAligned(false)
       return
@@ -891,6 +901,33 @@ export default function EvaluationForm() {
   // both need "what did this evaluation answer for Controllability". Assumes
   // the Vendor and KG DSAT scorecards share the same first-question title by
   // convention (confirmed and expected to remain true for both scorecards).
+  // Resolves the controllability answer from an evaluation's OWN scorecard structure,
+  // keyed on field_id (the question UUID, which the DSAT payload already stores) rather
+  // than on the question's title text.
+  //
+  // This is the replacement for getFirstAnswerFromMetaValues below. That helper had to
+  // match on title because it was handed the KG scorecard's structure and asked to read
+  // the VENDOR's answers — two scorecards share no question UUIDs, so the title was the
+  // only common vocabulary. The consequence was that a reworded question on either side
+  // made the vendor answer resolve to null, is_deviated compute as false for every
+  // spot-check, and the Alignment Rate silently read 100%.
+  //
+  // Called once per DSAT submit and stored on the row, so a later rename cannot change
+  // what a past evaluation recorded.
+  const resolveControllabilityOutcome = (payload, sections, dqs) => {
+    const firstSection = [...(sections || [])].sort((a, b) => a.position - b.position)[0]
+    if (!firstSection) return null
+    const sectionQs = (dqs || [])
+      .filter(q => q.section_id === firstSection.id)
+      .sort((a, b) => a.position - b.position)
+    const routingQ = sectionQs.find(q => q.question_type === 'options') || sectionQs[0]
+    if (!routingQ) return null
+    const found = (payload || []).find(m => m.field_id === routingQ.id)
+    return found?.value || null
+  }
+
+  // Legacy title-matching resolver. Retained solely as the fallback for evaluations
+  // submitted before controllability_outcome existed, which have no stored value.
   const getFirstAnswerFromMetaValues = (metaValues, sections, dqs) => {
     const sortedSections = [...sections].sort((a, b) => a.position - b.position)
     const firstSection = sortedSections[0]
@@ -1024,6 +1061,12 @@ export default function EvaluationForm() {
         const dsatPayload = visitedQuestions.map(q => ({
           field_id: q.id, label: q.title, value: effectiveDsatAnswers[q.id]?.value || ''
         }))
+        // Resolved from THIS evaluation's own scorecard and stored, so reconciliation
+        // never has to match question titles across two scorecards. Applies to vendor and
+        // spot-check submissions alike — both sides need a stored value for the comparison
+        // to work from columns.
+        const controllabilityOutcome = resolveControllabilityOutcome(dsatPayload, dsatSections, dsatQuestions)
+
         const aiControllabilityFields = (!selectedScorecard.is_spot_check && aiDsatChain[0])
           ? {
               ai_suggested_controllability: aiDsatChain[0].answerValue,
@@ -1036,6 +1079,11 @@ export default function EvaluationForm() {
           // EDIT: update the existing row. Freeze evaluator_id + submitted_at; stamp last_edit_date.
           const { error: upErr } = await supabase.from('evaluations').update({
             metadata_values: [...metaPayload, ...dsatPayload],
+            // Re-resolved on edit: if the evaluator corrected the controllability answer,
+            // the stored outcome has to follow or reconciliation would compare against a
+            // stale value. Note this does NOT re-run the reconciliation stamp on a linked
+            // spot-check — that remains the known staleness gap flagged below.
+            controllability_outcome: controllabilityOutcome,
             queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
             ...criticalityFields,
             last_edit_date: new Date().toISOString(),
@@ -1047,6 +1095,7 @@ export default function EvaluationForm() {
             evaluator_id: profile.id,
             score: 100, failed_critical: false,
             metadata_values: [...metaPayload, ...dsatPayload],
+            controllability_outcome: controllabilityOutcome,
             queue_id: resolvedQueueId, hub_id: resolvedHubId, workspace_id: resolvedWorkspaceId,
             overall_comment: null, status: 'submitted',
             evaluation_type: selectedScorecard.type,
@@ -1064,12 +1113,28 @@ export default function EvaluationForm() {
           // Controllability after this point makes the stamp stale, which is a known
           // gap flagged for the future notifications system, not silently re-resolved here.
           if (selectedScorecard.is_spot_check && vendorEval && insertedDsatEval) {
-            const kgAnswer = getFirstAnswerFromMetaValues(dsatPayload, dsatSections, dsatQuestions)
-            const vendorAnswer = getFirstAnswerFromMetaValues(vendorEval.metadata_values, dsatSections, dsatQuestions)
+            const kgAnswer = controllabilityOutcome
+
+            // Read the vendor's answer from its own stored column. No title matching, and
+            // no need to load the vendor scorecard's structure.
+            //
+            // Falls back to the legacy title match only when the column is null, which
+            // means the vendor evaluation predates controllability_outcome. That fallback
+            // still carries the original fragility, so it exists to keep old rows working
+            // rather than as a supported path — every new vendor submission stores the
+            // column, so it becomes dead weight over time.
+            const vendorAnswer = vendorEval.controllability_outcome
+              ?? getFirstAnswerFromMetaValues(vendorEval.metadata_values, dsatSections, dsatQuestions)
+
+            // Compared case- and whitespace-insensitively so trivial option-label drift
+            // does not register as a deviation. Note this only affects the COMPARISON —
+            // deviated_controllability stores the KG answer exactly as selected.
+            const norm = v => (v == null ? null : String(v).trim().toLowerCase())
+
             if (kgAnswer) {
               await supabase.from('evaluations').update({
                 deviated_controllability: kgAnswer,
-                is_deviated: vendorAnswer !== null && kgAnswer !== vendorAnswer,
+                is_deviated: vendorAnswer != null && norm(kgAnswer) !== norm(vendorAnswer),
                 deviation_source_evaluation_id: insertedDsatEval.id,
               }).eq('id', vendorEval.id)
             }

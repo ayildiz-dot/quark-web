@@ -2353,6 +2353,13 @@ function ScorecardsTab({ profile, flash }) {
   const [newDesc, setNewDesc] = useState('')
   const [newType, setNewType] = useState('quality')
   const [newThreshold, setNewThreshold] = useState(90)
+  // Spot-check creation. Offered only here, at creation, and never on an existing
+  // scorecard: enabling it clones the chosen parent, which would destroy the questions on
+  // a scorecard that already had them. Making it creation-only removes that risk entirely
+  // rather than guarding against it.
+  const [newIsSpotCheck, setNewIsSpotCheck] = useState(false)
+  const [newSpotParent, setNewSpotParent] = useState('')
+  const [confirmSpot, setConfirmSpot] = useState(false)
   const [newDivision, setNewDivision] = useState('')
   const [confirm, setConfirm] = useState(null)
 
@@ -2375,9 +2382,79 @@ function ScorecardsTab({ profile, flash }) {
   const ask = (message, onYes) => setConfirm({ message, onYes })
   const closeConfirm = () => setConfirm(null)
 
+  // Candidate parents for a spot-check: published DSAT scorecards that are not themselves
+  // spot-checks. A spot-check of a spot-check is meaningless, and an unpublished parent has
+  // no evaluations to review.
+  const spotParentOptions = scorecards.filter(
+    sc => sc.type === 'dsat' && !sc.is_spot_check && sc.is_published
+  )
+
+  const resetCreateForm = () => {
+    setCreating(false); setNewName(''); setNewDesc(''); setNewType('quality')
+    setNewThreshold(90); setNewDivision('')
+    setNewIsSpotCheck(false); setNewSpotParent(''); setConfirmSpot(false)
+  }
+
+  // Creates a spot-check scorecard by cloning its parent, so the question and option
+  // wording is identical on both sides by construction rather than by convention.
+  //
+  // Why that matters: reconciliation compares the controllability answer recorded on each
+  // side. Identical option labels are what make those two values comparable. Cloning
+  // removes the chance of a mismatch on day one; the stored controllability_outcome column
+  // protects the comparison from drift afterwards.
+  const createSpotCheckScorecard = async () => {
+    const parent = spotParentOptions.find(sc => sc.id === newSpotParent)
+    if (!parent) return flash('Please choose the parent scorecard to spot-check.', false)
+
+    setConfirmSpot(false)
+    const { data: newId, error: dupErr } = await supabase.rpc('duplicate_scorecard', {
+      source_id: parent.id,
+      actor_id: profile.id,
+    })
+    if (dupErr) return flash('Could not create the spot-check scorecard: ' + dupErr.message, false)
+
+    // The clone inherits the parent's name, division and is_spot_check = false. Overwrite
+    // with what was entered, and record the link the vendor lookup will scope to.
+    const { error: upErr } = await supabase.from('scorecards').update({
+      name: newName.trim(),
+      description: newDesc.trim(),
+      division: newDivision,
+      is_spot_check: true,
+      spot_check_source_scorecard_id: parent.id,
+      updated_at: new Date().toISOString(),
+    }).eq('id', newId)
+    if (upErr) return flash('Scorecard was created but could not be configured as a spot-check: ' + upErr.message, false)
+
+    // duplicate_scorecard copies scorecard structure, not dashboard widgets. Seed them only
+    // if the clone came through without any, so this stays correct whichever way the RPC
+    // behaves.
+    const { count } = await supabase
+      .from('dashboard_widgets')
+      .select('id', { count: 'exact', head: true })
+      .eq('scorecard_id', newId)
+    if (!count) {
+      await supabase.from('dashboard_widgets').insert(
+        starterWidgetsForType('dsat').map(w => ({
+          scorecard_id: newId, widget_type: w.widget_type, title: w.title,
+          config: w.config, position: w.position,
+        }))
+      )
+    }
+
+    resetCreateForm()
+    await loadAll()
+    flash('Spot-check scorecard created as a copy of "' + parent.name + '" — review and publish it separately.')
+    navigate(`/scorecards/${newId}/edit`)
+  }
+
   const createScorecard = async () => {
     if (!newName.trim()) return flash('Scorecard name is required.', false)
     if (!newDivision) return flash('Please choose a division. Every scorecard must belong to a division.', false)
+    if (newType === 'dsat' && newIsSpotCheck) {
+      if (!newSpotParent) return flash('Please choose the parent scorecard to spot-check.', false)
+      setConfirmSpot(true)
+      return
+    }
     const { data, error } = await supabase
       .from('scorecards')
       .insert({
@@ -2400,7 +2477,7 @@ function ScorecardsTab({ profile, flash }) {
     }))
     await supabase.from('dashboard_widgets').insert(starterWidgets)
 
-    setCreating(false); setNewName(''); setNewDesc(''); setNewType('quality'); setNewThreshold(90); setNewDivision('')
+    resetCreateForm()
     navigate(`/scorecards/${data.id}/edit`)
   }
 
@@ -2549,14 +2626,40 @@ function ScorecardsTab({ profile, flash }) {
                 <input type="number" className="input" min={0} max={100} value={newThreshold} onChange={e => setNewThreshold(e.target.value)} />
               </div>
             )}
+            {newType === 'dsat' && (
+              <div className="form-field">
+                <label>Spot-check</label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', height: 38 }}>
+                  <input type="checkbox" checked={newIsSpotCheck}
+                    onChange={e => { setNewIsSpotCheck(e.target.checked); if (!e.target.checked) setNewSpotParent('') }} />
+                  <span style={{ fontSize: 13 }}>This scorecard spot-checks another</span>
+                </label>
+              </div>
+            )}
+            {newType === 'dsat' && newIsSpotCheck && (
+              <div className="form-field">
+                <label>Parent scorecard <span style={{ color: 'var(--danger)' }}>*</span></label>
+                <select className="select" value={newSpotParent} onChange={e => setNewSpotParent(e.target.value)}>
+                  <option value="">— Select the scorecard to spot-check —</option>
+                  {spotParentOptions.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="form-field form-field-btn">
               <label>&nbsp;</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn btn-primary" onClick={createScorecard}>Create & Edit</button>
-                <button className="btn btn-ghost" onClick={() => { setCreating(false); setNewDivision('') }}>Cancel</button>
+                <button className="btn btn-ghost" onClick={resetCreateForm}>Cancel</button>
               </div>
             </div>
           </div>
+          {newType === 'dsat' && newIsSpotCheck && (
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.6 }}>
+              This will be created as an identical copy of the parent scorecard, so the question
+              and answer-option wording matches on both sides. That is what allows a spot-check
+              to be compared against the vendor evaluation it reviews.
+            </div>
+          )}
           {activeDivisions.length === 0 && (
             <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 10 }}>
               No active divisions exist yet. Create one from the Dashboard before adding a scorecard.
@@ -2564,6 +2667,36 @@ function ScorecardsTab({ profile, flash }) {
           )}
         </div>
       )}
+
+      {confirmSpot && (() => {
+        const parent = spotParentOptions.find(sc => sc.id === newSpotParent)
+        return (
+          <div className="modal-backdrop" onClick={() => setConfirmSpot(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+              <div className="modal-header">
+                <h2>Create spot-check scorecard</h2>
+                <button className="btn-close" onClick={() => setConfirmSpot(false)}>✕</button>
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 14, lineHeight: 1.7, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                  This will generate <b style={{ color: 'var(--text-primary)' }}>{newName.trim()}</b> as an
+                  identical copy of <b style={{ color: 'var(--text-primary)' }}>{parent?.name}</b> — the same
+                  sections, questions, answer options and routing.
+                </p>
+                <p style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)', marginBottom: 20 }}>
+                  Copying rather than rebuilding is deliberate: identical wording is what lets a
+                  spot-check be compared against the vendor evaluation it reviews. It will be
+                  created as a draft for you to review and publish separately.
+                </p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                  <button className="btn btn-ghost" onClick={() => setConfirmSpot(false)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={createSpotCheckScorecard}>Yes, create the copy</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
         Published ({published.length})

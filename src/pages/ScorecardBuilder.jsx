@@ -18,6 +18,9 @@ export default function ScorecardBuilder() {
 
   const [tab, setTab] = useState('settings')
   const [scorecard, setScorecard] = useState(null)
+  // Display-only: the name of the scorecard this one spot-checks. Resolved from
+  // spot_check_source_scorecard_id so the relationship is visible without SQL.
+  const [spotParentName, setSpotParentName] = useState('')
   const [metadata, setMetadata] = useState([])
   const [groups, setGroups] = useState([])
   const [questions, setQuestions] = useState([])
@@ -129,6 +132,14 @@ export default function ScorecardBuilder() {
 
     setScorecard(sc.data)
     setDivision(sc.data?.division || '')
+    // Resolve the parent's name for the read-only Spot-check field in Settings.
+    if (sc.data?.spot_check_source_scorecard_id) {
+      const { data: parent } = await supabase
+        .from('scorecards').select('name').eq('id', sc.data.spot_check_source_scorecard_id).maybeSingle()
+      setSpotParentName(parent?.name || '')
+    } else {
+      setSpotParentName('')
+    }
     const { data: divData, error: divErr } = await supabase.from('divisions').select('*').order('position')
     if (divErr) console.error('divisions failed to load — the Division picker will be empty:', divErr.message)
     setDivisions(divData || [])
@@ -857,6 +868,18 @@ export default function ScorecardBuilder() {
               Scorecard type cannot be changed after creation.
             </span>
           </div>
+          {scorecard.is_spot_check && (
+            <div className="form-field" style={{ marginBottom: 16 }}>
+              <label>Spot-check of</label>
+              <input className="input" value={spotParentName || 'Parent scorecard not recorded'}
+                disabled style={{ opacity: 0.6 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4, display: 'block' }}>
+                This scorecard reviews evaluations submitted on the scorecard above, and was
+                created as a copy of it so the question and answer-option wording matches.
+                Neither the spot-check setting nor its parent can be changed after creation.
+              </span>
+            </div>
+          )}
           {scorecard.type === 'quality' && (
             <div className="form-field" style={{ marginBottom: 16 }}>
               <label>Pass Threshold (%)</label>

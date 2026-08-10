@@ -39,6 +39,16 @@ function weekStartOf(dateStr) {
 
 /* ===================== measure engine ===================== */
 function isControllable(ev) {
+  // Prefer the stored outcome, resolved from the evaluation's own scorecard at submit.
+  //
+  // The fallback below scans every metadata value for the exact string 'Controllable'.
+  // That works only while the answer option is worded precisely that way — rename it on a
+  // new scorecard and this silently returns false for every evaluation, dragging the
+  // Controllability Rate toward 0%. Reading the column removes that dependency for
+  // anything submitted after controllability_outcome shipped.
+  if (ev.controllability_outcome != null) {
+    return String(ev.controllability_outcome).trim().toLowerCase() === 'controllable'
+  }
   const mv = ev.metadata_values
   return Array.isArray(mv) && mv.some(e => e?.value === 'Controllable')
 }

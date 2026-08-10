@@ -50,7 +50,7 @@ function EditReviewModal({ request, onClose, onResolved, flash }) {
   const [subject, setSubject] = useState('')
   const [busy, setBusy] = useState(false)
   useEffect(() => {
-    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users!evaluations_evaluator_id_fkey(name, email)').eq('id', request.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
+    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type, is_spot_check), users!evaluations_evaluator_id_fkey(name, email)').eq('id', request.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
     supabase.from('evaluation_scores').select('*, scorecard_questions(title, is_form_critical)').eq('evaluation_id', request.evaluation_id).then(({ data }) => setScores(data || []))
     // eslint-disable-next-line
   }, [request.evaluation_id])
@@ -228,7 +228,7 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
   }
   useEffect(() => {
     reload()
-    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type), users!evaluations_evaluator_id_fkey(name, email)').eq('id', d0.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
+    supabase.from('evaluations').select('*, scorecards!evaluations_scorecard_id_fkey(name, type, is_spot_check), users!evaluations_evaluator_id_fkey(name, email)').eq('id', d0.evaluation_id).maybeSingle().then(({ data }) => setEv(data))
     supabase.from('evaluation_scores').select('*, scorecard_questions(title, is_form_critical)').eq('evaluation_id', d0.evaluation_id).then(({ data }) => setScores(data || []))
     // eslint-disable-next-line
   }, [d0.id])
@@ -597,6 +597,7 @@ export default function Evaluations() {
   })
   const [scorecards, setScorecards] = useState([])
   const [archivedScIds, setArchivedScIds] = useState([])
+  const [spotCheckScIds, setSpotCheckScIds] = useState([])
   const [includeArchived, setIncludeArchived] = useState(false)
   const [drafts, setDrafts] = useState([])
   const [showDrafts, setShowDrafts] = useState(false)
@@ -625,6 +626,7 @@ export default function Evaluations() {
   useEffect(() => {
     loadScorecards()
     loadArchivedScorecards()
+    if (profile?.role === 'viewer') loadSpotCheckScorecards()
     if (profile?.role && profile.role !== 'viewer') { loadEvaluatorList(); loadAgentList() }
   }, [profile])
 
@@ -716,7 +718,7 @@ export default function Evaluations() {
     // eslint-disable-next-line
   }, [profile])
 
-  useEffect(() => { if (profile?.id) fetchEvals(1) /* eslint-disable-next-line */ }, [includeArchived, archivedScIds])
+  useEffect(() => { if (profile?.id) fetchEvals(1) /* eslint-disable-next-line */ }, [includeArchived, archivedScIds, spotCheckScIds])
 
   // Evaluation ID + Status filter immediately as you type / choose.
   useEffect(() => {
@@ -757,7 +759,7 @@ export default function Evaluations() {
     if (!profile?.id) return
     const { data, error } = await supabase
       .from('evaluations')
-      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type)')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, is_spot_check)')
       .eq('status', 'draft')
       .eq('evaluator_id', profile.id)
       .order('submitted_at', { ascending: false })
@@ -781,6 +783,17 @@ export default function Evaluations() {
     setArchivedScIds((data || []).map(r => r.id))
   }
 
+  // Spot-check scorecard ids, excluded from an agent's view.
+  //
+  // Done as an explicit scorecard_id exclusion rather than a filter on the embedded
+  // scorecards join: in PostgREST a filter on an embedded resource nulls the embed rather
+  // than removing the parent row, so the evaluation would still appear. This mirrors how
+  // archived scorecards are already excluded a few lines above.
+  const loadSpotCheckScorecards = async () => {
+    const { data } = await supabase.from('scorecards').select('id').eq('is_spot_check', true)
+    setSpotCheckScIds((data || []).map(r => r.id))
+  }
+
   const loadScorecards = async () => {
     const { data } = await supabase
       .from('scorecards')
@@ -800,7 +813,7 @@ export default function Evaluations() {
 
       let q = supabase
         .from('evaluations')
-        .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users!evaluations_evaluator_id_fkey(name, email)', { count: 'exact' })
+        .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold, is_spot_check), users!evaluations_evaluator_id_fkey(name, email)', { count: 'exact' })
         .eq('status', 'submitted')
         .order('submitted_at', { ascending: false })
 
@@ -828,6 +841,9 @@ export default function Evaluations() {
       if (filters.status === 'done') q = q.not('agent_read_at', 'is', null)
       if (filters.status === 'pending') q = q.eq('agent_read_required', true).is('agent_read_at', null)
       if (!includeArchived && archivedScIds.length) q = q.not('scorecard_id', 'in', '(' + archivedScIds.join(',') + ')')
+      // Agents never see KG spot-check evaluations — a spot-check reviews the BPO QA's
+      // DSAT judgement, not the agent's interaction.
+      if (isAgent && spotCheckScIds.length) q = q.not('scorecard_id', 'in', '(' + spotCheckScIds.join(',') + ')')
 
       // Surface query failures instead of rendering an empty table. A swallowed error
       // here is indistinguishable from "no evaluations exist", which is exactly how a
@@ -846,12 +862,12 @@ export default function Evaluations() {
     } finally {
       setLoading(false)
     }
-  }, [filters, profile, typeFilter, evaluatorFilter, agentFilter, includeArchived, archivedScIds])
+  }, [filters, profile, typeFilter, evaluatorFilter, agentFilter, includeArchived, archivedScIds, spotCheckScIds])
 
   const openDetail = async (id) => {
     const { data: ev } = await supabase
       .from('evaluations')
-      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold), users!evaluations_evaluator_id_fkey(name, email)')
+      .select('*, scorecards!evaluations_scorecard_id_fkey(name, type, pass_threshold, is_spot_check), users!evaluations_evaluator_id_fkey(name, email)')
       .eq('id', id)
       .single()
     // Quality evaluations store per-question scores in evaluation_scores.
@@ -914,6 +930,9 @@ export default function Evaluations() {
     if (filters.status === 'done')    q = q.not('agent_read_at', 'is', null)
     if (filters.status === 'pending') q = q.eq('agent_read_required', true).is('agent_read_at', null)
     if (!includeArchived && archivedScIds.length) q = q.not('scorecard_id', 'in', '(' + archivedScIds.join(',') + ')')
+    // Same exclusion as the on-screen list, so an agent's export cannot contain spot-check
+    // evaluations the table never showed them.
+    if (isAgent && spotCheckScIds.length) q = q.not('scorecard_id', 'in', '(' + spotCheckScIds.join(',') + ')')
     const { data: rows } = await q
     const evals = rows || []
 
