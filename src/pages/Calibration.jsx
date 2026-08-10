@@ -46,6 +46,7 @@ function CalibrationHome({ onScore }) {
   const [activeSessions, setActive] = useState([])
   const [pastResults, setPast]      = useState([])
   const [loading, setLoading]       = useState(true)
+  const [pastPage, setPastPage]     = useState(1)
 
   useEffect(() => { if (uid) load() }, [uid])
 
@@ -139,6 +140,15 @@ function CalibrationHome({ onScore }) {
   const thStyle = { padding: '10px 16px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }
   const tdStyle = { padding: '10px 16px' }
 
+  // Past Results pagination. 15 rows a page, matching Insights › Sessions Overview.
+  // The page is clamped so a reload that returns fewer results cannot strand the view
+  // on an empty page.
+  const PAST_PER_PAGE = 15
+  const pastPageCount = Math.max(1, Math.ceil(pastResults.length / PAST_PER_PAGE))
+  const currentPastPage = Math.min(pastPage, pastPageCount)
+  const pastStart = (currentPastPage - 1) * PAST_PER_PAGE
+  const pagedPastResults = pastResults.slice(pastStart, pastStart + PAST_PER_PAGE)
+
   return (
     <div>
       <section style={{ marginBottom: 28 }}>
@@ -221,7 +231,7 @@ function CalibrationHome({ onScore }) {
                 </tr>
               </thead>
               <tbody>
-                {pastResults.map(r => (
+                {pagedPastResults.map(r => (
                   <tr key={r.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ ...tdStyle, fontWeight: 500 }}>{r.session?.title || '—'}</td>
                     <td style={tdStyle}>{r.session?.type ? <TypeBadge type={r.session.type} /> : '—'}</td>
@@ -236,6 +246,34 @@ function CalibrationHome({ onScore }) {
                 ))}
               </tbody>
             </table>
+            {pastPageCount > 1 && (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                gap: 12, padding: '10px 16px', borderTop: '1px solid var(--border)',
+                flexWrap: 'wrap',
+              }}>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Showing {pastStart + 1}–{Math.min(pastStart + PAST_PER_PAGE, pastResults.length)} of {pastResults.length} results
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button className="btn btn-ghost btn-sm"
+                    onClick={() => setPastPage(p => Math.max(1, p - 1))}
+                    disabled={currentPastPage <= 1}
+                    style={{ opacity: currentPastPage <= 1 ? 0.45 : 1, cursor: currentPastPage <= 1 ? 'default' : 'pointer' }}>
+                    ← Previous
+                  </button>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 92, textAlign: 'center' }}>
+                    Page {currentPastPage} of {pastPageCount}
+                  </span>
+                  <button className="btn btn-ghost btn-sm"
+                    onClick={() => setPastPage(p => Math.min(pastPageCount, p + 1))}
+                    disabled={currentPastPage >= pastPageCount}
+                    style={{ opacity: currentPastPage >= pastPageCount ? 0.45 : 1, cursor: currentPastPage >= pastPageCount ? 'default' : 'pointer' }}>
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -494,7 +532,7 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
     : previewScore >= 90 ? '#16a34a'
     : previewScore >= 75 ? '#d97706'
     : '#dc2626'
-  const qcText = !live.answeredAny ? '—' : (live.failedCritical ? '0% \u00b7 critical fail' : previewScore + '%')
+  const qcText = !live.answeredAny ? '—' : (live.failedCritical ? '0% · critical fail' : previewScore + '%')
   const qcTextShort = !live.answeredAny ? '—' : (live.failedCritical ? '0%' : previewScore + '%')
 
   return (
@@ -1319,6 +1357,7 @@ function CalibrationInsights() {
   const [filterDateTo, setFilterDateTo] = useState('')
   const [questionLabels, setQuestionLabels] = useState([])
   const [expandedSessions, setExpandedSessions] = useState({})
+  const [sessionPage, setSessionPage] = useState(1)
 
   useEffect(() => { if (profile) load() }, [profile])
 
@@ -1527,6 +1566,17 @@ function CalibrationInsights() {
   }).sort((a, b) => b.avgDelta - a.avgDelta)
 
   const totalSessions = sessionStats.length
+
+  // Sessions Overview pagination. 15 rows a page.
+  //
+  // The page is clamped rather than stored blindly: changing a filter can shrink the
+  // result set, and without this you would land on an empty page with no obvious way
+  // back. Clamping keeps the view on the last page that actually has rows.
+  const SESSIONS_PER_PAGE = 15
+  const sessionPageCount = Math.max(1, Math.ceil(totalSessions / SESSIONS_PER_PAGE))
+  const currentSessionPage = Math.min(sessionPage, sessionPageCount)
+  const sessionPageStart = (currentSessionPage - 1) * SESSIONS_PER_PAGE
+  const pagedSessionStats = sessionStats.slice(sessionPageStart, sessionPageStart + SESSIONS_PER_PAGE)
   const totalEvaluations = filteredRows.length
   const totalCalibrated = filteredRows.filter(r => r.is_calibrated).length
   const overallRate = totalEvaluations > 0 ? Math.round((totalCalibrated / totalEvaluations) * 100) : 0
@@ -1718,7 +1768,7 @@ function CalibrationInsights() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sessionStats.map(s => {
+                  {pagedSessionStats.map(s => {
                     const parts = (bySession[s.id] || []).slice().sort((a, b) => (a.delta || 0) - (b.delta || 0))
                     const open = !!expandedSessions[s.id]
                     return (
@@ -1765,6 +1815,34 @@ function CalibrationInsights() {
                   })}
                 </tbody>
               </table>
+              {sessionPageCount > 1 && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: 12, padding: '10px 16px', borderTop: '1px solid var(--border)',
+                  flexWrap: 'wrap',
+                }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Showing {sessionPageStart + 1}–{Math.min(sessionPageStart + SESSIONS_PER_PAGE, totalSessions)} of {totalSessions} sessions
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button className="btn btn-ghost btn-sm"
+                      onClick={() => setSessionPage(p => Math.max(1, p - 1))}
+                      disabled={currentSessionPage <= 1}
+                      style={{ opacity: currentSessionPage <= 1 ? 0.45 : 1, cursor: currentSessionPage <= 1 ? 'default' : 'pointer' }}>
+                      ← Previous
+                    </button>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 92, textAlign: 'center' }}>
+                      Page {currentSessionPage} of {sessionPageCount}
+                    </span>
+                    <button className="btn btn-ghost btn-sm"
+                      onClick={() => setSessionPage(p => Math.min(sessionPageCount, p + 1))}
+                      disabled={currentSessionPage >= sessionPageCount}
+                      style={{ opacity: currentSessionPage >= sessionPageCount ? 0.45 : 1, cursor: currentSessionPage >= sessionPageCount ? 'default' : 'pointer' }}>
+                      Next →
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
