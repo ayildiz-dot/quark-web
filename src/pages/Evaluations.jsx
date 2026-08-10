@@ -244,6 +244,13 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
 
   const isTL = d.tl_id === me, isEval = d.evaluator_id === me
   const isBpoReviewer = d.bpo_reviewer_id === me
+  // Spot-check disputes terminate inside Quark and escalate by email to KG Quality
+  // Management, so the internal admin route is closed for them server-side
+  // (tl_send_to_admin raises on kind = 'dsat_spotcheck'). The button is replaced with
+  // this text rather than left in place, or clicking it would surface a raw database
+  // error to a BPO QA.
+  const isSpotDispute = d.kind === 'dsat_spotcheck'
+  const EMAIL_ESCALATION = 'If you still do not agree, please raise this to KG Quality Management via Email.'
   const isMediator = d.kind === 'dsat_spotcheck' ? d.agent_id === me : d.tl_id === me
   const box = { fontSize: 13, lineHeight: 1.6, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap' }
   const label = { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', margin: '14px 0 6px' }
@@ -344,13 +351,23 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
                 {(d.re_dispute_count || 0) < 1 && (
                   <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_after_rejection', { p_dispute_id: d.id, p_redispute: true, p_comment: comment.trim() }, 'Re-disputed')}>Re-dispute</button>
                 )}
-                {(d.re_dispute_count || 0) >= 1 && d.evaluator_is_kg && (
+                {(d.re_dispute_count || 0) >= 1 && d.evaluator_is_kg && !isSpotDispute && (
                   <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_send_to_admin', { p_dispute_id: d.id, p_comment: comment.trim() }, 'Sent for final decision')}>Send it for final decision</button>
                 )}
                 {(d.re_dispute_count || 0) >= 1 && !d.evaluator_is_kg && (
                   <button className="btn btn-primary" disabled={busy} onClick={() => needComment() && run('tl_send_to_bpo_final', { p_dispute_id: d.id, p_comment: comment.trim(), p_subject: subject.trim() || null }, 'Sent to internal quality management')}>Send email to internal quality mgmt</button>
                 )}
               </div>
+              {isSpotDispute && (d.re_dispute_count || 0) >= 1 && (
+                <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+                  {EMAIL_ESCALATION}
+                </div>
+              )}
+              {isSpotDispute && (d.re_dispute_count || 0) < 1 && (
+                <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  You have 48 hours to re-dispute. After that the rejection stands.
+                </div>
+              )}
             </>
           )}
 
@@ -407,6 +424,15 @@ function DisputeModal({ dispute: d0, profile, navigate, onClose, onChanged, flas
                 </div>
               </>
             )
+          )}
+
+          {/* Terminal states on a spot-check dispute: nothing further happens inside
+              Quark, so the only remaining route is stated explicitly rather than
+              leaving the BPO QA on a closed dispute with no next step. */}
+          {isSpotDispute && ['accepted', 'cancelled', 'rejected_final', 'rejected'].includes(d.status) && (
+            <div style={{ marginTop: 16, padding: '10px 12px', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', fontSize: 12, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+              {EMAIL_ESCALATION}
+            </div>
           )}
         </div>
       </div>
@@ -880,7 +906,15 @@ export default function Evaluations() {
         .eq('evaluation_id', id)
       scores = scoreRows || []
     }
-    setDetail({ ...ev, scores })
+    // The 72-hour dispute window runs from the SPOT-CHECK's submission, not this
+    // evaluation's, so the linked KG row's timestamp is fetched alongside.
+    let spotCheckSubmittedAt = null
+    if (ev?.deviation_source_evaluation_id) {
+      const { data: kgEv } = await supabase
+        .from('evaluations').select('submitted_at').eq('id', ev.deviation_source_evaluation_id).maybeSingle()
+      spotCheckSubmittedAt = kgEv?.submitted_at || null
+    }
+    setDetail({ ...ev, scores, _spotCheckSubmittedAt: spotCheckSubmittedAt })
   }
 
   const markEvalRead = async () => {
@@ -1463,13 +1497,31 @@ export default function Evaluations() {
               {profile?.role !== 'viewer' && detail.deviation_source_evaluation_id && detail.evaluator_id === profile.id && (() => {
                 const kgId = detail.deviation_source_evaluation_id
                 const dsp = myDisputes[kgId]
-                const canRaise = !dsp || dsp.status === 'cancelled'
+                // The window closes 72 hours after the spot-check was submitted. Mirrors the
+                // check in raise_dsat_dispute — the server is the boundary, this only decides
+                // what renders, so the button never leads to an error.
+                const submittedAt = detail._spotCheckSubmittedAt
+                const hoursSince = submittedAt ? (Date.now() - new Date(submittedAt).getTime()) / 3600000 : null
+                const windowOpen = hoursSince != null && hoursSince < 72
+                const hoursLeft = windowOpen ? Math.max(1, Math.ceil(72 - hoursSince)) : 0
+                const canRaise = (!dsp || dsp.status === 'cancelled') && windowOpen
                 return (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, background: 'rgba(245,158,11,0.10)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>This DSAT was spot-checked by a KG QA.</span>
                     {dsp && <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Dispute: {DISPUTE_STATUS[dsp.status]?.label || dsp.status}</span>}
                     {dsp && <button className="btn btn-ghost btn-sm" onClick={() => { setDisputeModal(dsp); setDetail(null) }}>View dispute</button>}
                     {canRaise && <button className="btn btn-outline btn-sm" onClick={() => { setRaiseDsat(kgId); setDetail(null) }}>Dispute the KG spot-check</button>}
+                    {canRaise && (
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                        {hoursLeft}h left to dispute
+                      </span>
+                    )}
+                    {!dsp && !windowOpen && (
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        The 72-hour window to dispute has closed. If you still do not agree, please
+                        raise this to KG Quality Management via Email.
+                      </span>
+                    )}
                   </div>
                 )
               })()}
