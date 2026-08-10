@@ -319,20 +319,65 @@ export default function ScorecardBuilder() {
             }).eq('id', q.id))
           }
         }
-        // Save options — insert new (resolving temp question IDs), update existing
+        // Save options — insert new, update existing.
+        //
+        // BOTH foreign keys have to be resolved through the maps built above, not just
+        // question_id. An option can jump to a section that was created in this same save
+        // and therefore still carries a client-side temp id ("temp_1786367229346") rather
+        // than a UUID. Sending that straight to Postgres produced:
+        //   invalid input syntax for type uuid: "temp_..."
+        // and failed every option pointing at a new section — on the update branch too,
+        // which is why re-routing an EXISTING option to a NEW section failed as well.
+        const resolveJump = (jumpId) => {
+          if (!jumpId) return null
+          return sectionIdMap[jumpId] || jumpId
+        }
+        const optionIdMap = {}
         for (const o of dsatOptions) {
           const realQuestionId = questionIdMap[o.question_id] || o.question_id
           if (o._isNew) {
-            await wr(`option "${o.label}"`, supabase.from('dsat_options').insert({
+            const data = await wr(`option "${o.label}"`, supabase.from('dsat_options').insert({
               question_id: realQuestionId, label: o.label,
-              jump_to_section_id: o.jump_to_section_id, position: o.position
-            }))
+              jump_to_section_id: resolveJump(o.jump_to_section_id), position: o.position
+            }).select().single())
+            if (data) optionIdMap[o.id] = data.id
           } else {
             await wr(`option "${o.label}"`, supabase.from('dsat_options').update({
-              label: o.label, jump_to_section_id: o.jump_to_section_id
+              label: o.label, jump_to_section_id: resolveJump(o.jump_to_section_id)
             }).eq('id', o.id))
           }
         }
+
+        // ---- Sync the rows that DID write back into local state ----
+        //
+        // Without this, a partial failure left successfully-inserted sections and questions
+        // still flagged _isNew, so pressing Save again inserted a SECOND copy of each. The
+        // retry was more destructive than the original failure.
+        //
+        // Rewriting temp ids to the real ones here makes a retry idempotent: whatever
+        // already landed is treated as existing, and only the genuinely failed rows are
+        // attempted again.
+        if (Object.keys(sectionIdMap).length) {
+          setSections(prev => prev.map(sec =>
+            sectionIdMap[sec.id] ? { ...sec, id: sectionIdMap[sec.id], _isNew: false } : sec))
+        }
+        if (Object.keys(sectionIdMap).length || Object.keys(questionIdMap).length) {
+          setDsatQuestions(prev => prev.map(q => {
+            const next = { ...q }
+            if (sectionIdMap[q.section_id]) next.section_id = sectionIdMap[q.section_id]
+            if (questionIdMap[q.id]) { next.id = questionIdMap[q.id]; next._isNew = false }
+            return next
+          }))
+        }
+        setDsatOptions(prev => prev.map(o => {
+          const next = { ...o }
+          if (questionIdMap[o.question_id]) next.question_id = questionIdMap[o.question_id]
+          if (o.jump_to_section_id && sectionIdMap[o.jump_to_section_id]) {
+            next.jump_to_section_id = sectionIdMap[o.jump_to_section_id]
+          }
+          if (optionIdMap[o.id]) { next.id = optionIdMap[o.id]; next._isNew = false }
+          return next
+        }))
       }
 
       // Anything failed? Then this is NOT a saved version. Keep the unsaved-changes state
