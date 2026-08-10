@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, Fragment } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../App'
 import { supabase } from '../lib/supabase'
 import { calculateQualityScore, answerEarnsWeight } from '../lib/scoring'
@@ -259,13 +260,37 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
   const [showLgtmConfirm, setShowLgtmConfirm] = useState(false)
   const commentRef = useRef(null)
 
+  // Floating progress bar: a 1px sentinel sits where the inline bar renders; once it
+  // scrolls past the top of the viewport the pill takes over. Same approach as the
+  // evaluation form.
+  //
+  // These must stay above the `if (loading) return` below — hooks cannot sit after an
+  // early return, or the hook count changes between renders once loading flips and React
+  // throws "rendered more hooks than during the previous render".
+  const barSentinelRef = useRef(null)
+  const [barFloating, setBarFloating] = useState(false)
+  useEffect(() => {
+    const onScroll = () => {
+      const el = barSentinelRef.current
+      if (!el) { setBarFloating(false); return }
+      setBarFloating(el.getBoundingClientRect().top < 8)
+    }
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    onScroll()
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [loading])
+
   useEffect(() => { if (uid && session?.id) load() }, [uid, session?.id])
 
   async function load() {
     setLoading(true)
     const { data: qs } = await supabase
       .from('scorecard_questions')
-      .select('id, title, weight, is_weighted, is_form_critical, is_group_critical, group_id, position')
+      .select('id, title, weight, is_weighted, is_form_critical, is_group_critical, group_id, allow_na, position')
       .eq('scorecard_id', session.scorecard_id)
       .order('position')
     setQuestions(qs || [])
@@ -456,7 +481,21 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
 
   const answeredCount = questions.filter(q => !!answers[q.id]).length
   const allAnswered = answeredCount === questions.length && questions.length > 0
-  const { score: previewScore } = calcScore(questions, answers)
+  const pct = questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0
+
+  // Live score "so far": answeredOnly keeps unanswered questions out of the denominator,
+  // so the figure converges on the final score as you work rather than climbing from zero.
+  // Same module and same option the evaluation form uses, so the two read identically.
+  const live = calculateQualityScore(questions, q => answers[q.id] ?? null, { answeredOnly: true })
+  const previewScore = live.score
+  const showQc = session.type !== 'dsat' && questions.length > 0
+  const qcColor = live.failedCritical ? '#dc2626'
+    : !live.answeredAny ? 'var(--text-secondary)'
+    : previewScore >= 90 ? '#16a34a'
+    : previewScore >= 75 ? '#d97706'
+    : '#dc2626'
+  const qcText = !live.answeredAny ? '—' : (live.failedCritical ? '0% \u00b7 critical fail' : previewScore + '%')
+  const qcTextShort = !live.answeredAny ? '—' : (live.failedCritical ? '0%' : previewScore + '%')
 
   return (
     <div>
@@ -502,14 +541,62 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 2 }}>
               {answeredCount} / {questions.length} answered
             </div>
-            {answeredCount > 0 && (
-              <div style={{ fontSize: 22, fontWeight: 700, color: previewScore >= 90 ? '#16a34a' : previewScore >= 60 ? '#d97706' : '#dc2626' }}>
-                {previewScore}%
+            {showQc && live.answeredAny && (
+              <div style={{ fontSize: 22, fontWeight: 700, color: qcColor }}>
+                {qcTextShort}
               </div>
             )}
           </div>
         </div>
       </div>
+
+      <div ref={barSentinelRef} style={{ height: 1 }} />
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)' }}>{answeredCount}/{questions.length} answered</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            {showQc && (
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+                Live QC Score: <span style={{ color: qcColor, fontWeight: 700 }}>{qcText}</span>
+              </span>
+            )}
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)' }}>{pct}%</span>
+          </div>
+        </div>
+        <div style={{ height: 4, background: 'var(--border)', borderRadius: 4 }}>
+          <div style={{ height: 4, borderRadius: 4, background: 'var(--accent)', width: `${pct}%`, transition: 'width 0.3s' }} />
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {barFloating && (
+          <motion.div
+            initial={{ opacity: 0, y: -24, x: '-50%' }}
+            animate={{ opacity: 1, y: 0, x: '-50%' }}
+            exit={{ opacity: 0, y: -24, x: '-50%' }}
+            transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+            style={{
+              position: 'fixed', top: 14, left: 'calc(50% + 110px)', zIndex: 40,
+              display: 'flex', alignItems: 'center', gap: 14, minWidth: 300,
+              padding: '9px 20px', borderRadius: 999,
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              boxShadow: '0 10px 30px rgba(0,0,0,0.28)'
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{answeredCount}/{questions.length}</span>
+            <div style={{ flex: 1, minWidth: 130, height: 5, background: 'var(--border)', borderRadius: 999 }}>
+              <div style={{ height: 5, borderRadius: 999, background: 'var(--accent)', width: `${pct}%`, transition: 'width 0.3s' }} />
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>{pct}%</span>
+            {showQc && (
+              <>
+                <span style={{ width: 1, height: 18, background: 'var(--border)', flexShrink: 0 }} />
+                <span title="Live QC score from your current selections" style={{ fontSize: 12, fontWeight: 700, color: qcColor, whiteSpace: 'nowrap' }}>QC {qcTextShort}</span>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
         {questions.map((q, idx) => {
@@ -533,7 +620,10 @@ function CalibrationSubmit({ session, onBack, onSubmitted }) {
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                   {q.is_weighted && <span style={{ color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, marginRight: 8, whiteSpace: 'nowrap' }}>{q.weight} pts</span>}
-            {['pass', 'fail', 'na'].map(opt => (
+                  {/* N/A is offered only where the scorecard allows it, matching the
+                      evaluation form. allow_na defaults to true, so `!== false` keeps
+                      older rows with a null value behaving as before. */}
+                  {['pass', 'fail', ...(q.allow_na !== false ? ['na'] : [])].map(opt => (
                     <button key={opt}
                       onClick={() => setAnswers(prev => ({ ...prev, [q.id]: opt }))}
                       style={{
