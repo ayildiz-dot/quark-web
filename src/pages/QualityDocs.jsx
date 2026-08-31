@@ -13,6 +13,9 @@ import Table from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
+import TextStyle from '@tiptap/extension-text-style'
+import Color from '@tiptap/extension-color'
+import Highlight from '@tiptap/extension-highlight'
 
 /*
   Quality Documentation.
@@ -41,6 +44,9 @@ const EXTENSIONS = [
   }),
   Image.configure({ inline: false, allowBase64: false }),
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
+  TextStyle,
+  Color,
+  Highlight.configure({ multicolor: true }),
   Table.configure({ resizable: true }),
   TableRow,
   TableHeader,
@@ -100,6 +106,65 @@ function TableGrid({ onPick, onClose }) {
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-secondary)', textAlign: 'center' }}>
         {hover.r ? `${hover.r} × ${hover.c}` : 'Insert table'}
       </div>
+    </div>
+  )
+}
+
+
+/* Inline SVG rather than emoji: the toolbar sits at 13px where emoji render
+   inconsistently across platforms, and two of them were mangled outright when the
+   5-hex-digit escapes were converted. */
+const IconLink = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+  </svg>
+)
+const IconImage = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="8.5" cy="8.5" r="1.5" />
+    <path d="m21 15-5-5L5 21" />
+  </svg>
+)
+
+/* Text and highlight colour. A fixed palette rather than a native colour input, so
+   documents stay visually consistent; "None" clears the colour. */
+const PALETTE = ['#0f172a','#dc2626','#ea580c','#ca8a04','#16a34a','#0891b2','#2563eb','#7c3aed','#db2777','#64748b']
+const HIGHLIGHTS = ['#fef08a','#bbf7d0','#bfdbfe','#fbcfe8','#e9d5ff','#fed7aa','#fecaca','#d9f99d','#a5f3fc','#e2e8f0']
+
+function ColorMenu({ label, swatch, colors, onPick, onClear }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ position: 'relative' }}>
+      <Btn title={label} on={open} onClick={() => setOpen(v => !v)}>
+        <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}>
+          <span style={{ fontSize: 11, fontWeight: 700 }}>{swatch}</span>
+          <span style={{ width: 14, height: 3, borderRadius: 1, background: 'currentColor', marginTop: 2 }} />
+        </span>
+      </Btn>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 34, left: 0, zIndex: 30, padding: 8, borderRadius: 8,
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          boxShadow: '0 10px 30px rgba(0,0,0,0.28)',
+        }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 20px)', gap: 5 }}>
+            {colors.map(c => (
+              <div key={c} title={c}
+                onMouseDown={e => { e.preventDefault(); onPick(c); setOpen(false) }}
+                style={{ width: 20, height: 20, borderRadius: 4, background: c, cursor: 'pointer', border: '1px solid var(--border)' }} />
+            ))}
+          </div>
+          <button type="button" onMouseDown={e => { e.preventDefault(); onClear(); setOpen(false) }}
+            style={{ marginTop: 8, width: '100%', fontSize: 11, padding: '4px 0', cursor: 'pointer',
+              background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6 }}>
+            None
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -164,8 +229,15 @@ function Toolbar({ editor, onImage, busyImage }) {
       <Btn title="Numbered list" on={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1.</Btn>
       <Btn title="Quote"         on={editor.isActive('blockquote')}  onClick={() => editor.chain().focus().toggleBlockquote().run()}>“</Btn>
       <Sep />
-      <Btn title="Link" on={editor.isActive('link')} onClick={setLink}>ὑ7</Btn>
-      <Btn title="Insert image" disabled={busyImage} onClick={onImage}>{busyImage ? '…' : 'Ὓc'}</Btn>
+      <ColorMenu label="Text colour" swatch="A" colors={PALETTE}
+        onPick={c => editor.chain().focus().setColor(c).run()}
+        onClear={() => editor.chain().focus().unsetColor().run()} />
+      <ColorMenu label="Highlight colour" swatch="✎" colors={HIGHLIGHTS}
+        onPick={c => editor.chain().focus().toggleHighlight({ color: c }).run()}
+        onClear={() => editor.chain().focus().unsetHighlight().run()} />
+      <Sep />
+      <Btn title="Link" on={editor.isActive('link')} onClick={setLink}><IconLink /></Btn>
+      <Btn title="Insert image" disabled={busyImage} onClick={onImage}>{busyImage ? '…' : <IconImage />}</Btn>
       <Btn title="Horizontal line" onClick={() => editor.chain().focus().setHorizontalRule().run()}>—</Btn>
       <div style={{ position: 'relative' }}>
         <Btn title="Insert table" on={showGrid} onClick={() => setShowGrid(v => !v)}>⊞</Btn>
@@ -210,6 +282,7 @@ const EDITOR_CSS = `
 .qd-editor .ProseMirror hr { border: none; border-top: 1px solid var(--border); margin: 1.2em 0; }
 .qd-editor .ProseMirror img { max-width: 100%; height: auto; border-radius: 6px; }
 .qd-editor .ProseMirror a { color: var(--accent); text-decoration: underline; }
+.qd-editor .ProseMirror mark { padding: 0 2px; border-radius: 3px; }
 .qd-editor .ProseMirror code { background: var(--bg-secondary); padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
 .qd-editor .ProseMirror table { border-collapse: collapse; table-layout: fixed; width: 100%; overflow: hidden; }
 .qd-editor .ProseMirror td, .qd-editor .ProseMirror th {
@@ -568,7 +641,7 @@ export function QualityDocEdit() {
           makes a long document workable without the page scrolling underneath. */}
       <div className="qd-editor" style={{
         border: '1px solid var(--border)', borderRadius: 10, background: 'var(--bg-surface)',
-        resize: 'both', overflow: 'auto', height: paneHeight, minHeight: 260, minWidth: 320,
+        resize: 'vertical', overflow: 'auto', height: paneHeight, minHeight: 260, width: '100%',
         display: 'flex', flexDirection: 'column',
       }} onMouseUp={e => setPaneHeight(e.currentTarget.offsetHeight)}>
         <Toolbar editor={editor} onImage={insertImage} busyImage={busyImage} />
@@ -607,6 +680,52 @@ export function QualityDocEdit() {
 }
 
 /* ───────────────────────────────── history ───────────────────────────────── */
+
+
+/* Version history is only useful if you can see what moved between versions. Rather
+   than storing a diff at publish time — which would be wrong the moment the shape of a
+   document changes — the stats are derived from the stored content JSON and compared
+   against the previous version at render time.
+   
+   Deliberately coarse: it answers "did this grow, did the tables change, was the title
+   reworded" in a glance. The stated reason carries the intent; this carries the shape. */
+function docStats(content) {
+  const stat = { words: 0, tables: 0, images: 0, headings: 0, links: 0 }
+  const walk = (n) => {
+    if (!n || typeof n !== 'object') return
+    if (n.type === 'text') {
+      stat.words += (n.text || '').trim().split(/\s+/).filter(Boolean).length
+      if ((n.marks || []).some(m => m.type === 'link')) stat.links += 1
+    }
+    if (n.type === 'table') stat.tables += 1
+    if (n.type === 'image') stat.images += 1
+    if (n.type === 'heading') stat.headings += 1
+    ;(n.content || []).forEach(walk)
+  }
+  walk(content)
+  return stat
+}
+
+function describeChange(row, prev) {
+  if (!prev) return ['Initial version']
+  const a = docStats(prev.content), b = docStats(row.content)
+  const out = []
+  if ((prev.title || '') !== (row.title || '')) out.push('Title reworded')
+  if ((prev.summary || '') !== (row.summary || '')) out.push('Summary changed')
+  const dw = b.words - a.words
+  if (dw > 0) out.push(`+${dw} words`)
+  else if (dw < 0) out.push(`${dw} words`)
+  const pair = (label, x, y) => {
+    const d = y - x
+    if (d > 0) out.push(`+${d} ${label}${d > 1 ? 's' : ''}`)
+    else if (d < 0) out.push(`${d} ${label}${d < -1 ? 's' : ''}`)
+  }
+  pair('table', a.tables, b.tables)
+  pair('image', a.images, b.images)
+  pair('heading', a.headings, b.headings)
+  pair('link', a.links, b.links)
+  return out.length ? out : ['Formatting only']
+}
 
 export function QualityDocHistory() {
   const { id } = useParams()
@@ -663,21 +782,52 @@ export function QualityDocHistory() {
       ) : (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <table className="data-table" style={{ width: '100%' }}>
-            <thead><tr><th>Version</th><th>Date</th><th>Changed by</th><th>Reason</th>{canEdit && <th></th>}</tr></thead>
+            <thead>
+              <tr>
+                <th>Version</th><th>Date</th><th>Changed by</th>
+                <th>What changed</th><th>Size</th><th>Reason</th>{canEdit && <th></th>}
+              </tr>
+            </thead>
             <tbody>
-              {rows.map(r => (
-                <tr key={r.id}>
-                  <td>v{r.version_number}</td>
-                  <td>{new Date(r.created_at).toLocaleString()}</td>
-                  <td>{r.users?.name || '—'}</td>
-                  <td>{r.change_reason || '—'}</td>
-                  {canEdit && (
-                    <td style={{ textAlign: 'right' }}>
-                      <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => restore(r)}>Restore</button>
+              {rows.map((r, i) => {
+                // rows are newest-first, so the previous version is the NEXT row along
+                const prev = rows[i + 1]
+                const changes = describeChange(r, prev)
+                const st = docStats(r.content)
+                return (
+                  <tr key={r.id}>
+                    <td style={{ whiteSpace: 'nowrap' }}>v{r.version_number}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{new Date(r.created_at).toLocaleString()}</td>
+                    <td>{r.users?.name || '—'}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                        {changes.map((c, k) => (
+                          <span key={k} style={{
+                            fontSize: 11, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap',
+                            background: c.startsWith('+') ? 'var(--success-light, #0d6b52)'
+                              : c.startsWith('-') ? 'var(--danger-light, #6e1c1c)'
+                              : 'var(--bg-hover, #363f54)',
+                            color: c.startsWith('+') ? '#a7f3d0'
+                              : c.startsWith('-') ? '#fecaca'
+                              : 'var(--text-secondary)',
+                          }}>{c}</span>
+                        ))}
+                      </div>
                     </td>
-                  )}
-                </tr>
-              ))}
+                    <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                      {st.words} words
+                      {st.tables ? ` · ${st.tables} table${st.tables > 1 ? 's' : ''}` : ''}
+                      {st.images ? ` · ${st.images} image${st.images > 1 ? 's' : ''}` : ''}
+                    </td>
+                    <td>{r.change_reason || '—'}</td>
+                    {canEdit && (
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => restore(r)}>Restore</button>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
