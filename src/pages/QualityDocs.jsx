@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../App'
 import { supabase } from '../lib/supabase'
+import ColorPicker from '../components/ColorPicker'
 
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -130,39 +131,56 @@ const IconImage = () => (
   </svg>
 )
 
-/* Text and highlight colour. A fixed palette rather than a native colour input, so
-   documents stay visually consistent; "None" clears the colour. */
-const PALETTE = ['#0f172a','#dc2626','#ea580c','#ca8a04','#16a34a','#0891b2','#2563eb','#7c3aed','#db2777','#64748b']
-const HIGHLIGHTS = ['#fef08a','#bbf7d0','#bfdbfe','#fbcfe8','#e9d5ff','#fed7aa','#fecaca','#d9f99d','#a5f3fc','#e2e8f0']
+/* Text and highlight colour, using the same picker as the account theme settings
+   (components/ColorPicker) so colour selection looks and behaves identically wherever
+   it appears in Quark.
 
-function ColorMenu({ label, swatch, colors, onPick, onClear }) {
+   The bar under the A / pen shows the colour currently applied at the cursor, read back
+   from the editor rather than from local state — so moving the caret into differently
+   coloured text updates the indicator. */
+function ColorMenu({ label, glyph, current, fallback, onPick, onClear }) {
   const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(current || fallback)
+  const ref = useRef(null)
+
+  useEffect(() => { setDraft(current || fallback) }, [current, fallback])
+
+  // Close on any outside click, or the panel stays open behind the editor.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
   return (
-    <div style={{ position: 'relative' }}>
+    <div style={{ position: 'relative' }} ref={ref}>
       <Btn title={label} on={open} onClick={() => setOpen(v => !v)}>
         <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1 }}>
-          <span style={{ fontSize: 11, fontWeight: 700 }}>{swatch}</span>
-          <span style={{ width: 14, height: 3, borderRadius: 1, background: 'currentColor', marginTop: 2 }} />
+          <span style={{ fontSize: 11, fontWeight: 700 }}>{glyph}</span>
+          <span style={{
+            width: 15, height: 4, borderRadius: 1, marginTop: 2,
+            background: current || fallback,
+            border: current ? 'none' : '1px solid var(--border-light)',
+          }} />
         </span>
       </Btn>
       {open && (
-        <div style={{
-          position: 'absolute', top: 34, left: 0, zIndex: 30, padding: 8, borderRadius: 8,
-          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+        <div onMouseDown={e => e.stopPropagation()} style={{
+          position: 'absolute', top: 34, left: 0, zIndex: 30, width: 216, padding: 12,
+          borderRadius: 10, background: 'var(--bg-surface)', border: '1px solid var(--border)',
           boxShadow: '0 10px 30px rgba(0,0,0,0.28)',
         }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 20px)', gap: 5 }}>
-            {colors.map(c => (
-              <div key={c} title={c}
-                onMouseDown={e => { e.preventDefault(); onPick(c); setOpen(false) }}
-                style={{ width: 20, height: 20, borderRadius: 4, background: c, cursor: 'pointer', border: '1px solid var(--border)' }} />
-            ))}
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 8 }}>
+            {label.toUpperCase()}
           </div>
-          <button type="button" onMouseDown={e => { e.preventDefault(); onClear(); setOpen(false) }}
-            style={{ marginTop: 8, width: '100%', fontSize: 11, padding: '4px 0', cursor: 'pointer',
-              background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 6 }}>
-            None
-          </button>
+          <ColorPicker value={draft} onChange={setDraft} />
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <button type="button" className="btn btn-ghost btn-sm" style={{ flex: 1 }}
+              onClick={() => { onClear(); setOpen(false) }}>None</button>
+            <button type="button" className="btn btn-primary btn-sm" style={{ flex: 1 }}
+              onClick={() => { onPick(draft); setOpen(false) }}>Apply</button>
+          </div>
         </div>
       )}
     </div>
@@ -229,10 +247,12 @@ function Toolbar({ editor, onImage, busyImage }) {
       <Btn title="Numbered list" on={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>1.</Btn>
       <Btn title="Quote"         on={editor.isActive('blockquote')}  onClick={() => editor.chain().focus().toggleBlockquote().run()}>“</Btn>
       <Sep />
-      <ColorMenu label="Text colour" swatch="A" colors={PALETTE}
+      <ColorMenu label="Text colour" glyph="A"
+        current={editor.getAttributes('textStyle').color || null} fallback="var(--text-primary)"
         onPick={c => editor.chain().focus().setColor(c).run()}
         onClear={() => editor.chain().focus().unsetColor().run()} />
-      <ColorMenu label="Highlight colour" swatch="✎" colors={HIGHLIGHTS}
+      <ColorMenu label="Highlight colour" glyph="✎"
+        current={editor.getAttributes('highlight').color || null} fallback="transparent"
         onPick={c => editor.chain().focus().toggleHighlight({ color: c }).run()}
         onClear={() => editor.chain().focus().unsetHighlight().run()} />
       <Sep />
@@ -682,49 +702,116 @@ export function QualityDocEdit() {
 /* ───────────────────────────────── history ───────────────────────────────── */
 
 
-/* Version history is only useful if you can see what moved between versions. Rather
-   than storing a diff at publish time — which would be wrong the moment the shape of a
-   document changes — the stats are derived from the stored content JSON and compared
-   against the previous version at render time.
-   
-   Deliberately coarse: it answers "did this grow, did the tables change, was the title
-   reworded" in a glance. The stated reason carries the intent; this carries the shape. */
-function docStats(content) {
-  const stat = { words: 0, tables: 0, images: 0, headings: 0, links: 0 }
-  const walk = (n) => {
-    if (!n || typeof n !== 'object') return
-    if (n.type === 'text') {
-      stat.words += (n.text || '').trim().split(/\s+/).filter(Boolean).length
-      if ((n.marks || []).some(m => m.type === 'link')) stat.links += 1
+/* Block-level diff between two versions.
+
+   Compares the top-level blocks of the stored TipTap documents — paragraphs, headings,
+   tables, images, lists — and works out which were removed and which were added. Blocks
+   are matched on their serialised form, so an untouched paragraph is recognised even if
+   everything around it moved.
+
+   Standard LCS. The point is to show the actual content that changed rather than a count:
+   "this table was removed, this paragraph replaced it" answers the question a reader
+   actually has when reviewing a guideline change. */
+const sig = (b) => JSON.stringify(b)
+
+function diffBlocks(prevDoc, curDoc) {
+  const A = (prevDoc?.content || []), B = (curDoc?.content || [])
+  const n = A.length, m = B.length
+  const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      L[i][j] = sig(A[i]) === sig(B[j]) ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1])
     }
-    if (n.type === 'table') stat.tables += 1
-    if (n.type === 'image') stat.images += 1
-    if (n.type === 'heading') stat.headings += 1
-    ;(n.content || []).forEach(walk)
   }
-  walk(content)
-  return stat
+  const removed = [], added = []
+  let i = 0, j = 0
+  while (i < n && j < m) {
+    if (sig(A[i]) === sig(B[j])) { i++; j++ }
+    else if (L[i + 1][j] >= L[i][j + 1]) removed.push(A[i++])
+    else added.push(B[j++])
+  }
+  while (i < n) removed.push(A[i++])
+  while (j < m) added.push(B[j++])
+  return { removed, added }
 }
 
-function describeChange(row, prev) {
-  if (!prev) return ['Initial version']
-  const a = docStats(prev.content), b = docStats(row.content)
-  const out = []
-  if ((prev.title || '') !== (row.title || '')) out.push('Title reworded')
-  if ((prev.summary || '') !== (row.summary || '')) out.push('Summary changed')
-  const dw = b.words - a.words
-  if (dw > 0) out.push(`+${dw} words`)
-  else if (dw < 0) out.push(`${dw} words`)
-  const pair = (label, x, y) => {
-    const d = y - x
-    if (d > 0) out.push(`+${d} ${label}${d > 1 ? 's' : ''}`)
-    else if (d < 0) out.push(`${d} ${label}${d < -1 ? 's' : ''}`)
+/* Renders a set of blocks read-only through TipTap, so tables and images appear exactly
+   as they do in the document — and, as everywhere else here, without ever touching
+   dangerouslySetInnerHTML. */
+function BlockPreview({ blocks, empty }) {
+  const doc = { type: 'doc', content: blocks.length ? blocks : [{ type: 'paragraph' }] }
+  const editor = useEditor({ extensions: EXTENSIONS, content: doc, editable: false }, [JSON.stringify(doc)])
+  if (!blocks.length) {
+    return <div style={{ padding: 16, fontSize: 12.5, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>{empty}</div>
   }
-  pair('table', a.tables, b.tables)
-  pair('image', a.images, b.images)
-  pair('heading', a.headings, b.headings)
-  pair('link', a.links, b.links)
-  return out.length ? out : ['Formatting only']
+  return <div className="qd-editor"><EditorContent editor={editor} /></div>
+}
+
+function VersionDiffModal({ row, prev, onClose }) {
+  const { removed, added } = diffBlocks(prev?.content, row?.content)
+  const titleChanged = prev && (prev.title || '') !== (row.title || '')
+  const summaryChanged = prev && (prev.summary || '') !== (row.summary || '')
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 1100, width: '94vw' }}>
+        <div className="modal-header">
+          <h2>{prev ? `Changes from v${prev.version_number} to v${row.version_number}` : `v${row.version_number} — initial version`}</h2>
+          <button className="btn-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{ maxHeight: '74vh', overflowY: 'auto' }}>
+          <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginBottom: 14 }}>
+            {new Date(row.created_at).toLocaleString()} · {row.users?.name || '—'}
+            {row.change_reason ? <> · “{row.change_reason}”</> : null}
+          </div>
+
+          {(titleChanged || summaryChanged) && (
+            <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+              {titleChanged && (
+                <div style={{ fontSize: 13, marginBottom: summaryChanged ? 8 : 0 }}>
+                  <b>Title:</b>{' '}
+                  <span style={{ textDecoration: 'line-through', color: 'var(--text-tertiary)' }}>{prev.title}</span>
+                  {' → '}<span>{row.title}</span>
+                </div>
+              )}
+              {summaryChanged && (
+                <div style={{ fontSize: 13 }}>
+                  <b>Summary:</b>{' '}
+                  <span style={{ textDecoration: 'line-through', color: 'var(--text-tertiary)' }}>{prev.summary || '—'}</span>
+                  {' → '}<span>{row.summary || '—'}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', color: '#fecaca', marginBottom: 6 }}>
+                REMOVED
+              </div>
+              <div style={{ border: '1px solid var(--danger, #ef4444)', borderRadius: 8, background: 'rgba(239,68,68,0.06)', overflow: 'hidden' }}>
+                <BlockPreview blocks={removed} empty={prev ? 'Nothing was removed.' : 'No earlier version.'} />
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', color: '#a7f3d0', marginBottom: 6 }}>
+                ADDED
+              </div>
+              <div style={{ border: '1px solid var(--success, #10b981)', borderRadius: 8, background: 'rgba(16,185,129,0.06)', overflow: 'hidden' }}>
+                <BlockPreview blocks={added} empty="Nothing was added." />
+              </div>
+            </div>
+          </div>
+
+          {!removed.length && !added.length && !titleChanged && !summaryChanged && (
+            <div style={{ marginTop: 14, fontSize: 12.5, color: 'var(--text-secondary)' }}>
+              No content changed between these versions — the difference was formatting only.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function QualityDocHistory() {
@@ -736,6 +823,7 @@ export function QualityDocHistory() {
   const [doc, setDoc] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [openDiff, setOpenDiff] = useState(null)   // { row, prev }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -783,45 +871,25 @@ export function QualityDocHistory() {
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <table className="data-table" style={{ width: '100%' }}>
             <thead>
-              <tr>
-                <th>Version</th><th>Date</th><th>Changed by</th>
-                <th>What changed</th><th>Size</th><th>Reason</th>{canEdit && <th></th>}
-              </tr>
+              <tr><th>Version</th><th>Date</th><th>Changed by</th><th>Reason</th>{canEdit && <th></th>}</tr>
             </thead>
             <tbody>
               {rows.map((r, i) => {
-                // rows are newest-first, so the previous version is the NEXT row along
+                // rows are newest-first, so the previous version is the NEXT one along
                 const prev = rows[i + 1]
-                const changes = describeChange(r, prev)
-                const st = docStats(r.content)
                 return (
-                  <tr key={r.id}>
-                    <td style={{ whiteSpace: 'nowrap' }}>v{r.version_number}</td>
+                  <tr key={r.id}
+                    onClick={() => setOpenDiff({ row: r, prev })}
+                    title="See what changed in this version"
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-hover, #363f54)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                    <td style={{ whiteSpace: 'nowrap', fontWeight: 600 }}>v{r.version_number}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>{new Date(r.created_at).toLocaleString()}</td>
                     <td>{r.users?.name || '—'}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-                        {changes.map((c, k) => (
-                          <span key={k} style={{
-                            fontSize: 11, padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap',
-                            background: c.startsWith('+') ? 'var(--success-light, #0d6b52)'
-                              : c.startsWith('-') ? 'var(--danger-light, #6e1c1c)'
-                              : 'var(--bg-hover, #363f54)',
-                            color: c.startsWith('+') ? '#a7f3d0'
-                              : c.startsWith('-') ? '#fecaca'
-                              : 'var(--text-secondary)',
-                          }}>{c}</span>
-                        ))}
-                      </div>
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                      {st.words} words
-                      {st.tables ? ` · ${st.tables} table${st.tables > 1 ? 's' : ''}` : ''}
-                      {st.images ? ` · ${st.images} image${st.images > 1 ? 's' : ''}` : ''}
-                    </td>
                     <td>{r.change_reason || '—'}</td>
                     {canEdit && (
-                      <td style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
                         <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => restore(r)}>Restore</button>
                       </td>
                     )}
@@ -831,6 +899,10 @@ export function QualityDocHistory() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {openDiff && (
+        <VersionDiffModal row={openDiff.row} prev={openDiff.prev} onClose={() => setOpenDiff(null)} />
       )}
     </div>
   )
