@@ -20,6 +20,7 @@ import Calibration from './pages/Calibration'
 import Coaching from './pages/Coaching'
 import ContactUs from './pages/ContactUs'
 import Issues from './pages/Issues'
+import QualityDocs, { QualityDocView, QualityDocEdit, QualityDocHistory } from './pages/QualityDocs'
 
 export const AuthContext = createContext(null)
 export const useAuth = () => useContext(AuthContext)
@@ -123,6 +124,12 @@ function AppShell({ user, profile, logout, fetchProfile }) {
                 <Route path="/calibration" element={['owner','admin','evaluator'].includes(profile?.role) ? <Calibration /> : <Navigate to="/dashboard" replace />} />
                 <Route path="/coaching" element={<Coaching />} />
                 <Route path="/contact" element={['viewer','admin','owner'].includes(profile?.role) ? <ContactUs /> : <Navigate to="/dashboard" replace />} />
+                {/* Quality Documentation — readable by every role; authoring is gated
+                    inside the pages and enforced by RLS. */}
+                <Route path="/quality-docs" element={<QualityDocs />} />
+                <Route path="/quality-docs/:id" element={<QualityDocView />} />
+                <Route path="/quality-docs/:id/edit" element={['owner','admin'].includes(profile?.role) ? <QualityDocEdit /> : <Navigate to="/quality-docs" replace />} />
+                <Route path="/quality-docs/:id/history" element={<QualityDocHistory />} />
                 <Route path="/issues" element={['evaluator','team_leader','admin','owner'].includes(profile?.role) ? <Issues /> : <Navigate to="/dashboard" replace />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>

@@ -166,6 +166,13 @@ export default function Navbar() {
             Issue Management
           </button>
         )}
+        {/* Quality Documentation — every role can read it, so this is ungated.
+            Authoring is restricted inside the page and by RLS. */}
+        <button className={`nav-item ${isActive('/quality-docs') ? 'active' : ''}`}
+          onClick={() => safeNavigate('/quality-docs')}>
+          <i className="ti ti-book" aria-hidden="true" />
+          Quality Documentation
+        </button>
       </div>
 
       {['admin', 'owner'].includes(profile?.role) && (
