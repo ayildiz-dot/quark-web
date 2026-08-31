@@ -1118,7 +1118,7 @@ export default function Coaching() {
   const isPrivileged = ['owner', 'admin'].includes(role)
   const canCreate = ['owner', 'admin', 'evaluator', 'team_leader'].includes(role)
 
-  const [tab, setTab]           = useState('sessions')
+  const [tab, setTab]           = useState('queue')
   const [sessions, setSessions] = useState([])
   const [counts, setCounts]     = useState({})
   const [loading, setLoading]   = useState(true)
@@ -1237,8 +1237,11 @@ export default function Coaching() {
 
   const govNames = gov ? { ws: gov.ws, hub: gov.hub, queue: gov.queue } : { ws: {}, hub: {}, queue: {} }
 
+  // Coaching Queue first: it is the work that arrives on its own from failed and critical
+  // evaluations, so it is what a coach opens the page to deal with. Observation Sessions
+  // are initiated deliberately and follow.
   const TABS = isCoach
-    ? [['sessions', 'Observation Sessions'], ['insights', 'Observation Insights'], ['queue', 'Coaching Queue'], ['coaching_insights', 'Coaching Insights']]
+    ? [['queue', 'Coaching Queue'], ['coaching_insights', 'Coaching Insights'], ['sessions', 'Observation Sessions'], ['insights', 'Observation Insights']]
     : []
 
   // Agent (viewer) view — own sessions only
