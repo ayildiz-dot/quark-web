@@ -31,6 +31,53 @@ import Highlight from '@tiptap/extension-highlight'
   March evaluation.
 */
 
+
+/* Font size. TipTap has no built-in size mark, so this adds a fontSize attribute to the
+   existing textStyle mark — the same mark Color already writes to. Extending rather than
+   adding a second mark keeps a coloured, resized run as one span instead of nested ones. */
+const FontSize = TextStyle.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      fontSize: {
+        default: null,
+        parseHTML: el => el.style.fontSize || null,
+        renderHTML: attrs => (attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {}),
+      },
+    }
+  },
+  addCommands() {
+    return {
+      setFontSize: size => ({ chain }) => chain().setMark('textStyle', { fontSize: size }).run(),
+      unsetFontSize: () => ({ chain }) =>
+        chain().setMark('textStyle', { fontSize: null }).removeEmptyTextStyle().run(),
+    }
+  },
+})
+
+/* Cell background. Table cells carry no colour attribute out of the box; this adds one to
+   both ordinary and header cells so setCellAttribute can write it. Stored as an attribute
+   on the node, so it survives in the document JSON and renders identically in the reader
+   and in the version diff. */
+const cellBackground = {
+  backgroundColor: {
+    default: null,
+    parseHTML: el => el.getAttribute('data-bg') || el.style.backgroundColor || null,
+    renderHTML: attrs => (attrs.backgroundColor
+      ? { 'data-bg': attrs.backgroundColor, style: `background-color: ${attrs.backgroundColor}` }
+      : {}),
+  },
+}
+const ColoredTableCell = TableCell.extend({
+  addAttributes() { return { ...this.parent?.(), ...cellBackground } },
+})
+const ColoredTableHeader = TableHeader.extend({
+  addAttributes() { return { ...this.parent?.(), ...cellBackground } },
+})
+
+const FONT_SIZES = ['12px', '14px', '16px', '18px', '20px', '24px', '30px', '36px']
+const DEFAULT_FONT = '16px'
+
 const EXTENSIONS = [
   StarterKit.configure({
     heading: { levels: [1, 2, 3] },
@@ -45,13 +92,13 @@ const EXTENSIONS = [
   }),
   Image.configure({ inline: false, allowBase64: false }),
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
-  TextStyle,
+  FontSize,
   Color,
   Highlight.configure({ multicolor: true }),
   Table.configure({ resizable: true }),
   TableRow,
-  TableHeader,
-  TableCell,
+  ColoredTableHeader,
+  ColoredTableCell,
 ]
 
 /* ─────────────────────────────── toolbar bits ─────────────────────────────── */
@@ -191,6 +238,10 @@ function Toolbar({ editor, onImage, busyImage }) {
   const [showGrid, setShowGrid] = useState(false)
   if (!editor) return null
   const inTable = editor.isActive('table')
+  // Falls back to the base size so − and + have a sensible starting point on text that
+  // has never had a size applied.
+  const explicitFont = editor.getAttributes('textStyle').fontSize || null
+  const curFont = explicitFont || DEFAULT_FONT
 
   const setLink = () => {
     const previous = editor.getAttributes('link').href || ''
@@ -232,6 +283,32 @@ function Toolbar({ editor, onImage, busyImage }) {
         <option value="h2">Heading 2</option>
         <option value="h3">Heading 3</option>
       </select>
+      <Sep />
+      {/* Font size: the − and + step through FONT_SIZES, the select jumps straight to one.
+          Current size is read back from the mark, so it reflects the caret position. */}
+      <Btn title="Decrease font size" onClick={() => {
+        const i = FONT_SIZES.indexOf(curFont)
+        editor.chain().focus().setFontSize(FONT_SIZES[Math.max(0, i - 1)]).run()
+      }}>A−</Btn>
+      <select
+        value={explicitFont || 'default'}
+        onChange={e => {
+          const v = e.target.value
+          if (v === 'default') editor.chain().focus().unsetFontSize().run()
+          else editor.chain().focus().setFontSize(v).run()
+        }}
+        title="Font size"
+        style={{
+          height: 28, fontSize: 12, borderRadius: 6, padding: '0 4px', width: 62,
+          background: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)',
+        }}>
+        <option value="default">Default</option>
+        {FONT_SIZES.map(f => <option key={f} value={f}>{parseInt(f, 10)}</option>)}
+      </select>
+      <Btn title="Increase font size" onClick={() => {
+        const i = FONT_SIZES.indexOf(curFont)
+        editor.chain().focus().setFontSize(FONT_SIZES[Math.min(FONT_SIZES.length - 1, i + 1)]).run()
+      }}>A+</Btn>
       <Sep />
       <Btn title="Bold"      on={editor.isActive('bold')}      onClick={() => editor.chain().focus().toggleBold().run()}><b>B</b></Btn>
       <Btn title="Italic"    on={editor.isActive('italic')}    onClick={() => editor.chain().focus().toggleItalic().run()}><i>I</i></Btn>
@@ -282,6 +359,12 @@ function Toolbar({ editor, onImage, busyImage }) {
           <Btn title="Merge cells"       onClick={() => editor.chain().focus().mergeCells().run()}>merge</Btn>
           <Btn title="Split cell"        onClick={() => editor.chain().focus().splitCell().run()}>split</Btn>
           <Btn title="Delete table"      onClick={() => editor.chain().focus().deleteTable().run()}>✖ table</Btn>
+          <ColorMenu label="Cell background" glyph="▦"
+            current={editor.getAttributes('tableCell').backgroundColor
+                  || editor.getAttributes('tableHeader').backgroundColor || null}
+            fallback="transparent"
+            onPick={c => editor.chain().focus().setCellAttribute('backgroundColor', c).run()}
+            onClear={() => editor.chain().focus().setCellAttribute('backgroundColor', null).run()} />
         </>
       )}
     </div>
