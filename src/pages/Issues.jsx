@@ -5,6 +5,19 @@ import { supabase } from '../lib/supabase'
 import * as XLSX from 'xlsx'
 import { saveAs } from 'file-saver'
 
+// Issue categories. Kept in one place so the form, the badge and any future filter
+// cannot drift apart. Mirrors the CHECK constraint on issues.category (STEP 1 of
+// 20260812_issue_category_v2.sql) — change both together or a submission will be
+// rejected by the database.
+const ISSUE_CATEGORIES = [
+  'Account Issue',
+  'Quark Tool Issue',
+  'Quality Documentation Feedback',
+  'Quark General Feedback',
+  'Quality Results Discrepancy',
+  'DSAT Results Discrepancy',
+]
+
 const inp = { width: '100%', padding: '9px 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 14, boxSizing: 'border-box' }
 const lbl = { display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 6, color: 'var(--text-secondary)' }
 const sel = { padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)', fontSize: 13 }
@@ -148,6 +161,7 @@ function IssueDetail({ issueId, isAdmin, me, names, onChanged, onBack, showBack 
           <StatusBadge status={issue.status} />
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
+          {issue.category ? <>{issue.category} · </> : null}
           Raised by {reporterName}{issue.market ? ` · ${issue.market}` : ''} · {new Date(issue.created_at).toLocaleString()}
           {assigneeName && <> · Handled by {assigneeName}</>}
         </div>
@@ -250,6 +264,7 @@ function IssueList({ items, selectedId, onSelect, nameFor }) {
               <StatusBadge status={r.status} />
             </div>
             <div style={{ fontSize: 11, color: 'var(--text-secondary)', display: 'flex', gap: 6 }}>
+              {r.category && <span style={{ flexShrink: 0, padding: '1px 6px', borderRadius: 999, background: 'var(--bg-hover)', fontWeight: 600 }}>{r.category}</span>}
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nameFor(r.reporter_id)}</span>
               <span>{new Date(r.created_at).toLocaleDateString()}</span>
             </div>
@@ -264,6 +279,7 @@ function IssueList({ items, selectedId, onSelect, nameFor }) {
 function ReportForm({ onSubmitted }) {
   const { profile } = useAuth()
   const [title, setTitle] = useState('')
+  const [category, setCategory] = useState('')
   const [description, setDescription] = useState('')
   const [file, setFile] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -272,6 +288,7 @@ function ReportForm({ onSubmitted }) {
 
   const submit = async () => {
     if (!title.trim()) return flash('Please enter a title.', false)
+    if (!category) return flash('Please choose a category for this issue.', false)
     if (!description.trim()) return flash('Please describe the issue.', false)
     if (file && file.size > 5 * 1024 * 1024) return flash('Screenshot must be under 5 MB.', false)
     setBusy(true)
@@ -283,10 +300,10 @@ function ReportForm({ onSubmitted }) {
       if (upErr) { setBusy(false); return flash('Screenshot upload failed: ' + upErr.message, false) }
       attachmentPath = path
     }
-    const { error } = await supabase.rpc('submit_issue', { p_title: title.trim(), p_description: description.trim(), p_attachment_path: attachmentPath })
+    const { error } = await supabase.rpc('submit_issue', { p_title: title.trim(), p_description: description.trim(), p_attachment_path: attachmentPath, p_category: category })
     setBusy(false)
     if (error) return flash(error.message, false)
-    setTitle(''); setDescription(''); setFile(null)
+    setTitle(''); setCategory(''); setDescription(''); setFile(null)
     flash('Thanks — your issue has been sent to the admins.')
     onSubmitted && onSubmitted()
   }
@@ -295,6 +312,13 @@ function ReportForm({ onSubmitted }) {
     <>
       {msg && <div className={`flash ${msg.ok ? 'flash-ok' : 'flash-err'}`} style={{ marginBottom: 16 }}>{msg.text}</div>}
       <div className="card" style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div>
+          <label style={lbl}>Category</label>
+          <select style={inp} value={category} onChange={e => setCategory(e.target.value)}>
+            <option value="">— Select a category —</option>
+            {ISSUE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
         <div>
           <label style={lbl}>Title</label>
           <input style={inp} placeholder="Short summary of the issue" value={title} onChange={e => setTitle(e.target.value)} maxLength={140} />
@@ -368,7 +392,7 @@ const SUBTABS = [
   { key: 'resolved', label: 'Resolved', match: r => r.status === 'resolved' },
   { key: 'all',      label: 'All',      match: () => true },
 ]
-const emptyFilters = { id: '', search: '', status: '', reporter: '', assignee: '', division: '', workspace: '', hub: '', market: '' }
+const emptyFilters = { id: '', search: '', status: '', category: '', reporter: '', assignee: '', division: '', workspace: '', hub: '', market: '' }
 
 function ManageIssues({ initialOpenId }) {
   const isNarrow = useNarrow()
@@ -410,6 +434,7 @@ function ManageIssues({ initialOpenId }) {
     if (filters.id) { const q = filters.id.replace(/[^0-9]/g, ''); if (q && !String(r.ref_no).includes(q)) return false }
     if (filters.search) { const q = filters.search.toLowerCase(); if (!(`#${r.ref_no} ${r.title} ${r.description}`.toLowerCase().includes(q))) return false }
     if (subtab === 'all' && filters.status && r.status !== filters.status) return false
+    if (filters.category && r.category !== filters.category) return false
     if (filters.reporter && r.reporter_id !== filters.reporter) return false
     if (filters.assignee && r.assignee_id !== filters.assignee) return false
     if (filters.division && r.division !== filters.division) return false
@@ -425,12 +450,13 @@ function ManageIssues({ initialOpenId }) {
     const ids = shown.map(r => r.id)
     const { data: mm } = await supabase.from('issue_messages').select('issue_id').in('issue_id', ids)
     const counts = (mm || []).reduce((a, m) => { a[m.issue_id] = (a[m.issue_id] || 0) + 1; return a }, {})
-    const header = ['Ref', 'Title', 'Description', 'Status', 'Reporter', 'Assignee', 'Division', 'Workspace', 'Hub', 'Market',
+    const header = ['Ref', 'Title', 'Category', 'Description', 'Status', 'Reporter', 'Assignee', 'Division', 'Workspace', 'Hub', 'Market',
       'Created', 'Taken over', 'Resolved', 'Resolution', 'Re-opened', 'Last activity', 'Replies', 'Issue ID']
     const out = shown.map(r => ({
       'Ref': '#' + r.ref_no,
       'Issue ID': r.id,
       'Title': r.title || '',
+      'Category': r.category || '',
       'Description': r.description || '',
       'Status': (STATUS_META[r.status] || {}).label || r.status,
       'Reporter': names[r.reporter_id] || '',
@@ -477,6 +503,10 @@ function ManageIssues({ initialOpenId }) {
             {STATUS_ORDER.map(s => <option key={s} value={s}>{STATUS_META[s].label}</option>)}
           </select>
         )}
+        <select style={sel} value={filters.category} onChange={e => setF({ category: e.target.value })}>
+          <option value="">All categories</option>
+          {ISSUE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
         <select style={sel} value={filters.reporter} onChange={e => setF({ reporter: e.target.value })}>
           <option value="">All reporters</option>
           {uniq(rows.map(r => r.reporter_id)).map(id => <option key={id} value={id}>{names[id] || id}</option>)}
